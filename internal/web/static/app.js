@@ -279,14 +279,22 @@ const DashboardPage = defineComponent({
             { title: 'SQL', key: 'sql_text', ellipsis: { tooltip: true }, _hideOnMobile: true, render: row => renderSqlCell(row, 80) },
         ]);
 
-        function statCard(title, subtitle, items) {
-            return h('div', { class: 'stat-card' }, [
+        function statCard(title, subtitle, items, link) {
+            return h('div', {
+                class: 'stat-card' + (link ? ' stat-card-clickable' : ''),
+                onClick: link ? () => router.push(link) : undefined,
+                style: link ? 'cursor:pointer' : '',
+            }, [
                 h('div', { class: 'stat-card-header' }, [
                     h('span', { class: 'stat-card-title' }, title),
                     subtitle ? h('span', { class: 'stat-card-subtitle' }, subtitle) : null,
                 ]),
                 h('div', { class: 'stat-card-body' }, items.map(item =>
-                    h('div', { class: 'stat-card-item' }, [
+                    h('div', {
+                        class: 'stat-card-item' + (item.link ? ' stat-item-clickable' : ''),
+                        onClick: item.link ? (e) => { e.stopPropagation(); router.push(item.link); } : undefined,
+                        style: item.link ? 'cursor:pointer' : '',
+                    }, [
                         h('div', { class: 'stat-card-value', style: item.color ? ('color:' + item.color) : '' }, String(item.value)),
                         h('div', { class: 'stat-card-label' }, item.label),
                     ])
@@ -304,20 +312,20 @@ const DashboardPage = defineComponent({
             ]),
             h('div', { class: 'stat-grid' }, [
                 statCard('MySQL', '慢SQL监控', [
-                    { label: '运行中', value: stats.value.running_dbs, color: '#18a058' },
-                    { label: '已配置', value: stats.value.total_dbs, color: '#2080f0' },
-                    { label: '今日慢SQL', value: stats.value.today_count, color: stats.value.today_count > 0 ? '#d03050' : '#999' },
-                ]),
+                    { label: '运行中', value: stats.value.running_dbs, color: '#18a058', link: '/databases' },
+                    { label: '已配置', value: stats.value.total_dbs, color: '#2080f0', link: '/databases' },
+                    { label: '今日慢SQL', value: stats.value.today_count, color: stats.value.today_count > 0 ? '#d03050' : '#999', link: '/slow-queries' },
+                ], '/databases'),
                 statCard('RocketMQ', '消息堆积监控', [
-                    { label: '运行中', value: stats.value.rocketmq_running || 0, color: '#18a058' },
-                    { label: '已配置', value: stats.value.rocketmq_configs || 0, color: '#2080f0' },
-                    { label: '今日告警', value: stats.value.rocketmq_alerts_today || 0, color: (stats.value.rocketmq_alerts_today || 0) > 0 ? '#d03050' : '#999' },
-                ]),
+                    { label: '运行中', value: stats.value.rocketmq_running || 0, color: '#18a058', link: '/rocketmq' },
+                    { label: '已配置', value: stats.value.rocketmq_configs || 0, color: '#2080f0', link: '/rocketmq' },
+                    { label: '今日告警', value: stats.value.rocketmq_alerts_today || 0, color: (stats.value.rocketmq_alerts_today || 0) > 0 ? '#d03050' : '#999', link: '/rocketmq-alerts' },
+                ], '/rocketmq'),
                 statCard('健康检查', 'HTTP 端点监控', [
-                    { label: '运行中', value: stats.value.health_checks_running || 0, color: '#18a058' },
-                    { label: '已配置', value: stats.value.health_checks || 0, color: '#2080f0' },
-                    { label: '今日异常', value: stats.value.health_check_errors_today || 0, color: (stats.value.health_check_errors_today || 0) > 0 ? '#d03050' : '#999' },
-                ]),
+                    { label: '运行中', value: stats.value.health_checks_running || 0, color: '#18a058', link: '/health-checks' },
+                    { label: '已配置', value: stats.value.health_checks || 0, color: '#2080f0', link: '/health-checks' },
+                    { label: '今日异常', value: stats.value.health_check_errors_today || 0, color: (stats.value.health_check_errors_today || 0) > 0 ? '#d03050' : '#999', link: '/health-checks-logs' },
+                ], '/health-checks'),
             ]),
             h('h4', { class: 'section-title' }, '最近慢SQL'),
             stats.value.recent_logs && stats.value.recent_logs.length > 0

@@ -316,6 +316,11 @@ html, body {
     border-radius: 12px;
     box-shadow: var(--stat-card-shadow);
     overflow: hidden;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.stat-card-clickable:hover {
+    border-color: #36ad6a;
+    box-shadow: 0 2px 8px rgba(54,173,106,0.12);
 }
 .stat-card-header {
     display: flex;
@@ -342,6 +347,12 @@ html, body {
 }
 .stat-card-item {
     flex: 1;
+    border-radius: 8px;
+    padding: 4px;
+    transition: background 0.15s;
+}
+.stat-item-clickable:hover {
+    background: rgba(54,173,106,0.08);
 }
 .stat-card-value {
     font-size: 1.8rem;
