@@ -1,0 +1,353 @@
+/* MySQL Monitor — Theme-aware styles */
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background: var(--body-bg);
+    color: var(--body-color);
+    transition: background 0.2s, color 0.2s;
+}
+
+#app {
+    min-height: 100vh;
+}
+
+/* ============================================================
+   CSS Variables — Light (default) / Dark
+   ============================================================ */
+:root,
+[data-theme="light"] {
+    --body-bg: #fff;
+    --body-color: #333;
+    --login-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --login-card-bg: rgba(255,255,255,0.92);
+    --login-card-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    --login-accent: #764ba2;
+    --login-title-color: #1a1a2e;
+    --login-subtitle-color: #666;
+    --login-divider-color: #ddd;
+    --login-divider-text: #999;
+
+    --log-bg: #f5f6fa;
+    --log-border: #e0e3eb;
+    --log-time: #999;
+    --log-db: #0891b2;
+    --log-msg-checking: #999;
+    --log-msg-ok: #16a34a;
+    --log-msg-found: #d97706;
+    --log-msg-notify: #2563eb;
+    --log-msg-error: #dc2626;
+    --log-msg-info: #6b7280;
+
+    --scrollbar-thumb: #ccd0d8;
+    --scrollbar-thumb-hover: #b0b5c0;
+
+    --sider-header-border: #eee;
+    --sider-logo-bg: linear-gradient(135deg, #667eea, #764ba2);
+    --sider-logo-color: #fff;
+
+    --topbar-bg: #fff;
+    --topbar-border: #eee;
+    --topbar-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+[data-theme="dark"] {
+    --body-bg: #101014;
+    --body-color: #e2e8f0;
+    --login-bg: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    --login-card-bg: rgba(30,34,53,0.92);
+    --login-card-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    --login-accent: #818cf8;
+    --login-title-color: #e2e8f0;
+    --login-subtitle-color: #8B92A5;
+    --login-divider-color: #2D3148;
+    --login-divider-text: #555B6E;
+
+    --log-bg: #060810;
+    --log-border: #1E2235;
+    --log-time: #555B6E;
+    --log-db: #06B6D4;
+    --log-msg-checking: #555B6E;
+    --log-msg-ok: #22C55E;
+    --log-msg-found: #F59E0B;
+    --log-msg-notify: #3B82F6;
+    --log-msg-error: #EF4444;
+    --log-msg-info: #8B92A5;
+
+    --scrollbar-thumb: #2D3148;
+    --scrollbar-thumb-hover: #3D4258;
+
+    --sider-header-border: #1E2235;
+    --sider-logo-bg: linear-gradient(135deg, #667eea, #764ba2);
+    --sider-logo-color: #fff;
+
+    --topbar-bg: #18181c;
+    --topbar-border: #2D3148;
+    --topbar-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+/* ============================================================
+   Scrollbar
+   ============================================================ */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+
+/* ============================================================
+   Login Page
+   ============================================================ */
+.login-page {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    min-height: 100dvh;
+    width: 100%;
+    background: var(--login-bg);
+    position: relative;
+    overflow: hidden;
+}
+
+.login-card-wrapper {
+    width: 100%;
+    max-width: 400px;
+    padding: 20px;
+}
+
+.login-card {
+    background: var(--login-card-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 16px;
+    padding: 40px 32px 32px;
+    box-shadow: var(--login-card-shadow);
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 32px;
+}
+
+.login-logo {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 16px;
+}
+
+.login-title {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--login-title-color);
+    letter-spacing: -0.02em;
+}
+
+.login-subtitle {
+    margin: 6px 0 0;
+    font-size: 0.85rem;
+    color: var(--login-subtitle-color);
+}
+
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.login-field {
+    /* wrapper for inputs */
+}
+
+.login-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 20px 0 16px;
+    color: var(--login-divider-text);
+    font-size: 0.8rem;
+}
+.login-divider::before,
+.login-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--login-divider-color);
+}
+
+/* ============================================================
+   Sidebar (Desktop + Drawer)
+   ============================================================ */
+.sider-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 16px 12px;
+    border-bottom: 1px solid var(--sider-header-border);
+}
+
+.sider-logo {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: var(--sider-logo-bg);
+    color: var(--sider-logo-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+/* ============================================================
+   Mobile Top Bar
+   ============================================================ */
+.mobile-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--topbar-bg);
+    border-bottom: 1px solid var(--topbar-border);
+    box-shadow: var(--topbar-shadow);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+/* ============================================================
+   Monitor Logs Terminal
+   ============================================================ */
+.log-container {
+    background: var(--log-bg);
+    font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+    font-size: 0.77rem;
+    line-height: 1.8;
+    padding: 1rem 1.2rem;
+    border-radius: 8px;
+    border: 1px solid var(--log-border);
+    height: calc(100vh - 200px);
+    overflow-y: auto;
+}
+.log-entry { white-space: nowrap; }
+.log-time { color: var(--log-time); }
+.log-db { color: var(--log-db); font-weight: 600; }
+.log-msg-checking { color: var(--log-msg-checking); }
+.log-msg-ok { color: var(--log-msg-ok); }
+.log-msg-found { color: var(--log-msg-found); }
+.log-msg-notify { color: var(--log-msg-notify); }
+.log-msg-error { color: var(--log-msg-error); }
+.log-msg-info { color: var(--log-msg-info); }
+
+/* SQL text in tables */
+.sql-text {
+    max-width: 400px;
+    word-break: break-all;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.73rem;
+}
+
+/* GitHub login button */
+.github-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 16px;
+    background: #24292e;
+    color: #fff;
+    border: 1px solid #444;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.github-btn:hover { background: #2f363d; }
+.github-btn svg { width: 20px; height: 20px; fill: currentColor; }
+
+/* WebSocket status dot */
+.ws-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.ws-dot.connected { background: #22C55E; box-shadow: 0 0 6px rgba(34,197,94,0.4); }
+.ws-dot.disconnected { background: #EF4444; }
+
+/* New row animation for tables */
+@keyframes highlightNew {
+    from { background-color: rgba(59,130,246,0.12); }
+    to { background-color: transparent; }
+}
+
+/* ============================================================
+   SQL Detail Modal
+   ============================================================ */
+.sql-detail-block {
+    border-radius: 8px;
+    overflow: hidden;
+}
+.sql-detail-code {
+    margin: 0;
+    padding: 16px;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+    font-size: 0.8rem;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-all;
+    border-radius: 8px;
+    max-height: 50vh;
+    overflow-y: auto;
+    background: var(--log-bg);
+    border: 1px solid var(--log-border);
+    color: inherit;
+}
+
+/* ============================================================
+   Mobile
+   ============================================================ */
+/* Prevent pinch zoom globally */
+html {
+    touch-action: manipulation;
+}
+
+@media (max-width: 768px) {
+    .login-page {
+        min-height: 100dvh;
+        padding: 0;
+    }
+    .login-card-wrapper {
+        max-width: 100%;
+        padding: 16px;
+    }
+    .login-card {
+        padding: 32px 20px 24px;
+        border-radius: 12px;
+    }
+    .login-header {
+        margin-bottom: 24px;
+    }
+    .login-title {
+        font-size: 1.3rem;
+    }
+    .log-container {
+        height: calc(100vh - 160px);
+        height: calc(100dvh - 160px);
+        font-size: 12px;
+        padding: 12px;
+    }
+    .log-entry {
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+    .sql-text {
+        max-width: 200px;
+    }
+}

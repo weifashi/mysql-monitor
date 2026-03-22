@@ -1,74 +1,19 @@
 services:
-  # 开发环境数据库监控
-  monitor-dev:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: mysql-monitor-dev
+  monitor:
+    build: .
+    container_name: mysql-monitor
     restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:8080"
     environment:
-      MONITOR_NAME: "Dev Database"
-      MYSQL_HOST: ${DEV_MYSQL_HOST}
-      MYSQL_PORT: ${DEV_MYSQL_PORT}
-      MYSQL_USER: ${DEV_MYSQL_USER}
-      MYSQL_PASSWORD: ${DEV_MYSQL_PASSWORD}
-      MONITOR_INTERVAL: ${DEV_MONITOR_INTERVAL:-10}
-      MONITOR_THRESHOLD: ${DEV_MONITOR_THRESHOLD:-10}
-      DINGTALK_WEBHOOK: ${DEV_DINGTALK_WEBHOOK:-}
-      DINGTALK_SECRET: ${DEV_DINGTALK_SECRET:-}
-      FEISHU_WEBHOOK: ${DEV_FEISHU_WEBHOOK:-}
-      FEISHU_SECRET: ${DEV_FEISHU_SECRET:-}
-      EMAIL_ENABLED: ${DEV_EMAIL_ENABLED:-false}
-      EMAIL_FROM: ${DEV_EMAIL_FROM:-}
-      EMAIL_TO: ${DEV_EMAIL_TO:-}
-      EMAIL_SMTP_HOST: ${DEV_EMAIL_SMTP_HOST:-}
-      EMAIL_SMTP_PORT: ${DEV_EMAIL_SMTP_PORT:-587}
-      EMAIL_USERNAME: ${DEV_EMAIL_USERNAME:-}
-      EMAIL_PASSWORD: ${DEV_EMAIL_PASSWORD:-}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      DATA_DIR: /app/data
       TZ: Asia/Shanghai
+    volumes:
+      - ./data:/app/data
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-    networks:
-      - monitor-network
-
-  # 测试环境数据库监控
-  monitor-test:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: mysql-monitor-test
-    restart: unless-stopped
-    environment:
-      MONITOR_NAME: "Test Database"
-      MYSQL_HOST: ${TEST_MYSQL_HOST}
-      MYSQL_PORT: ${TEST_MYSQL_PORT}
-      MYSQL_USER: ${TEST_MYSQL_USER}
-      MYSQL_PASSWORD: ${TEST_MYSQL_PASSWORD}
-      MONITOR_INTERVAL: ${TEST_MONITOR_INTERVAL:-10}
-      MONITOR_THRESHOLD: ${TEST_MONITOR_THRESHOLD:-10}
-      DINGTALK_WEBHOOK: ${TEST_DINGTALK_WEBHOOK:-}
-      DINGTALK_SECRET: ${TEST_DINGTALK_SECRET:-}
-      FEISHU_WEBHOOK: ${TEST_FEISHU_WEBHOOK:-}
-      FEISHU_SECRET: ${TEST_FEISHU_SECRET:-}
-      EMAIL_ENABLED: ${TEST_EMAIL_ENABLED:-false}
-      EMAIL_FROM: ${TEST_EMAIL_FROM:-}
-      EMAIL_TO: ${TEST_EMAIL_TO:-}
-      EMAIL_SMTP_HOST: ${TEST_EMAIL_SMTP_HOST:-}
-      EMAIL_SMTP_PORT: ${TEST_EMAIL_SMTP_PORT:-587}
-      EMAIL_USERNAME: ${TEST_EMAIL_USERNAME:-}
-      EMAIL_PASSWORD: ${TEST_EMAIL_PASSWORD:-}
-      TZ: Asia/Shanghai
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - monitor-network
-
-networks:
-  monitor-network:
-    driver: bridge
