@@ -1,6 +1,6 @@
 # MySQL Performance Schema 实时监控工具
 
-> 基于 Performance Schema 的 MySQL 慢查询实时监控工具，支持钉钉和邮件告警通知。
+> 基于 Performance Schema 的 MySQL 慢查询实时监控工具，支持钉钉、飞书、邮件告警通知。
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/go-1.23+-00ADD8.svg)](https://go.dev/)
@@ -10,8 +10,8 @@
 
 - 🔍 **实时监控**：基于 Performance Schema，无需等待查询完成即可检测
 - 📊 **详细信息**：线程ID、执行时间、锁等待、扫描行数、完整SQL等
-- 🔔 **多种通知**：支持钉钉机器人、邮件通知，及时告警
-- 🚫 **告警去重**：通知间隔控制，避免告警风暴
+- 🔔 **多种通知**：支持钉钉、飞书机器人与邮件，及时告警
+- 🚫 **告警去重**：同一连接（KILL id）仅通知一次，避免刷屏
 - 🐳 **容器化部署**：完整的 Docker Compose 配置，开箱即用
 - 🔧 **灵活配置**：支持环境变量、命令行参数，多数据库独立配置
 - 📚 **完善文档**：详细的部署指南、配置说明、故障排查

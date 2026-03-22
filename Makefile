@@ -4,6 +4,8 @@
 COMPOSE_FILE := docker-compose.yml
 COMPOSE_FILE_EXAMPLE := docker-compose.example.yml
 ENV_FILE := .env
+# V2 为 `docker compose`；若只有旧版可执行文件: make DOCKER_COMPOSE=docker-compose up
+DOCKER_COMPOSE ?= docker compose
 
 help: ## 显示帮助信息
 	@echo "════════════════════════════════════════════════════════════════"
@@ -34,7 +36,7 @@ init: ## 初始化配置文件
 
 build: ## 构建 Docker 镜像
 	@echo "🔨 构建监控工具镜像..."
-	docker-compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE) build
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) --env-file $(ENV_FILE) build
 	@echo "✅ 镜像构建完成"
 
 up: ## 启动所有监控服务
@@ -43,86 +45,86 @@ up: ## 启动所有监控服务
 		exit 1; \
 	fi
 	@echo "🚀 启动监控服务..."
-	docker-compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE) up -d
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) --env-file $(ENV_FILE) up -d
 	@echo "✅ 监控服务已启动"
 	@echo ""
 	@make status
 
 up-dev: ## 仅启动开发环境监控
-	docker-compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE) up -d monitor-dev
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) --env-file $(ENV_FILE) up -d monitor-dev
 	@echo "✅ 开发环境监控已启动"
 
 up-test: ## 仅启动测试环境监控
-	docker-compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE) up -d monitor-test
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) --env-file $(ENV_FILE) up -d monitor-test
 	@echo "✅ 测试环境监控已启动"
 
 up-prod: ## 仅启动生产环境监控
-	docker-compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE) up -d monitor-prod
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) --env-file $(ENV_FILE) up -d monitor-prod
 	@echo "✅ 生产环境监控已启动"
 
 down: ## 停止并删除所有监控服务
 	@echo "🛑 停止监控服务..."
-	docker-compose -f $(COMPOSE_FILE) down
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) down
 	@echo "✅ 监控服务已停止"
 
 stop: ## 停止所有监控服务（不删除）
 	@echo "⏸️  暂停监控服务..."
-	docker-compose -f $(COMPOSE_FILE) stop
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) stop
 	@echo "✅ 监控服务已暂停"
 
 start: ## 启动已存在的监控服务
 	@echo "▶️  启动监控服务..."
-	docker-compose -f $(COMPOSE_FILE) start
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) start
 	@echo "✅ 监控服务已启动"
 
 restart: ## 重启所有监控服务
 	@echo "🔄 重启监控服务..."
-	docker-compose -f $(COMPOSE_FILE) restart
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) restart
 	@echo "✅ 监控服务已重启"
 
 restart-dev: ## 重启开发环境监控
-	docker-compose -f $(COMPOSE_FILE) restart monitor-dev
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) restart monitor-dev
 
 restart-test: ## 重启测试环境监控
-	docker-compose -f $(COMPOSE_FILE) restart monitor-test
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) restart monitor-test
 
 restart-prod: ## 重启生产环境监控
-	docker-compose -f $(COMPOSE_FILE) restart monitor-prod
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) restart monitor-prod
 
 status: ## 查看监控服务状态
 	@echo "📊 监控服务状态:"
-	@docker-compose -f $(COMPOSE_FILE) ps
+	@$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) ps
 
 logs: ## 查看所有监控服务日志（实时）
-	docker-compose -f $(COMPOSE_FILE) logs -f
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) logs -f
 
 logs-dev: ## 查看开发环境监控日志
-	docker-compose -f $(COMPOSE_FILE) logs -f monitor-dev
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) logs -f monitor-dev
 
 logs-test: ## 查看测试环境监控日志
-	docker-compose -f $(COMPOSE_FILE) logs -f monitor-test
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) logs -f monitor-test
 
 logs-prod: ## 查看生产环境监控日志
-	docker-compose -f $(COMPOSE_FILE) logs -f monitor-prod
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) logs -f monitor-prod
 
 logs-tail: ## 查看最近 100 行日志
-	docker-compose -f $(COMPOSE_FILE) logs --tail=100
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) logs --tail=100
 
 update: ## 更新代码并重建
 	@echo "🔄 更新监控工具..."
 	@make build
 	@echo "🔄 重新创建容器..."
-	docker-compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE) up -d --force-recreate
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) --env-file $(ENV_FILE) up -d --force-recreate
 	@echo "✅ 更新完成"
 
 update-config: ## 应用配置更新（不重新构建）
 	@echo "🔄 应用配置更新..."
-	docker-compose -f $(COMPOSE_FILE) --env-file $(ENV_FILE) up -d --force-recreate
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) --env-file $(ENV_FILE) up -d --force-recreate
 	@echo "✅ 配置已更新"
 
 clean: ## 清理所有监控资源（容器、镜像、网络）
 	@echo "🗑️  清理监控资源..."
-	docker-compose -f $(COMPOSE_FILE) down --rmi all -v
+	$(DOCKER_COMPOSE) -f $(COMPOSE_FILE) down --rmi all -v
 	@echo "✅ 清理完成"
 
 test: ## 测试监控工具（本地编译方式）

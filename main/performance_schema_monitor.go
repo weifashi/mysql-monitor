@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"net/smtp"
 	"os"
@@ -44,6 +46,8 @@ var (
 	// 通知配置
 	dingTalkWebhook = flag.String("dingtalk-webhook", "", "钉钉机器人 Webhook URL")
 	dingTalkSecret  = flag.String("dingtalk-secret", "", "钉钉机器人签名密钥")
+	feishuWebhook   = flag.String("feishu-webhook", "", "飞书机器人 Webhook URL")
+	feishuSecret    = flag.String("feishu-secret", "", "飞书机器人签名校验密钥（可选）")
 	emailEnabled    = flag.Bool("email-enabled", false, "启用邮件通知")
 	emailFrom       = flag.String("email-from", "", "发件人邮箱")
 	emailTo         = flag.String("email-to", "", "收件人邮箱（逗号分隔）")
@@ -51,7 +55,6 @@ var (
 	emailSMTPPort   = flag.Int("email-smtp-port", 587, "SMTP 端口")
 	emailUsername   = flag.String("email-username", "", "SMTP 用户名")
 	emailPassword   = flag.String("email-password", "", "SMTP 密码")
-	notifyInterval  = flag.Int("notify-interval", 300, "通知间隔（秒），避免重复通知")
 )
 
 type LongQuery struct {
@@ -68,10 +71,10 @@ type LongQuery struct {
 	State     string
 }
 
-// 通知器
+// 通知器：同一 processlist_id（KILL 目标）仅通知一次，直至该连接不再出现在慢查询列表中
 type Notifier struct {
-	lastNotifyTime time.Time
-	mu             sync.Mutex
+	mu           sync.Mutex
+	notifiedPIDs map[uint64]struct{}
 }
 
 var notifier = &Notifier{}
@@ -160,6 +163,12 @@ func loadEnvConfig() {
 	if v := os.Getenv("DINGTALK_SECRET"); v != "" {
 		*dingTalkSecret = v
 	}
+	if v := os.Getenv("FEISHU_WEBHOOK"); v != "" {
+		*feishuWebhook = v
+	}
+	if v := os.Getenv("FEISHU_SECRET"); v != "" {
+		*feishuSecret = v
+	}
 	if v := os.Getenv("EMAIL_ENABLED"); v == "true" || v == "1" {
 		*emailEnabled = true
 	}
@@ -183,11 +192,6 @@ func loadEnvConfig() {
 	if v := os.Getenv("EMAIL_PASSWORD"); v != "" {
 		*emailPassword = v
 	}
-	if v := os.Getenv("NOTIFY_INTERVAL"); v != "" {
-		if _, err := fmt.Sscanf(v, "%d", notifyInterval); err != nil {
-			fmt.Printf("⚠️  NOTIFY_INTERVAL 格式错误: %v，使用默认值\n", err)
-		}
-	}
 }
 
 func printNotifyConfig() {
@@ -195,11 +199,14 @@ func printNotifyConfig() {
 	if *dingTalkWebhook != "" {
 		notifyMethods = append(notifyMethods, "钉钉")
 	}
+	if *feishuWebhook != "" {
+		notifyMethods = append(notifyMethods, "飞书")
+	}
 	if *emailEnabled && *emailFrom != "" && *emailTo != "" {
 		notifyMethods = append(notifyMethods, "邮件")
 	}
 	if len(notifyMethods) > 0 {
-		fmt.Printf("通知方式: %s | 通知间隔: %ds\n", strings.Join(notifyMethods, "、"), *notifyInterval)
+		fmt.Printf("通知方式: %s | 去重: 同一连接(KILL id)仅告警一次\n", strings.Join(notifyMethods, "、"))
 	} else {
 		fmt.Println("通知方式: 未配置（仅控制台输出）")
 	}
@@ -215,9 +222,12 @@ func checkLongQueries(db *sql.DB) {
 	fmt.Printf("════════════ %s ════════════\n", time.Now().Format("2006-01-02 15:04:05"))
 
 	if len(queries) == 0 {
+		notifier.clearNotifiedPIDs()
 		fmt.Printf("✅ 没有超过 %ds 的慢查询\n\n", *threshold)
 		return
 	}
+
+	shouldNotify := notifier.syncAndShouldNotify(queries)
 
 	fmt.Printf("🚨 发现 %d 个慢查询:\n\n", len(queries))
 
@@ -252,20 +262,58 @@ func checkLongQueries(db *sql.DB) {
 
 	fmt.Println()
 
-	// 发送通知
-	sendNotification(slowQueryText.String())
-}
-
-func sendNotification(message string) {
-	notifier.mu.Lock()
-	defer notifier.mu.Unlock()
-
-	// 检查通知间隔，避免告警风暴
-	if time.Since(notifier.lastNotifyTime) < time.Duration(*notifyInterval)*time.Second {
-		fmt.Printf("⏰ 距上次通知不足 %ds，跳过本次通知\n", *notifyInterval)
+	if !shouldNotify {
+		fmt.Println("⏭  均为已告警过的连接（相同 KILL id），跳过外部通知")
 		return
 	}
 
+	sendNotification(slowQueryText.String(), queries)
+}
+
+func (n *Notifier) clearNotifiedPIDs() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.notifiedPIDs = nil
+}
+
+// 清理已结束的连接；若存在尚未告警过的 processlist_id 则返回 true
+func (n *Notifier) syncAndShouldNotify(queries []LongQuery) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.notifiedPIDs == nil {
+		n.notifiedPIDs = make(map[uint64]struct{})
+	}
+
+	current := make(map[uint64]struct{}, len(queries))
+	for _, q := range queries {
+		current[q.ProcessID] = struct{}{}
+	}
+	for pid := range n.notifiedPIDs {
+		if _, ok := current[pid]; !ok {
+			delete(n.notifiedPIDs, pid)
+		}
+	}
+	for _, q := range queries {
+		if _, ok := n.notifiedPIDs[q.ProcessID]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (n *Notifier) markPIDsNotified(queries []LongQuery) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.notifiedPIDs == nil {
+		n.notifiedPIDs = make(map[uint64]struct{})
+	}
+	for _, q := range queries {
+		n.notifiedPIDs[q.ProcessID] = struct{}{}
+	}
+}
+
+func sendNotification(message string, queries []LongQuery) {
 	var notified bool
 
 	// 发送钉钉通知
@@ -274,6 +322,16 @@ func sendNotification(message string) {
 			fmt.Printf("❌ 钉钉通知发送失败: %v\n", err)
 		} else {
 			fmt.Println("✅ 钉钉通知已发送")
+			notified = true
+		}
+	}
+
+	// 发送飞书通知
+	if *feishuWebhook != "" {
+		if err := sendFeishuNotification(message); err != nil {
+			fmt.Printf("❌ 飞书通知发送失败: %v\n", err)
+		} else {
+			fmt.Println("✅ 飞书通知已发送")
 			notified = true
 		}
 	}
@@ -289,7 +347,7 @@ func sendNotification(message string) {
 	}
 
 	if notified {
-		notifier.lastNotifyTime = time.Now()
+		notifier.markPIDsNotified(queries)
 	}
 }
 
@@ -333,6 +391,80 @@ func sendDingTalkNotification(message string) error {
 	return nil
 }
 
+// 飞书自定义机器人（Webhook v2）文本消息；签名为秒级时间戳 + "\\n" + secret 的 HMAC-SHA256 Base64
+func sendFeishuNotification(message string) error {
+	type fsContent struct {
+		Text string `json:"text"`
+	}
+	type fsBody struct {
+		Timestamp string    `json:"timestamp,omitempty"`
+		Sign      string    `json:"sign,omitempty"`
+		MsgType   string    `json:"msg_type"`
+		Content   fsContent `json:"content"`
+	}
+
+	sec := time.Now().Unix()
+	body := fsBody{
+		MsgType: "text",
+		Content: fsContent{Text: message},
+	}
+	if strings.TrimSpace(*feishuSecret) != "" {
+		body.Timestamp = fmt.Sprintf("%d", sec)
+		body.Sign = generateFeishuSign(sec, *feishuSecret)
+	}
+
+	jsonData, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("JSON 序列化失败: %w", err)
+	}
+
+	resp, err := http.Post(*feishuWebhook, httpContentType, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("HTTP 请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取响应失败: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP 状态码: %d, 响应: %s", resp.StatusCode, string(respBody))
+	}
+
+	var fr struct {
+		Code          int    `json:"code"`
+		StatusCode    int    `json:"StatusCode"`
+		Msg           string `json:"msg"`
+		StatusMessage string `json:"StatusMessage"`
+	}
+	if err := json.Unmarshal(respBody, &fr); err != nil {
+		if len(bytes.TrimSpace(respBody)) == 0 {
+			return nil
+		}
+		return fmt.Errorf("飞书响应解析失败: %w, 正文: %s", err, string(respBody))
+	}
+	apiCode := fr.Code
+	if apiCode == 0 {
+		apiCode = fr.StatusCode
+	}
+	if apiCode != 0 {
+		errMsg := fr.Msg
+		if errMsg == "" {
+			errMsg = fr.StatusMessage
+		}
+		return fmt.Errorf("飞书 API code=%d: %s", apiCode, errMsg)
+	}
+	return nil
+}
+
+func generateFeishuSign(timestampSec int64, secret string) string {
+	stringToSign := fmt.Sprintf("%d\n%s", timestampSec, secret)
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(stringToSign))
+	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+}
+
 // 生成钉钉签名
 func generateDingTalkSign(timestamp int64, secret string) string {
 	stringToSign := fmt.Sprintf("%d\n%s", timestamp, secret)
@@ -341,26 +473,42 @@ func generateDingTalkSign(timestamp int64, secret string) string {
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
-// 邮件通知
+// 邮件通知（信头需符合 RFC5322；QQ 邮箱会校验 From，缺省会报 550）
 func sendEmailNotification(message string) error {
 	recipients := strings.Split(*emailTo, ",")
 	for i, r := range recipients {
 		recipients[i] = strings.TrimSpace(r)
 	}
-
-	subject := fmt.Sprintf("🚨 MySQL 慢查询告警 - %s", time.Now().Format("2006-01-02 15:04:05"))
-	body := fmt.Sprintf("Subject: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s", subject, message)
-
-	auth := smtp.PlainAuth("", *emailUsername, *emailPassword, *emailSMTPHost)
-
-	// 如果端口是 465（SSL），使用 TLS
-	addr := fmt.Sprintf("%s:%d", *emailSMTPHost, *emailSMTPPort)
-	if *emailSMTPPort == 465 {
-		return sendEmailWithTLS(addr, auth, *emailFrom, recipients, []byte(body))
+	if len(recipients) == 0 || recipients[0] == "" {
+		return fmt.Errorf("收件人 EMAIL_TO 为空")
 	}
 
-	// 使用 STARTTLS
-	return smtp.SendMail(addr, auth, *emailFrom, recipients, []byte(body))
+	from := strings.TrimSpace(*emailFrom)
+	if from == "" {
+		return fmt.Errorf("发件人 EMAIL_FROM 为空")
+	}
+
+	subject := fmt.Sprintf("🚨 MySQL 慢查询告警 - %s", time.Now().Format("2006-01-02 15:04:05"))
+	subjectHdr := mime.QEncoding.Encode("utf-8", subject)
+
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "From: %s\r\n", from)
+	fmt.Fprintf(&buf, "To: %s\r\n", strings.Join(recipients, ", "))
+	fmt.Fprintf(&buf, "Subject: %s\r\n", subjectHdr)
+	fmt.Fprintf(&buf, "MIME-Version: 1.0\r\n")
+	fmt.Fprintf(&buf, "Content-Type: text/plain; charset=UTF-8\r\n")
+	fmt.Fprintf(&buf, "\r\n")
+	buf.WriteString(message)
+
+	msg := buf.Bytes()
+	auth := smtp.PlainAuth("", *emailUsername, *emailPassword, *emailSMTPHost)
+
+	addr := fmt.Sprintf("%s:%d", *emailSMTPHost, *emailSMTPPort)
+	if *emailSMTPPort == 465 {
+		return sendEmailWithTLS(addr, auth, from, recipients, msg)
+	}
+
+	return smtp.SendMail(addr, auth, from, recipients, msg)
 }
 
 // 使用 TLS 发送邮件（端口 465）
