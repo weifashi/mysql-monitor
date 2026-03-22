@@ -2,6 +2,7 @@
 
 # Docker Compose 文件
 COMPOSE_FILE := docker-compose.yml
+COMPOSE_FILE_EXAMPLE := docker-compose.example.yml
 ENV_FILE := .env
 
 help: ## 显示帮助信息
@@ -18,6 +19,12 @@ help: ## 显示帮助信息
 
 init: ## 初始化配置文件
 	@echo "📝 初始化配置文件..."
+	@if [ ! -f $(COMPOSE_FILE) ]; then \
+		cp $(COMPOSE_FILE_EXAMPLE) $(COMPOSE_FILE); \
+		echo "✅ 已创建 $(COMPOSE_FILE)，可根据需要修改"; \
+	else \
+		echo "⚠️  $(COMPOSE_FILE) 已存在，跳过"; \
+	fi
 	@if [ ! -f $(ENV_FILE) ]; then \
 		cp .env.example $(ENV_FILE); \
 		echo "✅ 已创建 $(ENV_FILE)，请编辑配置后运行 make up"; \

@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.*.local
+docker-compose.yml
 
 # 编译产物
 perf_monitor
