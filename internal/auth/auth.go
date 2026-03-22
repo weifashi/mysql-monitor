@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -30,17 +29,35 @@ type GitHubConfig struct {
 	ClientSecret string
 }
 
+// SessionDB is the persistence interface for sessions.
+type SessionDB interface {
+	SaveSession(sess *SessionRow) error
+	GetSession(token string) (*SessionRow, error)
+	DeleteSession(token string) error
+	CleanupExpiredSessions() error
+}
+
+// SessionRow mirrors store.SessionRow to avoid circular imports.
+type SessionRow struct {
+	Token       string
+	Username    string
+	UserID      int64
+	GitHubLogin string
+	Role        string
+	AvatarURL   string
+	ExpiresAt   time.Time
+}
+
 type SessionStore struct {
-	mu            sync.RWMutex
-	sessions      map[string]Session
+	db            SessionDB
 	adminUser     string
 	adminPassword string
 	GitHub        GitHubConfig
 }
 
-func NewSessionStore(adminUser, adminPassword string) *SessionStore {
+func NewSessionStore(adminUser, adminPassword string, db SessionDB) *SessionStore {
 	return &SessionStore{
-		sessions:      make(map[string]Session),
+		db:            db,
 		adminUser:     adminUser,
 		adminPassword: adminPassword,
 	}
@@ -52,60 +69,55 @@ func (ss *SessionStore) Login(user, pass string) (string, bool) {
 		return "", false
 	}
 	token := generateToken()
-	ss.mu.Lock()
-	ss.sessions[token] = Session{
+	ss.db.SaveSession(&SessionRow{
+		Token:     token,
 		Username:  user,
 		Role:      "admin",
 		ExpiresAt: time.Now().Add(sessionMaxAge),
-	}
-	ss.mu.Unlock()
+	})
 	return token, true
 }
 
 // LoginGitHub creates a session for a GitHub-authenticated user.
 func (ss *SessionStore) LoginGitHub(userID int64, username, githubLogin, avatarURL, role string) string {
 	token := generateToken()
-	ss.mu.Lock()
-	ss.sessions[token] = Session{
+	ss.db.SaveSession(&SessionRow{
+		Token:       token,
 		Username:    username,
 		UserID:      userID,
 		GitHubLogin: githubLogin,
 		Role:        role,
 		AvatarURL:   avatarURL,
 		ExpiresAt:   time.Now().Add(sessionMaxAge),
-	}
-	ss.mu.Unlock()
+	})
 	return token
 }
 
 func (ss *SessionStore) Validate(token string) (*Session, bool) {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	s, ok := ss.sessions[token]
-	if !ok || time.Now().After(s.ExpiresAt) {
-		if ok {
-			delete(ss.sessions, token)
-		}
+	row, err := ss.db.GetSession(token)
+	if err != nil {
 		return nil, false
 	}
-	return &s, true
+	if time.Now().After(row.ExpiresAt) {
+		ss.db.DeleteSession(token)
+		return nil, false
+	}
+	return &Session{
+		Username:    row.Username,
+		UserID:      row.UserID,
+		GitHubLogin: row.GitHubLogin,
+		Role:        row.Role,
+		AvatarURL:   row.AvatarURL,
+		ExpiresAt:   row.ExpiresAt,
+	}, true
 }
 
 func (ss *SessionStore) CleanupExpired() {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-	now := time.Now()
-	for token, s := range ss.sessions {
-		if now.After(s.ExpiresAt) {
-			delete(ss.sessions, token)
-		}
-	}
+	ss.db.CleanupExpiredSessions()
 }
 
 func (ss *SessionStore) Logout(token string) {
-	ss.mu.Lock()
-	delete(ss.sessions, token)
-	ss.mu.Unlock()
+	ss.db.DeleteSession(token)
 }
 
 func (ss *SessionStore) AdminUser() string {

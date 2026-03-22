@@ -13,6 +13,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 
 	"mysql-monitor/internal/auth"
+	"mysql-monitor/internal/monitor"
 	"mysql-monitor/internal/notify"
 	"mysql-monitor/internal/store"
 )
@@ -59,6 +60,25 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// --- Audit ---
+
+func (s *Server) audit(r *http.Request, action, target string, targetID int64, detail string) {
+	user := ""
+	if sess := s.getSession(r); sess != nil {
+		user = sess.Username
+	}
+	ip := r.Header.Get("X-Forwarded-For")
+	if ip == "" {
+		ip = r.Header.Get("X-Real-IP")
+	}
+	if ip == "" {
+		ip = r.RemoteAddr
+	}
+	s.store.InsertAuditLog(&store.AuditLog{
+		User: user, Action: action, Target: target, TargetID: targetID, Detail: detail, IP: ip,
+	})
+}
+
 // --- Auth ---
 
 func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +104,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	auth.SetSessionCookie(w, token)
+	s.audit(r, "login", "auth", 0, "用户 "+req.Username+" 密码登录")
 	jsonOK(w, map[string]any{
 		"username": req.Username,
 		"role":     "admin",
@@ -91,6 +112,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiLogout(w http.ResponseWriter, r *http.Request) {
+	s.audit(r, "logout", "auth", 0, "用户登出")
 	token := auth.GetSessionToken(r)
 	if token != "" {
 		s.auth.Logout(token)
@@ -187,6 +209,7 @@ func (s *Server) apiGitHubCallback(w http.ResponseWriter, r *http.Request) {
 
 	token := s.auth.LoginGitHub(user.ID, user.Username, ghUser.Login, ghUser.AvatarURL, user.Role)
 	auth.SetSessionCookie(w, token)
+	s.audit(r, "login", "auth", 0, "用户 "+ghUser.Login+" GitHub 登录")
 	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 }
 
@@ -195,24 +218,36 @@ func (s *Server) apiGitHubCallback(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiDashboardStats(w http.ResponseWriter, r *http.Request) {
 	var (
 		totalDBs, enabledDBs, todayCount, weekCount int
+		rocketmqConfigs, rocketmqAlertsToday        int
+		healthCheckCount, healthCheckErrorsToday    int
 		recentLogs                                   []store.SlowQueryLog
 		wg                                           sync.WaitGroup
 	)
-	wg.Add(5)
+	wg.Add(9)
 	go func() { defer wg.Done(); totalDBs, _ = s.store.CountDatabases() }()
 	go func() { defer wg.Done(); enabledDBs, _ = s.store.CountEnabledDatabases() }()
 	go func() { defer wg.Done(); todayCount, _ = s.store.CountSlowQueriesToday() }()
 	go func() { defer wg.Done(); weekCount, _ = s.store.CountSlowQueriesWeek() }()
 	go func() { defer wg.Done(); recentLogs, _, _ = s.store.ListSlowQueryLogs(nil, 1, 10) }()
+	go func() { defer wg.Done(); rocketmqConfigs, _ = s.store.CountRocketMQConfigs() }()
+	go func() { defer wg.Done(); rocketmqAlertsToday, _ = s.store.CountRocketMQAlertsToday() }()
+	go func() { defer wg.Done(); healthCheckCount, _ = s.store.CountHealthChecks() }()
+	go func() { defer wg.Done(); healthCheckErrorsToday, _ = s.store.CountHealthCheckErrorsToday() }()
 	wg.Wait()
 
 	jsonOK(w, map[string]any{
-		"total_dbs":   totalDBs,
-		"enabled_dbs": enabledDBs,
-		"running_dbs": s.manager.RunningCount(),
-		"today_count": todayCount,
-		"week_count":  weekCount,
-		"recent_logs": recentLogs,
+		"total_dbs":              totalDBs,
+		"enabled_dbs":           enabledDBs,
+		"running_dbs":           s.manager.RunningCount(),
+		"today_count":           todayCount,
+		"week_count":            weekCount,
+		"recent_logs":           recentLogs,
+		"rocketmq_configs":      rocketmqConfigs,
+		"rocketmq_running":      s.rocketMQMgr.RunningCount(),
+		"rocketmq_alerts_today": rocketmqAlertsToday,
+		"health_checks":              healthCheckCount,
+		"health_checks_running":      s.healthCheckMgr.RunningCount(),
+		"health_check_errors_today": healthCheckErrorsToday,
 	})
 }
 
@@ -291,6 +326,7 @@ func (s *Server) apiDatabaseCreate(w http.ResponseWriter, r *http.Request) {
 		log.Printf("start monitor for new db %d: %v", id, err)
 	}
 
+	s.audit(r, "create", "database", id, "创建数据库 "+db.Name)
 	jsonOK(w, map[string]any{"id": id})
 }
 
@@ -350,6 +386,7 @@ func (s *Server) apiDatabaseUpdate(w http.ResponseWriter, r *http.Request) {
 		s.manager.StopDatabase(id)
 	}
 
+	s.audit(r, "update", "database", id, "更新数据库 "+db.Name)
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
@@ -363,6 +400,7 @@ func (s *Server) apiDatabaseDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.audit(r, "delete", "database", id, fmt.Sprintf("删除数据库 ID=%d", id))
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
@@ -388,6 +426,11 @@ func (s *Server) apiDatabaseToggle(w http.ResponseWriter, r *http.Request) {
 		s.manager.StopDatabase(id)
 	}
 
+	action := "启用"
+	if !db.Enabled {
+		action = "禁用"
+	}
+	s.audit(r, "toggle", "database", id, action+"数据库 "+db.Name)
 	jsonOK(w, map[string]any{"enabled": db.Enabled})
 }
 
@@ -498,6 +541,7 @@ func (s *Server) apiNotificationCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.audit(r, "create", "notification", id, fmt.Sprintf("创建通知配置 类型:%s", nc.Type))
 	jsonOK(w, map[string]any{"id": id})
 }
 
@@ -516,6 +560,7 @@ func (s *Server) apiNotificationUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.audit(r, "update", "notification", id, fmt.Sprintf("更新通知配置 类型:%s", nc.Type))
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
@@ -528,6 +573,7 @@ func (s *Server) apiNotificationDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.audit(r, "delete", "notification", id, "删除通知配置")
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
@@ -700,6 +746,7 @@ func (s *Server) apiUserCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.audit(r, "create", "user", id, fmt.Sprintf("创建用户 %s (角色:%s)", req.Username, req.Role))
 	jsonOK(w, map[string]any{"id": id})
 }
 
@@ -715,6 +762,7 @@ func (s *Server) apiUserDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.audit(r, "delete", "user", id, "删除用户")
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
@@ -746,6 +794,7 @@ func (s *Server) apiSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		"github_enabled":         true,
 		"password_login_enabled": true,
 	}
+	var changed []string
 	for k, v := range req {
 		if !allowed[k] {
 			continue
@@ -754,6 +803,10 @@ func (s *Server) apiSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		changed = append(changed, k)
+	}
+	if len(changed) > 0 {
+		s.audit(r, "update", "settings", 0, fmt.Sprintf("更新设置: %s", strings.Join(changed, ", ")))
 	}
 
 	jsonOK(w, map[string]string{"status": "ok"})
@@ -779,4 +832,504 @@ func (s *Server) apiDatabasesSimpleList(w http.ResponseWriter, r *http.Request) 
 		list = []simple{}
 	}
 	jsonOK(w, list)
+}
+
+// --- RocketMQ ---
+
+type rocketMQWithStatus struct {
+	store.RocketMQConfig
+	Running bool `json:"running"`
+}
+
+func (s *Server) apiRocketMQList(w http.ResponseWriter, r *http.Request) {
+	configs, err := s.store.ListRocketMQConfigs()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var list []rocketMQWithStatus
+	for _, c := range configs {
+		item := rocketMQWithStatus{RocketMQConfig: c, Running: s.rocketMQMgr.IsRunning(c.ID)}
+		item.Password = ""
+		list = append(list, item)
+	}
+	if list == nil {
+		list = []rocketMQWithStatus{}
+	}
+	jsonOK(w, list)
+}
+
+func (s *Server) apiRocketMQCreate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name          string `json:"name"`
+		DashboardURL  string `json:"dashboard_url"`
+		Username      string `json:"username"`
+		Password      string `json:"password"`
+		ConsumerGroup string `json:"consumer_group"`
+		Topic         string `json:"topic"`
+		Threshold     int    `json:"threshold"`
+		IntervalSec   int    `json:"interval_sec"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Name == "" || req.DashboardURL == "" || req.ConsumerGroup == "" || req.Topic == "" {
+		jsonError(w, http.StatusBadRequest, "name, dashboard_url, consumer_group, topic are required")
+		return
+	}
+	if req.Threshold <= 0 {
+		req.Threshold = 1000
+	}
+	if req.IntervalSec <= 0 {
+		req.IntervalSec = 30
+	}
+
+	cfg := &store.RocketMQConfig{
+		Name: req.Name, DashboardURL: req.DashboardURL,
+		Username: req.Username, Password: req.Password,
+		ConsumerGroup: req.ConsumerGroup, Topic: req.Topic,
+		Threshold: req.Threshold, IntervalSec: req.IntervalSec,
+		Enabled: true,
+	}
+	id, err := s.store.CreateRocketMQConfig(cfg)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.rocketMQMgr.Start(id); err != nil {
+		log.Printf("start rocketmq monitor %d: %v", id, err)
+	}
+	s.audit(r, "create", "rocketmq", id, fmt.Sprintf("创建RocketMQ监控 %s", req.Name))
+	jsonOK(w, map[string]int64{"id": id})
+}
+
+func (s *Server) apiRocketMQUpdate(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	existing, err := s.store.GetRocketMQConfig(id)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var req struct {
+		Name          string `json:"name"`
+		DashboardURL  string `json:"dashboard_url"`
+		Username      string `json:"username"`
+		Password      string `json:"password"`
+		ConsumerGroup string `json:"consumer_group"`
+		Topic         string `json:"topic"`
+		Threshold     int    `json:"threshold"`
+		IntervalSec   int    `json:"interval_sec"`
+		Enabled       *bool  `json:"enabled"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Name != "" {
+		existing.Name = req.Name
+	}
+	if req.DashboardURL != "" {
+		existing.DashboardURL = req.DashboardURL
+	}
+	existing.Username = req.Username
+	if req.Password != "" {
+		existing.Password = req.Password
+	}
+	if req.ConsumerGroup != "" {
+		existing.ConsumerGroup = req.ConsumerGroup
+	}
+	if req.Topic != "" {
+		existing.Topic = req.Topic
+	}
+	if req.Threshold > 0 {
+		existing.Threshold = req.Threshold
+	}
+	if req.IntervalSec > 0 {
+		existing.IntervalSec = req.IntervalSec
+	}
+	if req.Enabled != nil {
+		existing.Enabled = *req.Enabled
+	}
+
+	if err := s.store.UpdateRocketMQConfig(existing); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.rocketMQMgr.Stop(id)
+	if existing.Enabled {
+		if err := s.rocketMQMgr.Start(id); err != nil {
+			log.Printf("restart rocketmq monitor %d: %v", id, err)
+		}
+	}
+	s.audit(r, "update", "rocketmq", id, fmt.Sprintf("更新RocketMQ监控 %s", existing.Name))
+	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) apiRocketMQDelete(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	s.rocketMQMgr.Stop(id)
+	if err := s.store.DeleteRocketMQConfig(id); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "delete", "rocketmq", id, "删除RocketMQ监控")
+	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) apiRocketMQToggle(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.ToggleRocketMQ(id); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cfg, err := s.store.GetRocketMQConfig(id)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if cfg.Enabled {
+		s.rocketMQMgr.Start(id)
+	} else {
+		s.rocketMQMgr.Stop(id)
+	}
+	action := "启用"
+	if !cfg.Enabled {
+		action = "禁用"
+	}
+	s.audit(r, "toggle", "rocketmq", id, action+"RocketMQ监控 "+cfg.Name)
+	jsonOK(w, map[string]bool{"enabled": cfg.Enabled})
+}
+
+func (s *Server) apiRocketMQTest(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := s.store.GetRocketMQConfig(id)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err := monitor.TestRocketMQConnection(cfg); err != nil {
+		jsonOK(w, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	jsonOK(w, map[string]any{"ok": true, "message": "连接成功"})
+}
+
+func (s *Server) apiRocketMQAlerts(w http.ResponseWriter, r *http.Request) {
+	page := 1
+	pageSize := 20
+	if p := r.URL.Query().Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if ps := r.URL.Query().Get("page_size"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 100 {
+			pageSize = v
+		}
+	}
+	var configID *int64
+	if cid := r.URL.Query().Get("config_id"); cid != "" {
+		if v, err := strconv.ParseInt(cid, 10, 64); err == nil && v > 0 {
+			configID = &v
+		}
+	}
+
+	logs, total, err := s.store.ListRocketMQAlertLogs(configID, page, pageSize)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if logs == nil {
+		logs = []store.RocketMQAlertLog{}
+	}
+	jsonOK(w, map[string]any{"data": logs, "total": total, "page": page, "page_size": pageSize})
+}
+
+// --- Audit Logs ---
+
+func (s *Server) apiAuditLogs(w http.ResponseWriter, r *http.Request) {
+	page := 1
+	pageSize := 50
+	if p := r.URL.Query().Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if ps := r.URL.Query().Get("page_size"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 100 {
+			pageSize = v
+		}
+	}
+
+	logs, total, err := s.store.ListAuditLogs(page, pageSize)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if logs == nil {
+		logs = []store.AuditLog{}
+	}
+	jsonOK(w, map[string]any{"data": logs, "total": total, "page": page, "page_size": pageSize})
+}
+
+// --- Health Checks ---
+
+type healthCheckWithStatus struct {
+	store.HealthCheck
+	Running bool `json:"running"`
+}
+
+func (s *Server) apiHealthCheckList(w http.ResponseWriter, r *http.Request) {
+	checks, err := s.store.ListHealthChecks()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var list []healthCheckWithStatus
+	for _, c := range checks {
+		list = append(list, healthCheckWithStatus{HealthCheck: c, Running: s.healthCheckMgr.IsRunning(c.ID)})
+	}
+	if list == nil {
+		list = []healthCheckWithStatus{}
+	}
+	jsonOK(w, list)
+}
+
+func (s *Server) apiHealthCheckCreate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name           string `json:"name"`
+		URL            string `json:"url"`
+		Method         string `json:"method"`
+		HeadersJSON    string `json:"headers_json"`
+		Body           string `json:"body"`
+		ExpectedStatus int    `json:"expected_status"`
+		ExpectedField  string `json:"expected_field"`
+		ExpectedValue  string `json:"expected_value"`
+		TimeoutSec     int    `json:"timeout_sec"`
+		IntervalSec    int    `json:"interval_sec"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Name == "" || req.URL == "" {
+		jsonError(w, http.StatusBadRequest, "name and url are required")
+		return
+	}
+	if req.Method == "" {
+		req.Method = "GET"
+	}
+	if req.ExpectedStatus <= 0 {
+		req.ExpectedStatus = 200
+	}
+	if req.TimeoutSec <= 0 {
+		req.TimeoutSec = 10
+	}
+	if req.IntervalSec <= 0 {
+		req.IntervalSec = 30
+	}
+	if req.HeadersJSON == "" {
+		req.HeadersJSON = "{}"
+	}
+
+	cfg := &store.HealthCheck{
+		Name: req.Name, URL: req.URL, Method: req.Method,
+		HeadersJSON: req.HeadersJSON, Body: req.Body,
+		ExpectedStatus: req.ExpectedStatus, ExpectedField: req.ExpectedField, ExpectedValue: req.ExpectedValue,
+		TimeoutSec: req.TimeoutSec, IntervalSec: req.IntervalSec,
+		Enabled: true,
+	}
+	id, err := s.store.CreateHealthCheck(cfg)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.healthCheckMgr.Start(id); err != nil {
+		log.Printf("start health check %d: %v", id, err)
+	}
+	s.audit(r, "create", "healthcheck", id, fmt.Sprintf("创建健康检查 %s", req.Name))
+	jsonOK(w, map[string]int64{"id": id})
+}
+
+func (s *Server) apiHealthCheckUpdate(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	existing, err := s.store.GetHealthCheck(id)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var req struct {
+		Name           string  `json:"name"`
+		URL            string  `json:"url"`
+		Method         string  `json:"method"`
+		HeadersJSON    string  `json:"headers_json"`
+		Body           *string `json:"body"`
+		ExpectedStatus int     `json:"expected_status"`
+		ExpectedField  *string `json:"expected_field"`
+		ExpectedValue  *string `json:"expected_value"`
+		TimeoutSec     int     `json:"timeout_sec"`
+		IntervalSec    int     `json:"interval_sec"`
+		Enabled        *bool   `json:"enabled"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Name != "" {
+		existing.Name = req.Name
+	}
+	if req.URL != "" {
+		existing.URL = req.URL
+	}
+	if req.Method != "" {
+		existing.Method = req.Method
+	}
+	if req.HeadersJSON != "" {
+		existing.HeadersJSON = req.HeadersJSON
+	}
+	if req.Body != nil {
+		existing.Body = *req.Body
+	}
+	if req.ExpectedStatus > 0 {
+		existing.ExpectedStatus = req.ExpectedStatus
+	}
+	if req.ExpectedField != nil {
+		existing.ExpectedField = *req.ExpectedField
+	}
+	if req.ExpectedValue != nil {
+		existing.ExpectedValue = *req.ExpectedValue
+	}
+	if req.TimeoutSec > 0 {
+		existing.TimeoutSec = req.TimeoutSec
+	}
+	if req.IntervalSec > 0 {
+		existing.IntervalSec = req.IntervalSec
+	}
+	if req.Enabled != nil {
+		existing.Enabled = *req.Enabled
+	}
+
+	if err := s.store.UpdateHealthCheck(existing); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.healthCheckMgr.Stop(id)
+	if existing.Enabled {
+		if err := s.healthCheckMgr.Start(id); err != nil {
+			log.Printf("restart health check %d: %v", id, err)
+		}
+	}
+	s.audit(r, "update", "healthcheck", id, fmt.Sprintf("更新健康检查 %s", existing.Name))
+	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) apiHealthCheckDelete(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	s.healthCheckMgr.Stop(id)
+	if err := s.store.DeleteHealthCheck(id); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "delete", "healthcheck", id, fmt.Sprintf("删除健康检查 ID=%d", id))
+	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) apiHealthCheckToggle(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.ToggleHealthCheck(id); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cfg, err := s.store.GetHealthCheck(id)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if cfg.Enabled {
+		s.healthCheckMgr.Start(id)
+	} else {
+		s.healthCheckMgr.Stop(id)
+	}
+	action := "启用"
+	if !cfg.Enabled {
+		action = "禁用"
+	}
+	s.audit(r, "toggle", "healthcheck", id, action+"健康检查 "+cfg.Name)
+	jsonOK(w, map[string]bool{"enabled": cfg.Enabled})
+}
+
+func (s *Server) apiHealthCheckTest(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := s.store.GetHealthCheck(id)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "not found")
+		return
+	}
+	result := monitor.TestHealthCheck(cfg)
+	jsonOK(w, map[string]any{
+		"ok":          result.Status == "up",
+		"status":      result.Status,
+		"http_status": result.HTTPStatus,
+		"latency_ms":  result.LatencyMs,
+		"error":       result.Error,
+		"response":    result.Response,
+	})
+}
+
+func (s *Server) apiHealthCheckLogs(w http.ResponseWriter, r *http.Request) {
+	page := 1
+	pageSize := 20
+	if p := r.URL.Query().Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if ps := r.URL.Query().Get("page_size"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 100 {
+			pageSize = v
+		}
+	}
+	var checkID *int64
+	if cid := r.URL.Query().Get("check_id"); cid != "" {
+		if v, err := strconv.ParseInt(cid, 10, 64); err == nil && v > 0 {
+			checkID = &v
+		}
+	}
+
+	logs, total, err := s.store.ListHealthCheckLogs(checkID, page, pageSize)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if logs == nil {
+		logs = []store.HealthCheckLog{}
+	}
+	jsonOK(w, map[string]any{"data": logs, "total": total, "page": page, "page_size": pageSize})
 }

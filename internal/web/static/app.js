@@ -1,4 +1,4 @@
-/* MySQL Monitor — Vue 3 + Naive UI SPA */
+/* Ops Monitor — Vue 3 + Naive UI SPA */
 const { createApp, ref, reactive, computed, onMounted, onUnmounted, h, watch, nextTick, defineComponent, provide, inject } = Vue;
 const { createRouter, createWebHashHistory } = VueRouter;
 const {
@@ -202,8 +202,8 @@ const LoginPage = defineComponent({
                     // Logo area
                     h('div', { class: 'login-header' }, [
                         h('div', { class: 'login-logo' }, [dbIcon()]),
-                        h('h1', { class: 'login-title' }, 'MySQL Monitor'),
-                        h('p', { class: 'login-subtitle' }, '数据库慢查询监控平台'),
+                        h('h1', { class: 'login-title' }, 'Ops Monitor'),
+                        h('p', { class: 'login-subtitle' }, '运维监控管理平台'),
                     ]),
 
                     // Error alert
@@ -273,21 +273,47 @@ const DashboardPage = defineComponent({
             { title: 'SQL', key: 'sql_text', ellipsis: { tooltip: true }, _hideOnMobile: true, render: row => renderSqlCell(row, 80) },
         ]);
 
-        return () => h(NSpin, { show: loading.value }, () => stats.value ? h('div', [
-            h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:20px' }, [
-                h('h3', { style: 'margin:0;font-size:1.1rem;font-weight:600' }, '仪表盘'),
-                h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
+        function statCard(title, subtitle, items) {
+            return h('div', { class: 'stat-card' }, [
+                h('div', { class: 'stat-card-header' }, [
+                    h('span', { class: 'stat-card-title' }, title),
+                    subtitle ? h('span', { class: 'stat-card-subtitle' }, subtitle) : null,
+                ]),
+                h('div', { class: 'stat-card-body' }, items.map(item =>
+                    h('div', { class: 'stat-card-item' }, [
+                        h('div', { class: 'stat-card-value', style: item.color ? ('color:' + item.color) : '' }, String(item.value)),
+                        h('div', { class: 'stat-card-label' }, item.label),
+                    ])
+                )),
+            ]);
+        }
+
+        return () => h(NSpin, { show: loading.value }, () => stats.value ? h('div', { class: 'page-body' }, [
+            h('div', { class: 'page-header' }, [
+                h('h3', { class: 'page-title' }, '仪表盘'),
+                h('div', { style: 'display:flex;align-items:center;gap:6px;font-size:12px;opacity:0.5' }, [
                     h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
                     connected.value ? '实时监控中' : '连接断开'
                 ]),
             ]),
-            h(NGrid, { cols: _isMobile.value ? 2 : 4, xGap: 12, yGap: 12, responsive: 'screen', itemResponsive: true }, () => [
-                h(NGi, null, () => h(NCard, { size: 'small' }, () => h(NStatistic, { label: '数据库配置', value: stats.value.total_dbs }))),
-                h(NGi, null, () => h(NCard, { size: 'small' }, () => h(NStatistic, { label: '运行中', value: stats.value.running_dbs + ' / ' + stats.value.enabled_dbs }))),
-                h(NGi, null, () => h(NCard, { size: 'small' }, () => h(NStatistic, { label: '今日慢查询', value: stats.value.today_count }))),
-                h(NGi, null, () => h(NCard, { size: 'small' }, () => h(NStatistic, { label: '本周慢查询', value: stats.value.week_count }))),
+            h('div', { class: 'stat-grid' }, [
+                statCard('MySQL', '慢查询监控', [
+                    { label: '运行中', value: stats.value.running_dbs, color: '#18a058' },
+                    { label: '已配置', value: stats.value.total_dbs, color: '#2080f0' },
+                    { label: '今日慢查询', value: stats.value.today_count, color: stats.value.today_count > 0 ? '#d03050' : '#999' },
+                ]),
+                statCard('RocketMQ', '消息堆积监控', [
+                    { label: '运行中', value: stats.value.rocketmq_running || 0, color: '#18a058' },
+                    { label: '已配置', value: stats.value.rocketmq_configs || 0, color: '#2080f0' },
+                    { label: '今日告警', value: stats.value.rocketmq_alerts_today || 0, color: (stats.value.rocketmq_alerts_today || 0) > 0 ? '#d03050' : '#999' },
+                ]),
+                statCard('健康检查', 'HTTP 端点监控', [
+                    { label: '运行中', value: stats.value.health_checks_running || 0, color: '#18a058' },
+                    { label: '已配置', value: stats.value.health_checks || 0, color: '#2080f0' },
+                    { label: '今日异常', value: stats.value.health_check_errors_today || 0, color: (stats.value.health_check_errors_today || 0) > 0 ? '#d03050' : '#999' },
+                ]),
             ]),
-            h('h4', { style: 'margin:24px 0 12px;font-size:0.95rem;font-weight:600' }, '最近慢查询'),
+            h('h4', { class: 'section-title' }, '最近慢查询'),
             stats.value.recent_logs && stats.value.recent_logs.length > 0
                 ? h(NDataTable, { columns: recentColumns.value, data: stats.value.recent_logs, bordered: false, size: 'small', maxHeight: 400, scrollX: _isMobile.value ? 400 : undefined, rowKey: row => row.id || row.detected_at })
                 : h(NEmpty, { description: '暂无慢查询记录' }),
@@ -322,6 +348,12 @@ const DatabasesPage = defineComponent({
         function openEdit(row) {
             editingId.value = row.id;
             Object.assign(form, { name: row.name, host: row.host, port: row.port, user: row.user, password: '', interval_sec: row.interval_sec, threshold_sec: row.threshold_sec });
+            showModal.value = true;
+        }
+
+        function openClone(row) {
+            editingId.value = null;
+            Object.assign(form, { name: row.name + ' (副本)', host: row.host, port: row.port, user: row.user, password: '', interval_sec: row.interval_sec, threshold_sec: row.threshold_sec });
             showModal.value = true;
         }
 
@@ -360,10 +392,11 @@ const DatabasesPage = defineComponent({
             { title: '用户', key: 'user', _hideOnMobile: true },
             { title: '间隔/阈值', key: 'interval', _hideOnMobile: true, render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => row.interval_sec + 's / ' + row.threshold_sec + 's') },
             { title: '状态', key: 'status', width: 90, render: row => row.running ? h(NTag, { type: 'success', size: 'small' }, () => '运行中') : row.enabled ? h(NTag, { type: 'warning', size: 'small' }, () => '已启用') : h(NTag, { size: 'small' }, () => '已禁用') },
-            { title: '操作', key: 'actions', width: _isMobile.value ? 160 : 250, render: row => h(NSpace, { size: 'small', wrap: _isMobile.value }, () => {
+            { title: '操作', key: 'actions', width: _isMobile.value ? 160 : 310, render: row => h(NSpace, { size: 'small', wrap: _isMobile.value }, () => {
                 const btns = [
                     h(NButton, { size: 'small', secondary: true, onClick: () => toggle(row) }, () => row.enabled ? '禁用' : '启用'),
                     h(NButton, { size: 'small', secondary: true, onClick: () => openEdit(row) }, () => '编辑'),
+                    h(NButton, { size: 'small', secondary: true, onClick: () => openClone(row) }, () => '复制'),
                 ];
                 if (!_isMobile.value) btns.push(h(NButton, { size: 'small', secondary: true, onClick: () => test(row) }, () => '测试'));
                 btns.push(h(NPopconfirm, { onPositiveClick: () => del(row) }, { trigger: () => h(NButton, { size: 'small', secondary: true, type: 'error' }, () => '删除'), default: () => '确定删除？' }));
@@ -373,13 +406,13 @@ const DatabasesPage = defineComponent({
 
         const gridCols = computed(() => _isMobile.value ? 1 : 2);
 
-        return () => h('div', [
+        return () => h('div', { class: 'page-body' }, [
             h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
-                h('h3', { style: 'margin:0;font-size:1.1rem;font-weight:600' }, '数据库管理'),
+                h('h3', { class: 'page-title' }, '数据库管理'),
                 h(NButton, { type: 'primary', onClick: openAdd, size: _isMobile.value ? 'small' : 'medium' }, () => '+ 添加'),
             ]),
-            h(NDataTable, { columns: columns.value, data: databases.value, bordered: false, size: 'small', loading: loading.value, scrollX: _isMobile.value ? 400 : undefined }),
-            h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑数据库' : '添加数据库', style: _isMobile.value ? 'width:95vw' : 'width:480px', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 100 }, [
+            h(NDataTable, { columns: columns.value, data: databases.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 400 : undefined }),
+            h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑数据库' : '添加数据库', style: _isMobile.value ? 'width:95vw' : 'width:620px', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 110 }, [
                 h(NFormItem, { label: '名称' }, () => h(NInput, { value: form.name, 'onUpdate:value': v => form.name = v, placeholder: '如: 生产数据库' })),
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '主机' }, () => h(NInput, { value: form.host, 'onUpdate:value': v => form.host = v, placeholder: '127.0.0.1' }))),
@@ -436,8 +469,7 @@ const NotificationsPage = defineComponent({
             Object.assign(form, { type: 'dingtalk', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '' });
             showModal.value = true;
         }
-        function openEdit(row) {
-            editingId.value = row.id;
+        function fillFormFromRow(row) {
             form.type = row.type;
             form.database_id = row.database_id;
             const cfg = typeof row.config_json === 'string' ? JSON.parse(row.config_json) : row.config_json;
@@ -452,6 +484,15 @@ const NotificationsPage = defineComponent({
                 form.email_from = cfg.from || '';
                 form.email_to = cfg.to || '';
             }
+        }
+        function openEdit(row) {
+            editingId.value = row.id;
+            fillFormFromRow(row);
+            showModal.value = true;
+        }
+        function openClone(row) {
+            editingId.value = null;
+            fillFormFromRow(row);
             showModal.value = true;
         }
         async function save() {
@@ -484,8 +525,9 @@ const NotificationsPage = defineComponent({
             { title: '关联数据库', key: 'database_name', _hideOnMobile: true },
             { title: '配置摘要', key: 'config_summary', render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => row.config_summary) },
             { title: '状态', key: 'enabled', width: 70, _hideOnMobile: true, render: row => row.enabled ? h(NTag, { type: 'success', size: 'small' }, () => '启用') : h(NTag, { size: 'small' }, () => '禁用') },
-            { title: '操作', key: 'actions', width: _isMobile.value ? 140 : 200, render: row => h(NSpace, { size: 'small' }, () => [
+            { title: '操作', key: 'actions', width: _isMobile.value ? 140 : 250, render: row => h(NSpace, { size: 'small' }, () => [
                 h(NButton, { size: 'small', secondary: true, onClick: () => openEdit(row) }, () => '编辑'),
+                h(NButton, { size: 'small', secondary: true, onClick: () => openClone(row) }, () => '复制'),
                 !_isMobile.value ? h(NButton, { size: 'small', secondary: true, onClick: () => test(row) }, () => '测试') : null,
                 h(NPopconfirm, { onPositiveClick: () => del(row) }, { trigger: () => h(NButton, { size: 'small', secondary: true, type: 'error' }, () => '删除'), default: () => '确定删除？' }),
             ].filter(Boolean)) },
@@ -493,12 +535,12 @@ const NotificationsPage = defineComponent({
 
         const gridCols = computed(() => _isMobile.value ? 1 : 2);
 
-        return () => h('div', [
+        return () => h('div', { class: 'page-body' }, [
             h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
-                h('h3', { style: 'margin:0;font-size:1.1rem;font-weight:600' }, '通知配置'),
+                h('h3', { class: 'page-title' }, '通知配置'),
                 h(NButton, { type: 'primary', onClick: openAdd, size: _isMobile.value ? 'small' : 'medium' }, () => '+ 添加'),
             ]),
-            h(NDataTable, { columns: columns.value, data: list.value, bordered: false, size: 'small', loading: loading.value, scrollX: _isMobile.value ? 350 : undefined }),
+            h(NDataTable, { columns: columns.value, data: list.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 350 : undefined }),
             h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑通知' : '添加通知', style: _isMobile.value ? 'width:95vw' : 'width:520px', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 100 }, [
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '通知类型' }, () => h(NSelect, { value: form.type, 'onUpdate:value': v => form.type = v, options: typeOptions }))),
@@ -573,7 +615,7 @@ const SlowQueriesPage = defineComponent({
             { title: '检测时间', key: 'detected_at', width: 140, render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => formatTime(row.detected_at)) },
             { title: '数据库', key: 'database_name', width: 100 },
             { title: '用户@主机', key: 'user', width: 150, _hideOnMobile: true, render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => (row.user || '') + '@' + (row.host || '')) },
-            { title: '库名', key: 'db_name', width: 100, _hideOnMobile: true },
+            { title: '库名', key: 'db_name', width: 160, _hideOnMobile: true, ellipsis: { tooltip: true } },
             { title: '耗时', key: 'exec_sec', width: 70, render: row => h(NText, { type: 'error', strong: true }, () => row.exec_sec.toFixed(1) + 's') },
             { title: '锁等待', key: 'lock_sec', width: 70, _hideOnMobile: true, render: row => row.lock_sec.toFixed(1) + 's' },
             { title: '扫描行', key: 'rows_examined', width: 80, _hideOnMobile: true },
@@ -581,10 +623,10 @@ const SlowQueriesPage = defineComponent({
             { title: 'KILL', key: 'kill', width: 100, _hideOnMobile: true, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.5' }, 'KILL ' + row.process_id + ';') },
         ]);
 
-        return () => h('div', [
+        return () => h('div', { class: 'page-body' }, [
             h('div', { style: _isMobile.value ? 'margin-bottom:12px' : 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:' + (_isMobile.value ? '8px' : '0') }, [
-                    h('h3', { style: 'margin:0;font-size:1.1rem;font-weight:600' }, '慢查询日志'),
+                    h('h3', { class: 'page-title' }, '慢查询日志'),
                     h(NText, { depth: 3 }, () => '共 ' + data.value.total + ' 条'),
                     h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
                         h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
@@ -593,7 +635,7 @@ const SlowQueriesPage = defineComponent({
                 ]),
                 h(NSelect, { value: filterDB.value, 'onUpdate:value': v => { filterDB.value = v; page.value = 1; }, options: dbOptions.value, style: _isMobile.value ? 'width:100%' : 'width:180px', placeholder: '筛选数据库', clearable: true, size: 'small' }),
             ]),
-            h(NDataTable, { columns: columns.value, data: data.value.logs || [], bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 220px)', scrollX: _isMobile.value ? 500 : undefined }),
+            h(NDataTable, { columns: columns.value, data: data.value.logs || [], bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 500 : undefined }),
             data.value.total_pages > 1 ? h('div', { style: 'margin-top:16px;display:flex;justify-content:center' }, [
                 h(NPagination, { page: page.value, 'onUpdate:page': v => page.value = v, pageCount: data.value.total_pages, size: 'small' }),
             ]) : null,
@@ -646,10 +688,10 @@ const MonitorLogsPage = defineComponent({
             }
         }
 
-        return () => h('div', [
+        return () => h('div', { class: 'page-body' }, [
             h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px' }, [
-                    h('h3', { style: 'margin:0;font-size:1.1rem;font-weight:600' }, '监控日志'),
+                    h('h3', { class: 'page-title' }, '监控日志'),
                     h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
                         h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
                         connected.value ? '已连接' : '已断开'
@@ -728,7 +770,7 @@ const SettingsPage = defineComponent({
         ]);
 
         return () => h(NSpin, { show: loading.value }, () => h('div', [
-            h('h3', { style: 'margin:0 0 20px;font-size:1.1rem;font-weight:600' }, '系统设置'),
+            h('h3', { class: 'page-title', style: 'margin-bottom:20px' }, '系统设置'),
             h(NCard, { title: 'GitHub OAuth', size: 'small', style: 'margin-bottom:20px' }, () => h(NForm, { model: settings, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 140 }, [
                 h(NFormItem, { label: 'Client ID' }, () => h(NInput, { value: settings.github_client_id, 'onUpdate:value': v => settings.github_client_id = v, placeholder: 'GitHub OAuth App Client ID' })),
                 h(NFormItem, { label: 'Client Secret' }, () => h(NInput, { value: settings.github_client_secret, 'onUpdate:value': v => settings.github_client_secret = v, type: 'password', placeholder: '留空不修改' })),
@@ -792,6 +834,381 @@ function copyText(text) {
     }
 }
 
+// --- RocketMQ ---
+const RocketMQPage = defineComponent({
+    setup() {
+        const configs = ref([]);
+        const loading = ref(true);
+        const showModal = ref(false);
+        const editingId = ref(null);
+        const form = reactive({ name: '', dashboard_url: '', username: '', password: '', consumer_group: '', topic: '', threshold: 1000, interval_sec: 30 });
+        const saving = ref(false);
+        const message = useMessage();
+
+        async function load() {
+            loading.value = true;
+            try { configs.value = await api.get('/api/rocketmq'); } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+
+        function openAdd() {
+            editingId.value = null;
+            Object.assign(form, { name: '', dashboard_url: '', username: '', password: '', consumer_group: '', topic: '', threshold: 1000, interval_sec: 30 });
+            showModal.value = true;
+        }
+        function openEdit(row) {
+            editingId.value = row.id;
+            Object.assign(form, { name: row.name, dashboard_url: row.dashboard_url, username: row.username, password: '', consumer_group: row.consumer_group, topic: row.topic, threshold: row.threshold, interval_sec: row.interval_sec });
+            showModal.value = true;
+        }
+        function openClone(row) {
+            editingId.value = null;
+            Object.assign(form, { name: row.name + ' (副本)', dashboard_url: row.dashboard_url, username: row.username, password: '', consumer_group: row.consumer_group, topic: row.topic, threshold: row.threshold, interval_sec: row.interval_sec });
+            showModal.value = true;
+        }
+        async function save() {
+            if (!form.name || !form.dashboard_url || !form.consumer_group || !form.topic) { message.error('请填写必填项'); return; }
+            saving.value = true;
+            try {
+                if (editingId.value) await api.put('/api/rocketmq/' + editingId.value, form);
+                else await api.post('/api/rocketmq', form);
+                showModal.value = false;
+                message.success(editingId.value ? '已更新' : '已创建');
+                load();
+            } catch (e) { message.error(e.message || '保存失败'); }
+            saving.value = false;
+        }
+        async function del(row) {
+            try { await api.del('/api/rocketmq/' + row.id); message.success('已删除'); load(); } catch (e) { message.error(e.message); }
+        }
+        async function toggle(row) {
+            try { await api.post('/api/rocketmq/' + row.id + '/toggle'); load(); } catch (e) { message.error(e.message); }
+        }
+        async function test(row) {
+            try {
+                const res = await api.post('/api/rocketmq/' + row.id + '/test');
+                res.ok ? message.success(res.message) : message.error(res.message);
+            } catch (e) { message.error(e.message); }
+        }
+
+        const columns = useColumns([
+            { title: '名称', key: 'name', width: 120 },
+            { title: 'Dashboard', key: 'dashboard_url', ellipsis: { tooltip: true }, _hideOnMobile: true },
+            { title: '消费组', key: 'consumer_group', width: 140, ellipsis: { tooltip: true } },
+            { title: 'Topic', key: 'topic', width: 120, ellipsis: { tooltip: true }, _hideOnMobile: true },
+            { title: '阈值', key: 'threshold', width: 80, _hideOnMobile: true },
+            { title: '状态', key: 'status', width: 100, render: row => h(NSpace, { size: 4 }, () => [
+                h(NTag, { size: 'small', type: row.enabled ? 'success' : 'default' }, () => row.enabled ? '启用' : '禁用'),
+                row.running ? h(NBadge, { dot: true, type: 'success' }) : null,
+            ])},
+            { title: '操作', key: 'actions', width: _isMobile.value ? 180 : 300, render: row => h(NSpace, { size: 'small' }, () => [
+                h(NButton, { size: 'tiny', secondary: true, onClick: () => openEdit(row) }, () => '编辑'),
+                h(NButton, { size: 'tiny', secondary: true, onClick: () => openClone(row) }, () => '复制'),
+                h(NButton, { size: 'tiny', secondary: true, onClick: () => toggle(row) }, () => row.enabled ? '禁用' : '启用'),
+                h(NButton, { size: 'tiny', secondary: true, onClick: () => test(row) }, () => '测试'),
+                h(NPopconfirm, { onPositiveClick: () => del(row) }, { trigger: () => h(NButton, { size: 'tiny', type: 'error', secondary: true }, () => '删除'), default: () => '确认删除？' }),
+            ])},
+        ]);
+
+        const gridCols = computed(() => _isMobile.value ? 1 : 2);
+        return () => h('div', { class: 'page-body' }, [
+            h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+                h('h3', { class: 'page-title' }, 'RocketMQ 监控'),
+                h(NButton, { type: 'primary', size: 'small', onClick: openAdd }, () => '+ 新增'),
+            ]),
+            h(NDataTable, { columns: columns.value, data: configs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 500 : undefined }),
+            h(NModal, { show: showModal.value, onUpdateShow: v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑配置' : '新增配置', style: _isMobile.value ? 'width:95vw' : 'width:680px' }, () =>
+                h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '名称', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.name, onUpdateValue: v => form.name = v, placeholder: '如: 订单系统MQ' }))),
+                    h(NGi, null, () => h(NFormItem, { label: 'Dashboard URL', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.dashboard_url, onUpdateValue: v => form.dashboard_url = v, placeholder: 'http://host:port' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '用户名', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.username, onUpdateValue: v => form.username = v, placeholder: '可选' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '密码', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.password, onUpdateValue: v => form.password = v, type: 'password', showPasswordOn: 'click', placeholder: editingId.value ? '留空不修改' : '可选' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '消费组', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.consumer_group, onUpdateValue: v => form.consumer_group = v, placeholder: 'ConsumerGroup 名称' }))),
+                    h(NGi, null, () => h(NFormItem, { label: 'Topic', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.topic, onUpdateValue: v => form.topic = v, placeholder: 'Topic 名称' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '堆积阈值', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInputNumber, { value: form.threshold, onUpdateValue: v => form.threshold = v, min: 1 }))),
+                    h(NGi, null, () => h(NFormItem, { label: '检查间隔(秒)', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInputNumber, { value: form.interval_sec, onUpdateValue: v => form.interval_sec = v, min: 5 }))),
+                    h(NGi, { span: gridCols.value }, () => h(NButton, { type: 'primary', block: true, loading: saving.value, onClick: save }, () => '保存')),
+                ])
+            ),
+        ]);
+    }
+});
+
+// --- RocketMQ Alerts ---
+const RocketMQAlertsPage = defineComponent({
+    setup() {
+        const alerts = ref([]);
+        const total = ref(0);
+        const page = ref(1);
+        const pageSize = 20;
+        const loading = ref(true);
+        const { connected, messages, stop } = useWebSocket('/ws/rocketmq-logs');
+        onUnmounted(stop);
+
+        async function load() {
+            loading.value = true;
+            try {
+                const res = await api.get('/api/rocketmq/alerts?page=' + page.value + '&page_size=' + pageSize);
+                alerts.value = res.data || [];
+                total.value = res.total || 0;
+            } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+        watch(page, load);
+
+        // Live updates from WebSocket
+        watch(() => messages.value.length, () => {
+            const latest = messages.value[messages.value.length - 1];
+            if (latest && latest.type === 'rocketmq_alert' && page.value === 1) {
+                load();
+            }
+        });
+
+        const columns = useColumns([
+            { title: '时间', key: 'detected_at', width: 150, render: row => h('span', { style: 'font-size:12px;opacity:0.65' }, formatTime(row.detected_at)) },
+            { title: '配置', key: 'config_name', width: 120 },
+            { title: '消费组', key: 'consumer_group', width: 140, _hideOnMobile: true },
+            { title: 'Topic', key: 'topic', width: 120 },
+            { title: '堆积量', key: 'diff_total', width: 100, render: row => h(NText, { type: 'error', strong: true }, () => String(row.diff_total)) },
+        ]);
+
+        return () => h('div', { class: 'page-body' }, [
+            h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+                h('div', { style: 'display:flex;align-items:center;gap:12px' }, [
+                    h('h3', { class: 'page-title' }, 'MQ 告警记录'),
+                    h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
+                        h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
+                        connected.value ? '实时' : '离线'
+                    ]),
+                ]),
+            ]),
+            h(NDataTable, { columns: columns.value, data: alerts.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 400 : undefined }),
+            total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
+                h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
+            ) : null,
+        ]);
+    }
+});
+
+// --- Audit Logs ---
+const AuditLogsPage = defineComponent({
+    setup() {
+        const logs = ref([]);
+        const total = ref(0);
+        const page = ref(1);
+        const pageSize = 50;
+        const loading = ref(true);
+
+        async function load() {
+            loading.value = true;
+            try {
+                const res = await api.get('/api/audit-logs?page=' + page.value + '&page_size=' + pageSize);
+                logs.value = res.data || [];
+                total.value = res.total || 0;
+            } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+        watch(page, load);
+
+        const actionTagType = (action) => {
+            const map = { create: 'success', update: 'warning', delete: 'error', toggle: 'info', login: 'success', logout: 'default' };
+            return map[action] || 'default';
+        };
+
+        const columns = useColumns([
+            { title: '时间', key: 'created_at', width: 150, render: row => h('span', { style: 'font-size:12px;opacity:0.65' }, formatTime(row.created_at)) },
+            { title: '操作人', key: 'user', width: 100 },
+            { title: '操作', key: 'action', width: 80, render: row => h(NTag, { type: actionTagType(row.action), size: 'small', bordered: false }, () => row.action) },
+            { title: '对象', key: 'target', width: 100 },
+            { title: '详情', key: 'detail', ellipsis: { tooltip: true } },
+            { title: 'IP', key: 'ip', width: 130, _hideOnMobile: true },
+        ]);
+
+        return () => h('div', { class: 'page-body' }, [
+            h('h3', { class: 'page-title', style: 'margin-bottom:16px' }, '操作记录'),
+            h(NDataTable, { columns: columns.value, data: logs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 500 : undefined }),
+            total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
+                h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
+            ) : null,
+        ]);
+    }
+});
+
+// --- Health Checks ---
+const HealthChecksPage = defineComponent({
+    setup() {
+        const checks = ref([]);
+        const loading = ref(true);
+        const showModal = ref(false);
+        const editingId = ref(null);
+        const message = useMessage();
+        const form = reactive({
+            name: '', url: '', method: 'GET', headers_json: '{}', body: '',
+            expected_status: 200, expected_field: '', expected_value: '',
+            timeout_sec: 10, interval_sec: 30
+        });
+
+        async function load() {
+            loading.value = true;
+            try { checks.value = await api.get('/api/health-checks'); } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+
+        function openAdd() {
+            editingId.value = null;
+            Object.assign(form, { name: '', url: '', method: 'GET', headers_json: '{}', body: '', expected_status: 200, expected_field: '', expected_value: '', timeout_sec: 10, interval_sec: 30 });
+            showModal.value = true;
+        }
+        function openEdit(row) {
+            editingId.value = row.id;
+            Object.assign(form, { name: row.name, url: row.url, method: row.method, headers_json: row.headers_json || '{}', body: row.body || '', expected_status: row.expected_status, expected_field: row.expected_field || '', expected_value: row.expected_value || '', timeout_sec: row.timeout_sec, interval_sec: row.interval_sec });
+            showModal.value = true;
+        }
+        function openClone(row) {
+            editingId.value = null;
+            Object.assign(form, { name: row.name + ' (副本)', url: row.url, method: row.method, headers_json: row.headers_json || '{}', body: row.body || '', expected_status: row.expected_status, expected_field: row.expected_field || '', expected_value: row.expected_value || '', timeout_sec: row.timeout_sec, interval_sec: row.interval_sec });
+            showModal.value = true;
+        }
+        async function save() {
+            try {
+                if (editingId.value) {
+                    await api.put('/api/health-checks/' + editingId.value, form);
+                } else {
+                    await api.post('/api/health-checks', form);
+                }
+                showModal.value = false;
+                load();
+            } catch (e) { message.error(e.message || '保存失败'); }
+        }
+        async function toggle(row) {
+            try { await api.post('/api/health-checks/' + row.id + '/toggle'); load(); } catch {}
+        }
+        async function test(row) {
+            try {
+                const res = await api.post('/api/health-checks/' + row.id + '/test');
+                if (res.ok) message.success('状态: UP (' + res.latency_ms + 'ms)');
+                else message.error('状态: DOWN - ' + (res.error || 'HTTP ' + res.http_status));
+            } catch (e) { message.error(e.message); }
+        }
+        async function remove(row) {
+            try { await api.del('/api/health-checks/' + row.id); load(); } catch {}
+        }
+
+        const columns = useColumns([
+            { title: '名称', key: 'name', width: 120 },
+            { title: 'URL', key: 'url', ellipsis: { tooltip: true }, _hideOnMobile: true },
+            { title: '方法', key: 'method', width: 70 },
+            { title: '间隔', key: 'interval_sec', width: 70, render: row => row.interval_sec + 's', _hideOnMobile: true },
+            { title: '状态', key: 'enabled', width: 100, render: row => h('div', { style: 'display:flex;gap:4px' }, [
+                h(NTag, { type: row.enabled ? 'success' : 'default', size: 'small', bordered: false }, () => row.enabled ? '启用' : '停用'),
+                row.running ? h(NTag, { type: 'info', size: 'small', bordered: false }, () => '运行中') : null,
+            ])},
+            { title: '操作', key: 'actions', width: 280, render: row => h('div', { style: 'display:flex;gap:4px;flex-wrap:wrap' }, [
+                h(NButton, { size: 'tiny', secondary: true, onClick: () => openEdit(row) }, () => '编辑'),
+                h(NButton, { size: 'tiny', secondary: true, onClick: () => openClone(row) }, () => '复制'),
+                h(NButton, { size: 'tiny', secondary: true, type: row.enabled ? 'warning' : 'success', onClick: () => toggle(row) }, () => row.enabled ? '禁用' : '启用'),
+                h(NButton, { size: 'tiny', secondary: true, type: 'info', onClick: () => test(row) }, () => '测试'),
+                h(NPopconfirm, { onPositiveClick: () => remove(row) }, { trigger: () => h(NButton, { size: 'tiny', secondary: true, type: 'error' }, () => '删除'), default: () => '确认删除？' }),
+            ])},
+        ]);
+
+        const methodOptions = [
+            { label: 'GET', value: 'GET' },
+            { label: 'POST', value: 'POST' },
+            { label: 'PUT', value: 'PUT' },
+            { label: 'HEAD', value: 'HEAD' },
+        ];
+
+        return () => h('div', { class: 'page-body' }, [
+            h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+                h('h3', { class: 'page-title' }, '健康检查'),
+                h(NButton, { type: 'primary', size: 'small', onClick: openAdd }, () => '+ 添加'),
+            ]),
+            h(NDataTable, { columns: columns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 500 : undefined }),
+            h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑健康检查' : '添加健康检查', style: 'width:560px;max-width:95vw', segmented: true }, () =>
+                h(NForm, { labelPlacement: 'left', labelWidth: 100 }, () => [
+                    h(NFormItem, { label: '名称' }, () => h(NInput, { value: form.name, onUpdateValue: v => form.name = v, placeholder: '服务名称' })),
+                    h(NFormItem, { label: 'URL' }, () => h(NInput, { value: form.url, onUpdateValue: v => form.url = v, placeholder: 'https://example.com/health' })),
+                    h(NFormItem, { label: '方法' }, () => h(NSelect, { value: form.method, onUpdateValue: v => form.method = v, options: methodOptions, style: 'width:120px' })),
+                    h(NFormItem, { label: '请求头' }, () => h(NInput, { type: 'textarea', value: form.headers_json, onUpdateValue: v => form.headers_json = v, placeholder: '{"Authorization": "Bearer token"}', rows: 2 })),
+                    form.method !== 'GET' && form.method !== 'HEAD' ? h(NFormItem, { label: '请求体' }, () => h(NInput, { type: 'textarea', value: form.body, onUpdateValue: v => form.body = v, placeholder: '请求体内容', rows: 2 })) : null,
+                    h(NFormItem, { label: '期望状态码' }, () => h(NInputNumber, { value: form.expected_status, onUpdateValue: v => form.expected_status = v, min: 100, max: 599, style: 'width:120px' })),
+                    h(NFormItem, { label: '期望字段' }, () => h(NInput, { value: form.expected_field, onUpdateValue: v => form.expected_field = v, placeholder: '如: status (留空则只检查状态码)' })),
+                    h(NFormItem, { label: '期望值' }, () => h(NInput, { value: form.expected_value, onUpdateValue: v => form.expected_value = v, placeholder: '如: UP, ok' })),
+                    h(NFormItem, { label: '超时(秒)' }, () => h(NInputNumber, { value: form.timeout_sec, onUpdateValue: v => form.timeout_sec = v, min: 1, max: 300, style: 'width:120px' })),
+                    h(NFormItem, { label: '间隔(秒)' }, () => h(NInputNumber, { value: form.interval_sec, onUpdateValue: v => form.interval_sec = v, min: 5, max: 3600, style: 'width:120px' })),
+                    h('div', { style: 'display:flex;justify-content:flex-end;gap:8px;margin-top:8px' }, [
+                        h(NButton, { onClick: () => showModal.value = false }, () => '取消'),
+                        h(NButton, { type: 'primary', onClick: save }, () => '保存'),
+                    ]),
+                ])
+            ),
+        ]);
+    }
+});
+
+// --- Health Check Logs ---
+const HealthCheckLogsPage = defineComponent({
+    setup() {
+        const logs = ref([]);
+        const total = ref(0);
+        const page = ref(1);
+        const pageSize = 20;
+        const loading = ref(true);
+        const { connected, messages, stop } = useWebSocket('/ws/healthcheck-logs');
+        onUnmounted(stop);
+
+        async function load() {
+            loading.value = true;
+            try {
+                const res = await api.get('/api/health-checks/logs?page=' + page.value + '&page_size=' + pageSize);
+                logs.value = res.data || [];
+                total.value = res.total || 0;
+            } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+        watch(page, load);
+
+        // Live updates
+        watch(() => messages.value.length, () => {
+            const latest = messages.value[messages.value.length - 1];
+            if (latest && (latest.type === 'healthcheck_success' || latest.type === 'healthcheck_error') && page.value === 1) {
+                load();
+            }
+        });
+
+        const columns = useColumns([
+            { title: '时间', key: 'detected_at', width: 150, render: row => h('span', { style: 'font-size:12px;opacity:0.65' }, formatTime(row.detected_at)) },
+            { title: '服务', key: 'check_name', width: 120 },
+            { title: '状态', key: 'status', width: 80, render: row => h(NTag, { type: row.status === 'up' ? 'success' : 'error', size: 'small', bordered: false }, () => row.status.toUpperCase()) },
+            { title: 'HTTP', key: 'http_status', width: 70, _hideOnMobile: true },
+            { title: '延迟', key: 'latency_ms', width: 80, render: row => row.latency_ms + 'ms' },
+            { title: '错误', key: 'error', ellipsis: { tooltip: true }, _hideOnMobile: true },
+        ]);
+
+        return () => h('div', { class: 'page-body' }, [
+            h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+                h('div', { style: 'display:flex;align-items:center;gap:12px' }, [
+                    h('h3', { class: 'page-title' }, '检查日志'),
+                    h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
+                        h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
+                        connected.value ? '实时' : '离线'
+                    ]),
+                ]),
+            ]),
+            h(NDataTable, { columns: columns.value, data: logs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 400 : undefined }),
+            total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
+                h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
+            ) : null,
+        ]);
+    }
+});
+
 // ============================================================
 // Layout
 // ============================================================
@@ -810,19 +1227,52 @@ const AppLayout = defineComponent({
 
         watch(_isMobile, (mobile) => { siderCollapsed.value = mobile; });
 
-        const activeKey = computed(() => route.path.replace('/', '') || 'dashboard');
-
         const menuOptions = [
             { label: '仪表盘', key: 'dashboard' },
-            { label: '数据库', key: 'databases' },
-            { label: '通知配置', key: 'notifications' },
-            { label: '慢查询', key: 'slow-queries' },
-            { label: '监控日志', key: 'monitor-logs' },
-            { label: '系统设置', key: 'settings' },
+            { label: '健康检查', key: 'g-healthcheck' },
+            { label: 'MySQL', key: 'g-mysql' },
+            { label: 'RocketMQ', key: 'g-rocketmq' },
+            { label: '系统', key: 'g-system' },
         ];
 
+        const groupTabs = {
+            'g-mysql': [
+                { label: '数据库', key: 'databases' },
+                { label: '慢查询', key: 'slow-queries' },
+                { label: '监控日志', key: 'monitor-logs' },
+            ],
+            'g-rocketmq': [
+                { label: 'MQ 配置', key: 'rocketmq' },
+                { label: 'MQ 告警', key: 'rocketmq-alerts' },
+            ],
+            'g-healthcheck': [
+                { label: '检查配置', key: 'health-checks' },
+                { label: '检查日志', key: 'health-checks-logs' },
+            ],
+            'g-system': [
+                { label: '通知配置', key: 'notifications' },
+                { label: '操作记录', key: 'audit-logs' },
+                { label: '系统设置', key: 'settings' },
+            ],
+        };
+        const routeToGroup = {};
+        for (const [g, tabs] of Object.entries(groupTabs)) {
+            for (const t of tabs) routeToGroup[t.key] = g;
+        }
+
+        const routeKey = computed(() => route.path.replace('/', '') || 'dashboard');
+        const activeKey = computed(() => routeToGroup[routeKey.value] || routeKey.value);
+        const currentTabs = computed(() => {
+            const group = routeToGroup[routeKey.value];
+            return group ? groupTabs[group] : null;
+        });
+
         function handleMenuUpdate(key) {
-            router.push('/' + key);
+            if (groupTabs[key]) {
+                router.push('/' + groupTabs[key][0].key);
+            } else {
+                router.push('/' + key);
+            }
             if (_isMobile.value) siderCollapsed.value = true;
         }
 
@@ -837,12 +1287,12 @@ const AppLayout = defineComponent({
             // Mobile layout
             if (_isMobile.value) {
                 return h(NLayout, { style: 'height:100vh' }, () => [
-                    h('div', { class: 'mobile-topbar' }, [
-                        h('div', { style: 'display:flex;align-items:center;gap:10px' }, [
-                            h(NButton, { quaternary: true, size: 'small', onClick: () => siderCollapsed.value = false }, () => '\u2630'),
-                            h('span', { style: 'font-size:14px;font-weight:600' }, 'MySQL Monitor'),
+                    h('div', { class: 'topbar' }, [
+                        h('div', { class: 'topbar-left' }, [
+                            h(NButton, { quaternary: true, size: 'small', onClick: () => siderCollapsed.value = false, style: 'font-size:18px' }, () => '\u2630'),
+                            h('span', { style: 'font-size:14px;font-weight:600' }, 'Ops Monitor'),
                         ]),
-                        h('div', { style: 'display:flex;align-items:center;gap:6px' }, [
+                        h('div', { class: 'topbar-right' }, [
                             h(NButton, { quaternary: true, circle: true, size: 'small', onClick: toggleTheme }, () => themeIcon()),
                             user.value ? h('div', { style: 'display:flex;align-items:center;gap:6px' }, [
                                 user.value.avatar_url ? h(NAvatar, { src: user.value.avatar_url, size: 22, round: true }) : null,
@@ -853,38 +1303,62 @@ const AppLayout = defineComponent({
                     h(NDrawer, { show: !siderCollapsed.value, 'onUpdate:show': v => { siderCollapsed.value = !v; }, placement: 'left', width: 220 }, () =>
                         h(NDrawerContent, { bodyContentStyle: 'padding:0' }, () => [
                             h('div', { class: 'sider-header' }, [
-                                h('div', { class: 'sider-logo' }, 'M'),
-                                h('span', { style: 'font-size:14px;font-weight:600' }, 'MySQL Monitor'),
+                                h('div', { class: 'sider-logo' }, 'O'),
+                                h('span', { style: 'font-size:14px;font-weight:600' }, 'Ops Monitor'),
                             ]),
                             h(NMenu, { value: activeKey.value, options: menuOptions, onUpdateValue: handleMenuUpdate }),
                         ])
                     ),
-                    h(NLayout, { contentStyle: 'padding:16px;overflow-y:auto' }, () => h(VueRouter.RouterView)),
+                    h(NLayout, { contentStyle: 'padding:16px;overflow-y:auto' }, () => [
+                        currentTabs.value ? h(NMenu, {
+                            mode: 'horizontal',
+                            value: routeKey.value,
+                            options: currentTabs.value,
+                            onUpdateValue: (key) => router.push('/' + key),
+                            style: 'margin-bottom:12px',
+                        }) : null,
+                        h(VueRouter.RouterView),
+                    ]),
                 ]);
             }
 
-            // Desktop layout
-            return h(NLayout, { hasSider: true, style: 'height:100vh' }, () => [
-                h(NLayoutSider, { bordered: true, width: 220, nativeScrollbar: false, contentStyle: 'display:flex;flex-direction:column;height:100%' }, () => [
-                    h('div', { class: 'sider-header' }, [
-                        h('div', { class: 'sider-logo' }, 'M'),
-                        h('span', { style: 'font-size:14px;font-weight:600' }, 'MySQL Monitor'),
+            // Desktop layout: top bar → sidebar | sub-sidebar | content
+            const topbarH = '48px';
+            return h('div', { style: 'height:100vh;overflow:hidden' }, [
+                // Full-width top bar: logo left, user info right
+                h('div', { class: 'topbar' }, [
+                    h('div', { class: 'topbar-left' }, [
+                        h('div', { class: 'sider-logo' }, 'O'),
+                        h('span', { class: 'sider-title' }, 'Ops Monitor'),
                     ]),
-                    h(NMenu, { value: activeKey.value, options: menuOptions, onUpdateValue: handleMenuUpdate, style: 'flex:1' }),
-                    h('div', { style: 'padding:12px;border-top:1px solid var(--n-border-color)' }, [
-                        user.value ? h('div', { style: 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px' }, [
-                            h('div', { style: 'display:flex;align-items:center;gap:8px' }, [
-                                user.value.avatar_url ? h(NAvatar, { src: user.value.avatar_url, size: 24, round: true }) : null,
-                                h(NText, { depth: 2, style: 'font-size:12px' }, () => user.value.username || user.value.github_login || 'admin'),
-                            ]),
-                            h(NButton, { quaternary: true, circle: true, size: 'tiny', onClick: toggleTheme, style: 'font-size:16px' }, () => themeIcon()),
-                        ]) : h('div', { style: 'display:flex;justify-content:flex-end;margin-bottom:8px' }, [
-                            h(NButton, { quaternary: true, circle: true, size: 'tiny', onClick: toggleTheme, style: 'font-size:16px' }, () => themeIcon()),
-                        ]),
-                        h(NButton, { block: true, size: 'small', secondary: true, onClick: logout }, () => '退出登录'),
+                    h('div', { class: 'topbar-right' }, [
+                        h(NButton, { quaternary: true, circle: true, size: 'small', onClick: toggleTheme }, () => themeIcon()),
+                        user.value ? h('div', { style: 'display:flex;align-items:center;gap:8px' }, [
+                            user.value.avatar_url ? h(NAvatar, { src: user.value.avatar_url, size: 24, round: true }) : null,
+                            h(NText, { depth: 2, style: 'font-size:12px' }, () => user.value.username || user.value.github_login || 'admin'),
+                            h(NButton, { size: 'tiny', secondary: true, onClick: logout }, () => '退出'),
+                        ]) : null,
                     ]),
                 ]),
-                h(NLayout, { contentStyle: 'padding:24px 28px;overflow-y:auto' }, () => h(VueRouter.RouterView)),
+                // Below: sidebar | sub-sidebar | content — fills remaining height
+                h(NLayout, { hasSider: true, style: `height:calc(100vh - ${topbarH});overflow:hidden` }, () => [
+                    // Left sidebar (menu only)
+                    h(NLayoutSider, { bordered: true, width: 180, nativeScrollbar: false }, () => [
+                        h(NMenu, { value: activeKey.value, options: menuOptions, onUpdateValue: handleMenuUpdate }),
+                    ]),
+                    // Sub sidebar (when group has children)
+                    currentTabs.value ? h(NLayoutSider, { bordered: true, width: 140, nativeScrollbar: false, contentStyle: 'padding:12px 0;background:var(--content-bg)' }, () => [
+                        h(NMenu, {
+                            value: routeKey.value,
+                            options: currentTabs.value,
+                            onUpdateValue: (key) => router.push('/' + key),
+                        }),
+                    ]) : null,
+                    // Content
+                    h(NLayout, { contentStyle: 'padding:28px 36px 48px;overflow-y:auto;background:var(--body-bg)' }, () => [
+                        h(VueRouter.RouterView),
+                    ]),
+                ]),
             ]);
         };
     }
@@ -901,6 +1375,11 @@ const routes = [
     { path: '/notifications', component: NotificationsPage },
     { path: '/slow-queries', component: SlowQueriesPage },
     { path: '/monitor-logs', component: MonitorLogsPage },
+    { path: '/rocketmq', component: RocketMQPage },
+    { path: '/rocketmq-alerts', component: RocketMQAlertsPage },
+    { path: '/health-checks', component: HealthChecksPage },
+    { path: '/health-checks-logs', component: HealthCheckLogsPage },
+    { path: '/audit-logs', component: AuditLogsPage },
     { path: '/settings', component: SettingsPage },
 ];
 

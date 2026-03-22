@@ -10,11 +10,9 @@ FROM alpine:3.19
 RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /app
 COPY --from=builder /build/monitor .
-COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
 ENV TZ=Asia/Shanghai
 EXPOSE 8080
 VOLUME ["/app/data"]
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
   CMD wget -qO- http://localhost:8080/login || exit 1
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["./monitor"]

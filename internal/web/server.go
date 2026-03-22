@@ -16,20 +16,22 @@ import (
 var staticFS embed.FS
 
 type Server struct {
-	store      *store.Store
-	auth       *auth.SessionStore
-	manager    *monitor.Manager
-	dispatcher *notify.Dispatcher
-	hub        *Hub
-	staticHandler http.Handler
+	store           *store.Store
+	auth            *auth.SessionStore
+	manager         *monitor.Manager
+	rocketMQMgr     *monitor.RocketMQManager
+	healthCheckMgr  *monitor.HealthCheckManager
+	dispatcher      *notify.Dispatcher
+	hub             *Hub
+	staticHandler   http.Handler
 }
 
-func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, d *notify.Dispatcher, eb *monitor.EventBus) *Server {
+func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *monitor.RocketMQManager, hc *monitor.HealthCheckManager, d *notify.Dispatcher, eb *monitor.EventBus) *Server {
 	hub := NewHub(eb)
 	go hub.Run()
 	staticSub, _ := fs.Sub(staticFS, "static")
 	return &Server{
-		store: s, auth: a, manager: m, dispatcher: d, hub: hub,
+		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, dispatcher: d, hub: hub,
 		staticHandler: http.StripPrefix("/", http.FileServer(http.FS(staticSub))),
 	}
 }
@@ -51,6 +53,8 @@ func (s *Server) Routes() http.Handler {
 	// --- WebSocket routes (auth checked inline) ---
 	mux.HandleFunc("GET /ws/slow-queries", s.wsHandler("slow-queries"))
 	mux.HandleFunc("GET /ws/monitor-logs", s.wsHandler("monitor-logs"))
+	mux.HandleFunc("GET /ws/rocketmq-logs", s.wsHandler("rocketmq-logs"))
+	mux.HandleFunc("GET /ws/healthcheck-logs", s.wsHandler("healthcheck-logs"))
 
 	// --- Protected API routes ---
 	api := http.NewServeMux()
@@ -88,6 +92,27 @@ func (s *Server) Routes() http.Handler {
 
 	// Simple databases list for selectors
 	api.HandleFunc("GET /api/databases-simple", s.apiDatabasesSimpleList)
+
+	// RocketMQ
+	api.HandleFunc("GET /api/rocketmq", s.apiRocketMQList)
+	api.HandleFunc("POST /api/rocketmq", s.apiRocketMQCreate)
+	api.HandleFunc("PUT /api/rocketmq/{id}", s.apiRocketMQUpdate)
+	api.HandleFunc("DELETE /api/rocketmq/{id}", s.apiRocketMQDelete)
+	api.HandleFunc("POST /api/rocketmq/{id}/toggle", s.apiRocketMQToggle)
+	api.HandleFunc("POST /api/rocketmq/{id}/test", s.apiRocketMQTest)
+	api.HandleFunc("GET /api/rocketmq/alerts", s.apiRocketMQAlerts)
+
+	// Audit Logs
+	api.HandleFunc("GET /api/audit-logs", s.apiAuditLogs)
+
+	// Health Checks
+	api.HandleFunc("GET /api/health-checks", s.apiHealthCheckList)
+	api.HandleFunc("POST /api/health-checks", s.apiHealthCheckCreate)
+	api.HandleFunc("PUT /api/health-checks/{id}", s.apiHealthCheckUpdate)
+	api.HandleFunc("DELETE /api/health-checks/{id}", s.apiHealthCheckDelete)
+	api.HandleFunc("POST /api/health-checks/{id}/toggle", s.apiHealthCheckToggle)
+	api.HandleFunc("POST /api/health-checks/{id}/test", s.apiHealthCheckTest)
+	api.HandleFunc("GET /api/health-checks/logs", s.apiHealthCheckLogs)
 
 	mux.Handle("/api/", s.auth.AuthMiddleware(api))
 

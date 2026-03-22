@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -100,6 +101,10 @@ func shouldSend(c *Client, e monitor.MonitorEvent) bool {
 			return false
 		}
 		return true
+	case "rocketmq-logs":
+		return strings.HasPrefix(e.Type, "rocketmq_")
+	case "healthcheck-logs":
+		return strings.HasPrefix(e.Type, "healthcheck_")
 	}
 	return false
 }

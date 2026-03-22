@@ -74,7 +74,7 @@ func main() {
 	s.StartPurgeLoop(ctx)
 
 	// Create components
-	authStore := auth.NewSessionStore(adminUser, adminPassword)
+	authStore := auth.NewSessionStore(adminUser, adminPassword, s)
 
 	// Load GitHub config from DB settings
 	if cid := s.GetSetting("github_client_id"); cid != "" {
@@ -108,8 +108,20 @@ func main() {
 		log.Printf("start monitors: %v", err)
 	}
 
+	// RocketMQ monitors
+	rocketMQMgr := monitor.NewRocketMQManager(s, dispatcher, eventBus)
+	if err := rocketMQMgr.StartAll(); err != nil {
+		log.Printf("start rocketmq monitors: %v", err)
+	}
+
+	// Health check monitors
+	healthCheckMgr := monitor.NewHealthCheckManager(s, dispatcher, eventBus)
+	if err := healthCheckMgr.StartAll(); err != nil {
+		log.Printf("start health check monitors: %v", err)
+	}
+
 	// Web server
-	srv := web.NewServer(s, authStore, mgr, dispatcher, eventBus)
+	srv := web.NewServer(s, authStore, mgr, rocketMQMgr, healthCheckMgr, dispatcher, eventBus)
 	httpSrv := &http.Server{
 		Addr:    listenAddr,
 		Handler: srv.Routes(),
@@ -123,6 +135,8 @@ func main() {
 		<-sigChan
 		log.Println("shutting down...")
 		mgr.StopAll()
+		rocketMQMgr.StopAll()
+		healthCheckMgr.StopAll()
 		cancel()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()

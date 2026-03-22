@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
+
+	"mysql-monitor/internal/auth"
 
 	_ "modernc.org/sqlite"
 )
@@ -259,11 +262,13 @@ func (s *Store) DeleteNotificationConfig(id int64) error {
 }
 
 func (s *Store) GetEffectiveNotifications(databaseID int64) ([]NotificationConfig, error) {
+	// Order by database_id DESC NULLS LAST so DB-specific configs come first.
 	rows, err := s.db.Query(`SELECT id, database_id, type, config_json, enabled, created_at, updated_at FROM notification_configs WHERE enabled=1 AND (database_id=? OR database_id IS NULL) ORDER BY database_id DESC`, databaseID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	seenType := make(map[string]bool)
 	var list []NotificationConfig
 	for rows.Next() {
 		var nc NotificationConfig
@@ -274,6 +279,11 @@ func (s *Store) GetEffectiveNotifications(databaseID int64) ([]NotificationConfi
 		}
 		nc.ConfigJSON = json.RawMessage(configStr)
 		nc.Enabled = enabled == 1
+		// Deduplicate by type: DB-specific config takes priority over global.
+		if seenType[nc.Type] {
+			continue
+		}
+		seenType[nc.Type] = true
 		list = append(list, nc)
 	}
 	if err := rows.Err(); err != nil {
@@ -346,9 +356,7 @@ func (s *Store) PurgeOldLogs() (int64, error) {
 }
 
 func (s *Store) StartPurgeLoop(ctx context.Context) {
-	if n, err := s.PurgeOldLogs(); err == nil && n > 0 {
-		log.Printf("purged %d old slow query logs", n)
-	}
+	s.runPurge()
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
@@ -357,12 +365,23 @@ func (s *Store) StartPurgeLoop(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if n, err := s.PurgeOldLogs(); err == nil && n > 0 {
-					log.Printf("purged %d old slow query logs", n)
-				}
+				s.runPurge()
 			}
 		}
 	}()
+}
+
+func (s *Store) runPurge() {
+	if n, err := s.PurgeOldLogs(); err == nil && n > 0 {
+		log.Printf("purged %d old slow query logs", n)
+	}
+	if n, err := s.PurgeOldAuditLogs(); err == nil && n > 0 {
+		log.Printf("purged %d old audit logs", n)
+	}
+	if n, err := s.PurgeOldHealthCheckLogs(); err == nil && n > 0 {
+		log.Printf("purged %d old health check logs", n)
+	}
+	s.CleanupOldNotifiedPIDs()
 }
 
 func (s *Store) CountSlowQueriesToday() (int, error) {
@@ -477,6 +496,432 @@ func (s *Store) GetAllSettings() map[string]string {
 		}
 	}
 	return m
+}
+
+// --- RocketMQ Config CRUD ---
+
+type RocketMQConfig struct {
+	ID            int64     `json:"id"`
+	Name          string    `json:"name"`
+	DashboardURL  string    `json:"dashboard_url"`
+	Username      string    `json:"username"`
+	Password      string    `json:"password"`
+	ConsumerGroup string    `json:"consumer_group"`
+	Topic         string    `json:"topic"`
+	Threshold     int       `json:"threshold"`
+	IntervalSec   int       `json:"interval_sec"`
+	Enabled       bool      `json:"enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type RocketMQAlertLog struct {
+	ID            int64     `json:"id"`
+	ConfigID      int64     `json:"config_id"`
+	ConfigName    string    `json:"config_name"`
+	ConsumerGroup string    `json:"consumer_group"`
+	Topic         string    `json:"topic"`
+	DiffTotal     int64     `json:"diff_total"`
+	DetectedAt    time.Time `json:"detected_at"`
+}
+
+func (s *Store) ListRocketMQConfigs() ([]RocketMQConfig, error) {
+	rows, err := s.db.Query(`SELECT id, name, dashboard_url, username, password, consumer_group, topic, threshold, interval_sec, enabled, created_at, updated_at FROM rocketmq_configs ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []RocketMQConfig
+	for rows.Next() {
+		var c RocketMQConfig
+		var enabled int
+		var encPwd string
+		if err := rows.Scan(&c.ID, &c.Name, &c.DashboardURL, &c.Username, &encPwd, &c.ConsumerGroup, &c.Topic, &c.Threshold, &c.IntervalSec, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		c.Password, _ = Decrypt(encPwd)
+		c.Enabled = enabled == 1
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) GetRocketMQConfig(id int64) (*RocketMQConfig, error) {
+	var c RocketMQConfig
+	var enabled int
+	var encPwd string
+	err := s.db.QueryRow(`SELECT id, name, dashboard_url, username, password, consumer_group, topic, threshold, interval_sec, enabled, created_at, updated_at FROM rocketmq_configs WHERE id=?`, id).
+		Scan(&c.ID, &c.Name, &c.DashboardURL, &c.Username, &encPwd, &c.ConsumerGroup, &c.Topic, &c.Threshold, &c.IntervalSec, &enabled, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	c.Password, _ = Decrypt(encPwd)
+	c.Enabled = enabled == 1
+	return &c, nil
+}
+
+func (s *Store) CreateRocketMQConfig(c *RocketMQConfig) (int64, error) {
+	encPwd, err := Encrypt(c.Password)
+	if err != nil {
+		return 0, fmt.Errorf("encrypt password: %w", err)
+	}
+	res, err := s.db.Exec(`INSERT INTO rocketmq_configs (name, dashboard_url, username, password, consumer_group, topic, threshold, interval_sec, enabled) VALUES (?,?,?,?,?,?,?,?,?)`,
+		c.Name, c.DashboardURL, c.Username, encPwd, c.ConsumerGroup, c.Topic, c.Threshold, c.IntervalSec, boolToInt(c.Enabled))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) UpdateRocketMQConfig(c *RocketMQConfig) error {
+	encPwd, err := Encrypt(c.Password)
+	if err != nil {
+		return fmt.Errorf("encrypt password: %w", err)
+	}
+	_, err = s.db.Exec(`UPDATE rocketmq_configs SET name=?, dashboard_url=?, username=?, password=?, consumer_group=?, topic=?, threshold=?, interval_sec=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
+		c.Name, c.DashboardURL, c.Username, encPwd, c.ConsumerGroup, c.Topic, c.Threshold, c.IntervalSec, boolToInt(c.Enabled), c.ID)
+	return err
+}
+
+func (s *Store) DeleteRocketMQConfig(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM rocketmq_configs WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) ToggleRocketMQ(id int64) error {
+	_, err := s.db.Exec(`UPDATE rocketmq_configs SET enabled = 1 - enabled, updated_at=datetime('now') WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) InsertRocketMQAlertLog(l *RocketMQAlertLog) (int64, error) {
+	res, err := s.db.Exec(`INSERT INTO rocketmq_alert_logs (config_id, config_name, consumer_group, topic, diff_total) VALUES (?,?,?,?,?)`,
+		l.ConfigID, l.ConfigName, l.ConsumerGroup, l.Topic, l.DiffTotal)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) ListRocketMQAlertLogs(configID *int64, page, pageSize int) ([]RocketMQAlertLog, int, error) {
+	countQ := `SELECT COUNT(*) FROM rocketmq_alert_logs`
+	dataQ := `SELECT id, config_id, config_name, consumer_group, topic, diff_total, detected_at FROM rocketmq_alert_logs`
+	var args []interface{}
+	if configID != nil {
+		countQ += ` WHERE config_id=?`
+		dataQ += ` WHERE config_id=?`
+		args = append(args, *configID)
+	}
+	var total int
+	if err := s.db.QueryRow(countQ, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	dataQ += ` ORDER BY detected_at DESC LIMIT ? OFFSET ?`
+	offset := (page - 1) * pageSize
+	dataArgs := append(args, pageSize, offset)
+	rows, err := s.db.Query(dataQ, dataArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var list []RocketMQAlertLog
+	for rows.Next() {
+		var l RocketMQAlertLog
+		if err := rows.Scan(&l.ID, &l.ConfigID, &l.ConfigName, &l.ConsumerGroup, &l.Topic, &l.DiffTotal, &l.DetectedAt); err != nil {
+			return nil, 0, err
+		}
+		list = append(list, l)
+	}
+	return list, total, rows.Err()
+}
+
+func (s *Store) CountRocketMQConfigs() (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM rocketmq_configs`).Scan(&count)
+	return count, err
+}
+
+func (s *Store) CountRocketMQAlertsToday() (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM rocketmq_alert_logs WHERE detected_at >= date('now')`).Scan(&count)
+	return count, err
+}
+
+func (s *Store) GetGlobalNotifications() ([]NotificationConfig, error) {
+	rows, err := s.db.Query(`SELECT id, database_id, type, config_json, enabled, created_at, updated_at FROM notification_configs WHERE enabled=1 AND database_id IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []NotificationConfig
+	for rows.Next() {
+		var nc NotificationConfig
+		var enabled int
+		var configStr string
+		if err := rows.Scan(&nc.ID, &nc.DatabaseID, &nc.Type, &configStr, &enabled, &nc.CreatedAt, &nc.UpdatedAt); err != nil {
+			return nil, err
+		}
+		nc.ConfigJSON = json.RawMessage(configStr)
+		nc.Enabled = enabled == 1
+		list = append(list, nc)
+	}
+	return list, rows.Err()
+}
+
+// --- Audit Logs ---
+
+type AuditLog struct {
+	ID        int64     `json:"id"`
+	User      string    `json:"user"`
+	Action    string    `json:"action"`
+	Target    string    `json:"target"`
+	TargetID  int64     `json:"target_id"`
+	Detail    string    `json:"detail"`
+	IP        string    `json:"ip"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func (s *Store) InsertAuditLog(l *AuditLog) {
+	s.db.Exec(`INSERT INTO audit_logs (user, action, target, target_id, detail, ip) VALUES (?,?,?,?,?,?)`,
+		l.User, l.Action, l.Target, l.TargetID, l.Detail, l.IP)
+}
+
+func (s *Store) ListAuditLogs(page, pageSize int) ([]AuditLog, int, error) {
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM audit_logs`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	offset := (page - 1) * pageSize
+	rows, err := s.db.Query(`SELECT id, user, action, target, target_id, detail, ip, created_at FROM audit_logs ORDER BY created_at DESC LIMIT ? OFFSET ?`, pageSize, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var list []AuditLog
+	for rows.Next() {
+		var l AuditLog
+		if err := rows.Scan(&l.ID, &l.User, &l.Action, &l.Target, &l.TargetID, &l.Detail, &l.IP, &l.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		list = append(list, l)
+	}
+	return list, total, rows.Err()
+}
+
+func (s *Store) PurgeOldAuditLogs() (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM audit_logs WHERE created_at < datetime('now', '-90 days')`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// --- Health Checks ---
+
+type HealthCheck struct {
+	ID             int64     `json:"id"`
+	Name           string    `json:"name"`
+	URL            string    `json:"url"`
+	Method         string    `json:"method"`
+	HeadersJSON    string    `json:"headers_json"`
+	Body           string    `json:"body"`
+	ExpectedStatus int       `json:"expected_status"`
+	ExpectedField  string    `json:"expected_field"`
+	ExpectedValue  string    `json:"expected_value"`
+	TimeoutSec     int       `json:"timeout_sec"`
+	IntervalSec    int       `json:"interval_sec"`
+	Enabled        bool      `json:"enabled"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type HealthCheckLog struct {
+	ID         int64     `json:"id"`
+	CheckID    int64     `json:"check_id"`
+	CheckName  string    `json:"check_name"`
+	Status     string    `json:"status"`
+	HTTPStatus int       `json:"http_status"`
+	Response   string    `json:"response"`
+	Error      string    `json:"error"`
+	LatencyMs  int64     `json:"latency_ms"`
+	DetectedAt time.Time `json:"detected_at"`
+}
+
+func (s *Store) ListHealthChecks() ([]HealthCheck, error) {
+	rows, err := s.db.Query(`SELECT id, name, url, method, headers_json, body, expected_status, expected_field, expected_value, timeout_sec, interval_sec, enabled, created_at, updated_at FROM health_checks ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []HealthCheck
+	for rows.Next() {
+		var h HealthCheck
+		var enabled int
+		if err := rows.Scan(&h.ID, &h.Name, &h.URL, &h.Method, &h.HeadersJSON, &h.Body, &h.ExpectedStatus, &h.ExpectedField, &h.ExpectedValue, &h.TimeoutSec, &h.IntervalSec, &enabled, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			return nil, err
+		}
+		h.Enabled = enabled == 1
+		list = append(list, h)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) GetHealthCheck(id int64) (*HealthCheck, error) {
+	var h HealthCheck
+	var enabled int
+	err := s.db.QueryRow(`SELECT id, name, url, method, headers_json, body, expected_status, expected_field, expected_value, timeout_sec, interval_sec, enabled, created_at, updated_at FROM health_checks WHERE id=?`, id).
+		Scan(&h.ID, &h.Name, &h.URL, &h.Method, &h.HeadersJSON, &h.Body, &h.ExpectedStatus, &h.ExpectedField, &h.ExpectedValue, &h.TimeoutSec, &h.IntervalSec, &enabled, &h.CreatedAt, &h.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	h.Enabled = enabled == 1
+	return &h, nil
+}
+
+func (s *Store) CreateHealthCheck(h *HealthCheck) (int64, error) {
+	res, err := s.db.Exec(`INSERT INTO health_checks (name, url, method, headers_json, body, expected_status, expected_field, expected_value, timeout_sec, interval_sec, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		h.Name, h.URL, h.Method, h.HeadersJSON, h.Body, h.ExpectedStatus, h.ExpectedField, h.ExpectedValue, h.TimeoutSec, h.IntervalSec, boolToInt(h.Enabled))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) UpdateHealthCheck(h *HealthCheck) error {
+	_, err := s.db.Exec(`UPDATE health_checks SET name=?, url=?, method=?, headers_json=?, body=?, expected_status=?, expected_field=?, expected_value=?, timeout_sec=?, interval_sec=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
+		h.Name, h.URL, h.Method, h.HeadersJSON, h.Body, h.ExpectedStatus, h.ExpectedField, h.ExpectedValue, h.TimeoutSec, h.IntervalSec, boolToInt(h.Enabled), h.ID)
+	return err
+}
+
+func (s *Store) DeleteHealthCheck(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM health_checks WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) ToggleHealthCheck(id int64) error {
+	_, err := s.db.Exec(`UPDATE health_checks SET enabled = 1 - enabled, updated_at = datetime('now') WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) InsertHealthCheckLog(l *HealthCheckLog) {
+	// Only insert on state change; if same status as last record, just update timestamp.
+	var lastStatus string
+	var lastID int64
+	err := s.db.QueryRow(`SELECT id, status FROM health_check_logs WHERE check_id=? ORDER BY detected_at DESC LIMIT 1`, l.CheckID).Scan(&lastID, &lastStatus)
+	if err == nil && lastStatus == l.Status {
+		s.db.Exec(`UPDATE health_check_logs SET http_status=?, response=?, error=?, latency_ms=?, detected_at=datetime('now') WHERE id=?`,
+			l.HTTPStatus, l.Response, l.Error, l.LatencyMs, lastID)
+		return
+	}
+	s.db.Exec(`INSERT INTO health_check_logs (check_id, check_name, status, http_status, response, error, latency_ms) VALUES (?,?,?,?,?,?,?)`,
+		l.CheckID, l.CheckName, l.Status, l.HTTPStatus, l.Response, l.Error, l.LatencyMs)
+}
+
+func (s *Store) ListHealthCheckLogs(checkID *int64, page, pageSize int) ([]HealthCheckLog, int, error) {
+	var total int
+	where := ""
+	var args []any
+	if checkID != nil {
+		where = " WHERE check_id=?"
+		args = append(args, *checkID)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM health_check_logs`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	offset := (page - 1) * pageSize
+	queryArgs := append(args, pageSize, offset)
+	rows, err := s.db.Query(`SELECT id, check_id, check_name, status, http_status, response, error, latency_ms, detected_at FROM health_check_logs`+where+` ORDER BY detected_at DESC LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var list []HealthCheckLog
+	for rows.Next() {
+		var l HealthCheckLog
+		if err := rows.Scan(&l.ID, &l.CheckID, &l.CheckName, &l.Status, &l.HTTPStatus, &l.Response, &l.Error, &l.LatencyMs, &l.DetectedAt); err != nil {
+			return nil, 0, err
+		}
+		list = append(list, l)
+	}
+	return list, total, rows.Err()
+}
+
+func (s *Store) PurgeOldHealthCheckLogs() (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM health_check_logs WHERE detected_at < datetime('now', '-30 days')`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func (s *Store) CountHealthChecks() (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM health_checks`).Scan(&count)
+	return count, err
+}
+
+func (s *Store) CountHealthCheckErrorsToday() (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM health_check_logs WHERE status != 'ok' AND detected_at >= date('now')`).Scan(&count)
+	return count, err
+}
+
+// --- Sessions ---
+
+func (s *Store) SaveSession(sess *auth.SessionRow) error {
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO sessions (token, username, user_id, github_login, role, avatar_url, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		sess.Token, sess.Username, sess.UserID, sess.GitHubLogin, sess.Role, sess.AvatarURL, sess.ExpiresAt)
+	return err
+}
+
+func (s *Store) GetSession(token string) (*auth.SessionRow, error) {
+	row := s.db.QueryRow(`SELECT token, username, user_id, github_login, role, avatar_url, expires_at FROM sessions WHERE token = ?`, token)
+	var sess auth.SessionRow
+	if err := row.Scan(&sess.Token, &sess.Username, &sess.UserID, &sess.GitHubLogin, &sess.Role, &sess.AvatarURL, &sess.ExpiresAt); err != nil {
+		return nil, err
+	}
+	return &sess, nil
+}
+
+func (s *Store) DeleteSession(token string) error {
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE token = ?`, token)
+	return err
+}
+
+func (s *Store) CleanupExpiredSessions() error {
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE expires_at < datetime('now')`)
+	return err
+}
+
+// --- Notified PIDs ---
+
+func (s *Store) IsProcessNotified(dbID int64, processID uint64) bool {
+	var n int
+	err := s.db.QueryRow(`SELECT 1 FROM notified_pids WHERE database_id=? AND process_id=?`, dbID, processID).Scan(&n)
+	return err == nil
+}
+
+func (s *Store) MarkProcessNotified(dbID int64, processID uint64) {
+	s.db.Exec(`INSERT OR IGNORE INTO notified_pids (database_id, process_id) VALUES (?, ?)`, dbID, processID)
+}
+
+func (s *Store) ClearNotifiedPIDs(dbID int64, activeProcessIDs []uint64) {
+	if len(activeProcessIDs) == 0 {
+		s.db.Exec(`DELETE FROM notified_pids WHERE database_id=?`, dbID)
+		return
+	}
+	// Keep only active PIDs, remove stale ones
+	placeholders := make([]string, len(activeProcessIDs))
+	args := []any{dbID}
+	for i, pid := range activeProcessIDs {
+		placeholders[i] = "?"
+		args = append(args, pid)
+	}
+	s.db.Exec(`DELETE FROM notified_pids WHERE database_id=? AND process_id NOT IN (`+strings.Join(placeholders, ",")+`)`, args...)
+}
+
+func (s *Store) CleanupOldNotifiedPIDs() {
+	s.db.Exec(`DELETE FROM notified_pids WHERE notified_at < datetime('now', '-1 day')`)
 }
 
 func (s *Store) InitDefaultSettings() {
