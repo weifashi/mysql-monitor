@@ -1,0 +1,132 @@
+version: '3.8'
+
+services:
+  # 开发环境数据库监控
+  monitor-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mysql-monitor-dev
+    restart: unless-stopped
+    environment:
+      MONITOR_NAME: "Dev Database"
+      MYSQL_HOST: ${DEV_MYSQL_HOST}
+      MYSQL_PORT: ${DEV_MYSQL_PORT}
+      MYSQL_USER: ${DEV_MYSQL_USER}
+      MYSQL_PASSWORD: ${DEV_MYSQL_PASSWORD}
+      MONITOR_INTERVAL: ${DEV_MONITOR_INTERVAL:-10}
+      MONITOR_THRESHOLD: ${DEV_MONITOR_THRESHOLD:-10}
+      DINGTALK_WEBHOOK: ${DEV_DINGTALK_WEBHOOK:-}
+      DINGTALK_SECRET: ${DEV_DINGTALK_SECRET:-}
+      EMAIL_ENABLED: ${DEV_EMAIL_ENABLED:-false}
+      EMAIL_FROM: ${DEV_EMAIL_FROM:-}
+      EMAIL_TO: ${DEV_EMAIL_TO:-}
+      EMAIL_SMTP_HOST: ${DEV_EMAIL_SMTP_HOST:-}
+      EMAIL_SMTP_PORT: ${DEV_EMAIL_SMTP_PORT:-587}
+      EMAIL_USERNAME: ${DEV_EMAIL_USERNAME:-}
+      EMAIL_PASSWORD: ${DEV_EMAIL_PASSWORD:-}
+      NOTIFY_INTERVAL: ${DEV_NOTIFY_INTERVAL:-300}
+      TZ: Asia/Shanghai
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - monitor-network
+
+  # 测试环境数据库监控
+  monitor-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mysql-monitor-test
+    restart: unless-stopped
+    environment:
+      MONITOR_NAME: "Test Database"
+      MYSQL_HOST: ${TEST_MYSQL_HOST}
+      MYSQL_PORT: ${TEST_MYSQL_PORT}
+      MYSQL_USER: ${TEST_MYSQL_USER}
+      MYSQL_PASSWORD: ${TEST_MYSQL_PASSWORD}
+      MONITOR_INTERVAL: ${TEST_MONITOR_INTERVAL:-10}
+      MONITOR_THRESHOLD: ${TEST_MONITOR_THRESHOLD:-10}
+      DINGTALK_WEBHOOK: ${TEST_DINGTALK_WEBHOOK:-}
+      DINGTALK_SECRET: ${TEST_DINGTALK_SECRET:-}
+      EMAIL_ENABLED: ${TEST_EMAIL_ENABLED:-false}
+      EMAIL_FROM: ${TEST_EMAIL_FROM:-}
+      EMAIL_TO: ${TEST_EMAIL_TO:-}
+      EMAIL_SMTP_HOST: ${TEST_EMAIL_SMTP_HOST:-}
+      EMAIL_SMTP_PORT: ${TEST_EMAIL_SMTP_PORT:-587}
+      EMAIL_USERNAME: ${TEST_EMAIL_USERNAME:-}
+      EMAIL_PASSWORD: ${TEST_EMAIL_PASSWORD:-}
+      NOTIFY_INTERVAL: ${TEST_NOTIFY_INTERVAL:-300}
+      TZ: Asia/Shanghai
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - monitor-network
+
+  # 生产环境数据库监控
+  monitor-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mysql-monitor-prod
+    restart: unless-stopped
+    environment:
+      MONITOR_NAME: "Production Database"
+      MYSQL_HOST: ${PROD_MYSQL_HOST}
+      MYSQL_PORT: ${PROD_MYSQL_PORT}
+      MYSQL_USER: ${PROD_MYSQL_USER}
+      MYSQL_PASSWORD: ${PROD_MYSQL_PASSWORD}
+      MONITOR_INTERVAL: ${PROD_MONITOR_INTERVAL:-10}
+      MONITOR_THRESHOLD: ${PROD_MONITOR_THRESHOLD:-10}
+      DINGTALK_WEBHOOK: ${PROD_DINGTALK_WEBHOOK:-}
+      DINGTALK_SECRET: ${PROD_DINGTALK_SECRET:-}
+      EMAIL_ENABLED: ${PROD_EMAIL_ENABLED:-false}
+      EMAIL_FROM: ${PROD_EMAIL_FROM:-}
+      EMAIL_TO: ${PROD_EMAIL_TO:-}
+      EMAIL_SMTP_HOST: ${PROD_EMAIL_SMTP_HOST:-}
+      EMAIL_SMTP_PORT: ${PROD_EMAIL_SMTP_PORT:-587}
+      EMAIL_USERNAME: ${PROD_EMAIL_USERNAME:-}
+      EMAIL_PASSWORD: ${PROD_EMAIL_PASSWORD:-}
+      NOTIFY_INTERVAL: ${PROD_NOTIFY_INTERVAL:-300}
+      TZ: Asia/Shanghai
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - monitor-network
+
+  # 可选：添加更多数据库监控实例
+  # monitor-custom:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.monitor
+  #   container_name: mysql-monitor-custom
+  #   restart: unless-stopped
+  #   environment:
+  #     MONITOR_NAME: "Custom Database"
+  #     MYSQL_HOST: ${CUSTOM_MYSQL_HOST}
+  #     MYSQL_PORT: ${CUSTOM_MYSQL_PORT}
+  #     MYSQL_USER: ${CUSTOM_MYSQL_USER}
+  #     MYSQL_PASSWORD: ${CUSTOM_MYSQL_PASSWORD}
+  #     MONITOR_INTERVAL: ${CUSTOM_MONITOR_INTERVAL:-10}
+  #     MONITOR_THRESHOLD: ${CUSTOM_MONITOR_THRESHOLD:-10}
+  #     TZ: Asia/Shanghai
+  #   logging:
+  #     driver: "json-file"
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
+  #   networks:
+  #     - monitor-network
+
+networks:
+  monitor-network:
+    driver: bridge

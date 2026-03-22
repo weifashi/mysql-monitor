@@ -1,0 +1,32 @@
+# 配置文件（包含敏感信息）
+.env
+.env.local
+.env.*.local
+
+# 编译产物
+perf_monitor
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 日志文件
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Docker volumes
+data/
+logs/
+
+# 临时文件
+*.tmp
+*.temp
