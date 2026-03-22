@@ -26,7 +26,7 @@ func SendEmail(cfg store.EmailConfig, message string) error {
 		return fmt.Errorf("no sender")
 	}
 
-	subject := fmt.Sprintf("MySQL 慢查询告警 - %s", time.Now().Format("2006-01-02 15:04:05"))
+	subject := fmt.Sprintf("MySQL 慢SQL告警 - %s", time.Now().Format("2006-01-02 15:04:05"))
 	subjectHdr := mime.QEncoding.Encode("utf-8", subject)
 
 	var buf bytes.Buffer

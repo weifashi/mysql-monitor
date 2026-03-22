@@ -297,10 +297,10 @@ const DashboardPage = defineComponent({
                 ]),
             ]),
             h('div', { class: 'stat-grid' }, [
-                statCard('MySQL', '慢查询监控', [
+                statCard('MySQL', '慢SQL监控', [
                     { label: '运行中', value: stats.value.running_dbs, color: '#18a058' },
                     { label: '已配置', value: stats.value.total_dbs, color: '#2080f0' },
-                    { label: '今日慢查询', value: stats.value.today_count, color: stats.value.today_count > 0 ? '#d03050' : '#999' },
+                    { label: '今日慢SQL', value: stats.value.today_count, color: stats.value.today_count > 0 ? '#d03050' : '#999' },
                 ]),
                 statCard('RocketMQ', '消息堆积监控', [
                     { label: '运行中', value: stats.value.rocketmq_running || 0, color: '#18a058' },
@@ -313,10 +313,10 @@ const DashboardPage = defineComponent({
                     { label: '今日异常', value: stats.value.health_check_errors_today || 0, color: (stats.value.health_check_errors_today || 0) > 0 ? '#d03050' : '#999' },
                 ]),
             ]),
-            h('h4', { class: 'section-title' }, '最近慢查询'),
+            h('h4', { class: 'section-title' }, '最近慢SQL'),
             stats.value.recent_logs && stats.value.recent_logs.length > 0
                 ? h(NDataTable, { columns: recentColumns.value, data: stats.value.recent_logs, bordered: false, size: 'small', maxHeight: 400, scrollX: _isMobile.value ? 400 : undefined, rowKey: row => row.id || row.detected_at })
-                : h(NEmpty, { description: '暂无慢查询记录' }),
+                : h(NEmpty, { description: '暂无慢SQL记录' }),
         ]) : null);
     }
 });
@@ -424,7 +424,7 @@ const DatabasesPage = defineComponent({
                 ]),
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '监控间隔(秒)' }, () => h(NInputNumber, { value: form.interval_sec, 'onUpdate:value': v => form.interval_sec = v, min: 1 }))),
-                    h(NGi, null, () => h(NFormItem, { label: '慢查询阈值(秒)' }, () => h(NInputNumber, { value: form.threshold_sec, 'onUpdate:value': v => form.threshold_sec = v, min: 1 }))),
+                    h(NGi, null, () => h(NFormItem, { label: '慢SQL阈值(秒)' }, () => h(NInputNumber, { value: form.threshold_sec, 'onUpdate:value': v => form.threshold_sec = v, min: 1 }))),
                 ]),
                 h(NButton, { type: 'primary', block: true, loading: saving.value, onClick: save, style: 'margin-top:8px' }, () => editingId.value ? '保存' : '创建'),
             ])),
@@ -626,7 +626,7 @@ const SlowQueriesPage = defineComponent({
         return () => h('div', { class: 'page-body' }, [
             h('div', { style: _isMobile.value ? 'margin-bottom:12px' : 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:' + (_isMobile.value ? '8px' : '0') }, [
-                    h('h3', { class: 'page-title' }, '慢查询日志'),
+                    h('h3', { class: 'page-title' }, '慢SQL日志'),
                     h(NText, { depth: 3 }, () => '共 ' + data.value.total + ' 条'),
                     h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
                         h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
@@ -1232,14 +1232,14 @@ const AppLayout = defineComponent({
             { label: '健康检查', key: 'g-healthcheck' },
             { label: 'MySQL', key: 'g-mysql' },
             { label: 'RocketMQ', key: 'g-rocketmq' },
+            { label: '监控日志', key: 'monitor-logs' },
             { label: '系统', key: 'g-system' },
         ];
 
         const groupTabs = {
             'g-mysql': [
                 { label: '数据库', key: 'databases' },
-                { label: '慢查询', key: 'slow-queries' },
-                { label: '监控日志', key: 'monitor-logs' },
+                { label: '慢SQL', key: 'slow-queries' },
             ],
             'g-rocketmq': [
                 { label: 'MQ 配置', key: 'rocketmq' },
