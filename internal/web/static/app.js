@@ -326,6 +326,11 @@ const DashboardPage = defineComponent({
                     { label: '已配置', value: stats.value.health_checks || 0, color: '#2080f0', link: '/health-checks' },
                     { label: '今日异常', value: stats.value.health_check_errors_today || 0, color: (stats.value.health_check_errors_today || 0) > 0 ? '#d03050' : '#999', link: '/health-checks-logs' },
                 ], '/health-checks'),
+                statCard('Grafana', '告警集成', [
+                    { label: '运行中', value: stats.value.grafana_running || 0, color: '#18a058', link: '/grafana' },
+                    { label: '已配置', value: stats.value.grafana_configs || 0, color: '#2080f0', link: '/grafana' },
+                    { label: '今日告警', value: stats.value.grafana_alerts_today || 0, color: (stats.value.grafana_alerts_today || 0) > 0 ? '#d03050' : '#999', link: '/grafana-alerts' },
+                ], '/grafana'),
             ]),
             h('h4', { class: 'section-title' }, '最近慢SQL'),
             stats.value.recent_logs && stats.value.recent_logs.length > 0
@@ -1223,6 +1228,179 @@ const HealthCheckLogsPage = defineComponent({
     }
 });
 
+// --- Grafana ---
+const GrafanaPage = defineComponent({
+    setup() {
+        const configs = ref([]);
+        const ruleDefs = ref([]);
+        const loading = ref(true);
+        const showModal = ref(false);
+        const editingId = ref(null);
+        const form = reactive({ name: '', grafana_url: '', username: '', password: '', datasource_uid: '', auto_rules: [], webhook_url: '', interval_sec: 60 });
+        const saving = ref(false);
+        const provisioning = ref(null);
+        const message = useMessage();
+
+        async function load() {
+            loading.value = true;
+            try { configs.value = await api.get('/api/grafana'); } catch {}
+            loading.value = false;
+        }
+        async function loadRuleDefs() {
+            try { ruleDefs.value = await api.get('/api/grafana/rule-defs'); } catch {}
+        }
+        onMounted(() => { load(); loadRuleDefs(); });
+
+        const ruleOptions = computed(() => ruleDefs.value.map(r => ({ label: r.title + ' (' + r.key + ')', value: r.key })));
+
+        function openAdd() {
+            editingId.value = null;
+            Object.assign(form, { name: '', grafana_url: '', username: '', password: '', datasource_uid: '', auto_rules: [], webhook_url: '', interval_sec: 60 });
+            showModal.value = true;
+        }
+        function openEdit(row) {
+            editingId.value = row.id;
+            let rules = [];
+            try { rules = JSON.parse(row.auto_rules || '[]'); } catch {}
+            Object.assign(form, { name: row.name, grafana_url: row.grafana_url, username: row.username, password: '', datasource_uid: row.datasource_uid, auto_rules: rules, webhook_url: row.webhook_url, interval_sec: row.interval_sec });
+            showModal.value = true;
+        }
+        async function save() {
+            if (!form.name || !form.grafana_url) { message.error('请填写名称和 Grafana URL'); return; }
+            saving.value = true;
+            try {
+                if (editingId.value) await api.put('/api/grafana/' + editingId.value, form);
+                else await api.post('/api/grafana', form);
+                showModal.value = false;
+                message.success(editingId.value ? '已更新' : '已创建');
+                load();
+            } catch (e) { message.error(e.message || '保存失败'); }
+            saving.value = false;
+        }
+        async function del(row) {
+            try { await api.del('/api/grafana/' + row.id); message.success('已删除'); load(); } catch (e) { message.error(e.message); }
+        }
+        async function toggle(row) {
+            try { await api.post('/api/grafana/' + row.id + '/toggle'); load(); } catch (e) { message.error(e.message); }
+        }
+        async function test(row) {
+            try {
+                const res = await api.post('/api/grafana/' + row.id + '/test');
+                res.ok ? message.success(res.message) : message.error(res.message);
+            } catch (e) { message.error(e.message); }
+        }
+        async function provision(row) {
+            provisioning.value = row.id;
+            try {
+                await api.post('/api/grafana/' + row.id + '/provision');
+                message.success('告警规则已同步到 Grafana');
+            } catch (e) { message.error(e.message || '同步失败'); }
+            provisioning.value = null;
+        }
+
+        const columns = useColumns([
+            { title: '名称', key: 'name', width: 120 },
+            { title: 'Grafana URL', key: 'grafana_url', ellipsis: { tooltip: true }, _hideOnMobile: true },
+            { title: '数据源 UID', key: 'datasource_uid', width: 120, ellipsis: { tooltip: true }, _hideOnMobile: true },
+            { title: '状态', key: 'status', width: 100, render: row => h(NSpace, { size: 4 }, () => [
+                h(NTag, { size: 'small', type: row.enabled ? 'success' : 'default' }, () => row.enabled ? '启用' : '禁用'),
+                row.running ? h(NBadge, { dot: true, type: 'success' }) : null,
+            ])},
+            { title: '操作', key: 'actions', width: _isMobile.value ? 220 : 340, render: row => h(NSpace, { size: 'small' }, () => [
+                h(NButton, { size: 'tiny', secondary: true, onClick: () => openEdit(row) }, () => '编辑'),
+                h(NButton, { size: 'tiny', secondary: true, onClick: () => toggle(row) }, () => row.enabled ? '禁用' : '启用'),
+                h(NButton, { size: 'tiny', secondary: true, onClick: () => test(row) }, () => '测试'),
+                h(NButton, { size: 'tiny', type: 'info', secondary: true, loading: provisioning.value === row.id, onClick: () => provision(row) }, () => '同步规则'),
+                h(NPopconfirm, { onPositiveClick: () => del(row) }, { trigger: () => h(NButton, { size: 'tiny', type: 'error', secondary: true }, () => '删除'), default: () => '确认删除？' }),
+            ])},
+        ]);
+
+        const gridCols = computed(() => _isMobile.value ? 1 : 2);
+        return () => h('div', { class: 'page-body' }, [
+            h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+                h('h3', { class: 'page-title' }, 'Grafana 告警配置'),
+                h(NButton, { type: 'primary', size: 'small', onClick: openAdd }, () => '+ 新增'),
+            ]),
+            h(NDataTable, { columns: columns.value, data: configs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 500 : undefined }),
+            h(NModal, { show: showModal.value, onUpdateShow: v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑 Grafana 配置' : '新增 Grafana 配置', style: _isMobile.value ? 'width:95vw' : 'width:680px' }, () =>
+                h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '名称', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.name, onUpdateValue: v => form.name = v, placeholder: '如: 生产环境 Grafana' }))),
+                    h(NGi, null, () => h(NFormItem, { label: 'Grafana URL', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.grafana_url, onUpdateValue: v => form.grafana_url = v, placeholder: 'http://grafana:3000' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '用户名', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.username, onUpdateValue: v => form.username = v, placeholder: 'admin' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '密码', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.password, onUpdateValue: v => form.password = v, type: 'password', showPasswordOn: 'click', placeholder: editingId.value ? '留空不修改' : 'Grafana 密码' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '数据源 UID', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.datasource_uid, onUpdateValue: v => form.datasource_uid = v, placeholder: 'Prometheus 数据源 UID' }))),
+                    h(NGi, null, () => h(NFormItem, { label: 'Webhook URL', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.webhook_url, onUpdateValue: v => form.webhook_url = v, placeholder: '本系统公网地址，如 http://x.x.x.x:8080' }))),
+                    h(NGi, { span: gridCols.value }, () => h(NFormItem, { label: '告警规则', labelPlacement: 'top' }, () => h(NSelect, { value: form.auto_rules, onUpdateValue: v => form.auto_rules = v, options: ruleOptions.value, multiple: true, placeholder: '选择要自动创建的告警规则' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '检查间隔(秒)', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInputNumber, { value: form.interval_sec, onUpdateValue: v => form.interval_sec = v, min: 10 }))),
+                    h(NGi, { span: gridCols.value }, () => h(NButton, { type: 'primary', block: true, loading: saving.value, onClick: save }, () => '保存')),
+                ])
+            ),
+        ]);
+    }
+});
+
+// --- Grafana Alerts ---
+const GrafanaAlertsPage = defineComponent({
+    setup() {
+        const alerts = ref([]);
+        const total = ref(0);
+        const page = ref(1);
+        const pageSize = 20;
+        const loading = ref(true);
+        const { connected, messages, stop } = useWebSocket('/ws/grafana-logs');
+        onUnmounted(stop);
+
+        async function load() {
+            loading.value = true;
+            try {
+                const res = await api.get('/api/grafana/alerts?page=' + page.value + '&page_size=' + pageSize);
+                alerts.value = res.data || [];
+                total.value = res.total || 0;
+            } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+        watch(page, load);
+
+        watch(() => messages.value.length, () => {
+            const latest = messages.value[messages.value.length - 1];
+            if (latest && latest.type === 'grafana_alert' && page.value === 1) {
+                load();
+            }
+        });
+
+        const statusType = (s) => {
+            const map = { firing: 'error', resolved: 'success' };
+            return map[s] || 'default';
+        };
+
+        const columns = useColumns([
+            { title: '时间', key: 'detected_at', width: 150, render: row => h('span', { style: 'font-size:12px;opacity:0.65' }, formatTime(row.detected_at)) },
+            { title: '配置', key: 'config_name', width: 100 },
+            { title: '告警名称', key: 'alert_name', width: 150, ellipsis: { tooltip: true } },
+            { title: '状态', key: 'status', width: 80, render: row => h(NTag, { type: statusType(row.status), size: 'small', bordered: false }, () => row.status) },
+            { title: '严重度', key: 'severity', width: 80, _hideOnMobile: true, render: row => row.severity ? h(NTag, { size: 'small', bordered: false }, () => row.severity) : '-' },
+            { title: '摘要', key: 'summary', ellipsis: { tooltip: true }, _hideOnMobile: true },
+        ]);
+
+        return () => h('div', { class: 'page-body' }, [
+            h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+                h('div', { style: 'display:flex;align-items:center;gap:12px' }, [
+                    h('h3', { class: 'page-title' }, 'Grafana 告警记录'),
+                    h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
+                        h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
+                        connected.value ? '实时' : '离线'
+                    ]),
+                ]),
+            ]),
+            h(NDataTable, { columns: columns.value, data: alerts.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 400 : undefined }),
+            total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
+                h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
+            ) : null,
+        ]);
+    }
+});
+
 // ============================================================
 // Layout
 // ============================================================
@@ -1246,6 +1424,7 @@ const AppLayout = defineComponent({
             { label: '健康检查', key: 'g-healthcheck' },
             { label: 'MySQL', key: 'g-mysql' },
             { label: 'RocketMQ', key: 'g-rocketmq' },
+            { label: 'Grafana', key: 'g-grafana' },
             { label: '监控日志', key: 'monitor-logs' },
             { label: '系统', key: 'g-system' },
         ];
@@ -1258,6 +1437,10 @@ const AppLayout = defineComponent({
             'g-rocketmq': [
                 { label: 'MQ 配置', key: 'rocketmq' },
                 { label: 'MQ 告警', key: 'rocketmq-alerts' },
+            ],
+            'g-grafana': [
+                { label: '告警配置', key: 'grafana' },
+                { label: '告警日志', key: 'grafana-alerts' },
             ],
             'g-healthcheck': [
                 { label: '检查配置', key: 'health-checks' },
@@ -1393,6 +1576,8 @@ const routes = [
     { path: '/rocketmq-alerts', component: RocketMQAlertsPage },
     { path: '/health-checks', component: HealthChecksPage },
     { path: '/health-checks-logs', component: HealthCheckLogsPage },
+    { path: '/grafana', component: GrafanaPage },
+    { path: '/grafana-alerts', component: GrafanaAlertsPage },
     { path: '/audit-logs', component: AuditLogsPage },
     { path: '/settings', component: SettingsPage },
 ];

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -220,10 +221,11 @@ func (s *Server) apiDashboardStats(w http.ResponseWriter, r *http.Request) {
 		totalDBs, enabledDBs, todayCount, weekCount int
 		rocketmqConfigs, rocketmqAlertsToday        int
 		healthCheckCount, healthCheckErrorsToday    int
+		grafanaConfigs, grafanaAlertsToday          int
 		recentLogs                                   []store.SlowQueryLog
 		wg                                           sync.WaitGroup
 	)
-	wg.Add(9)
+	wg.Add(11)
 	go func() { defer wg.Done(); totalDBs, _ = s.store.CountDatabases() }()
 	go func() { defer wg.Done(); enabledDBs, _ = s.store.CountEnabledDatabases() }()
 	go func() { defer wg.Done(); todayCount, _ = s.store.CountSlowQueriesToday() }()
@@ -233,6 +235,8 @@ func (s *Server) apiDashboardStats(w http.ResponseWriter, r *http.Request) {
 	go func() { defer wg.Done(); rocketmqAlertsToday, _ = s.store.CountRocketMQAlertsToday() }()
 	go func() { defer wg.Done(); healthCheckCount, _ = s.store.CountHealthChecks() }()
 	go func() { defer wg.Done(); healthCheckErrorsToday, _ = s.store.CountHealthCheckErrorsToday() }()
+	go func() { defer wg.Done(); grafanaConfigs, _ = s.store.CountGrafanaConfigs() }()
+	go func() { defer wg.Done(); grafanaAlertsToday, _ = s.store.CountGrafanaAlertsToday() }()
 	wg.Wait()
 
 	jsonOK(w, map[string]any{
@@ -248,6 +252,9 @@ func (s *Server) apiDashboardStats(w http.ResponseWriter, r *http.Request) {
 		"health_checks":              healthCheckCount,
 		"health_checks_running":      s.healthCheckMgr.RunningCount(),
 		"health_check_errors_today": healthCheckErrorsToday,
+		"grafana_configs":       grafanaConfigs,
+		"grafana_running":       s.grafanaMgr.RunningCount(),
+		"grafana_alerts_today":  grafanaAlertsToday,
 	})
 }
 
@@ -1332,4 +1339,265 @@ func (s *Server) apiHealthCheckLogs(w http.ResponseWriter, r *http.Request) {
 		logs = []store.HealthCheckLog{}
 	}
 	jsonOK(w, map[string]any{"data": logs, "total": total, "page": page, "page_size": pageSize})
+}
+
+// --- Grafana ---
+
+type grafanaWithStatus struct {
+	store.GrafanaConfig
+	Running bool `json:"running"`
+}
+
+func (s *Server) apiGrafanaList(w http.ResponseWriter, r *http.Request) {
+	configs, err := s.store.ListGrafanaConfigs()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var list []grafanaWithStatus
+	for _, c := range configs {
+		item := grafanaWithStatus{GrafanaConfig: c, Running: s.grafanaMgr.IsRunning(c.ID)}
+		item.Password = ""
+		list = append(list, item)
+	}
+	if list == nil {
+		list = []grafanaWithStatus{}
+	}
+	jsonOK(w, list)
+}
+
+func (s *Server) apiGrafanaCreate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name          string   `json:"name"`
+		GrafanaURL    string   `json:"grafana_url"`
+		Username      string   `json:"username"`
+		Password      string   `json:"password"`
+		DatasourceUID string   `json:"datasource_uid"`
+		AutoRules     []string `json:"auto_rules"`
+		WebhookURL    string   `json:"webhook_url"`
+		IntervalSec   int      `json:"interval_sec"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Name == "" || req.GrafanaURL == "" {
+		jsonError(w, http.StatusBadRequest, "name 和 grafana_url 不能为空")
+		return
+	}
+	if req.IntervalSec <= 0 {
+		req.IntervalSec = 60
+	}
+
+	rulesJSON, _ := json.Marshal(req.AutoRules)
+	cfg := &store.GrafanaConfig{
+		Name:          req.Name,
+		GrafanaURL:    req.GrafanaURL,
+		Username:      req.Username,
+		Password:      req.Password,
+		DatasourceUID: req.DatasourceUID,
+		AutoRules:     string(rulesJSON),
+		WebhookURL:    req.WebhookURL,
+		IntervalSec:   req.IntervalSec,
+		Enabled:       true,
+	}
+	id, err := s.store.CreateGrafanaConfig(cfg)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.grafanaMgr.Start(id); err != nil {
+		log.Printf("start grafana monitor %d: %v", id, err)
+	}
+	s.audit(r, "create", "grafana", id, "创建Grafana配置 "+req.Name)
+	jsonOK(w, map[string]int64{"id": id})
+}
+
+func (s *Server) apiGrafanaUpdate(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	existing, err := s.store.GetGrafanaConfig(id)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var req struct {
+		Name          string   `json:"name"`
+		GrafanaURL    string   `json:"grafana_url"`
+		Username      string   `json:"username"`
+		Password      string   `json:"password"`
+		DatasourceUID string   `json:"datasource_uid"`
+		AutoRules     []string `json:"auto_rules"`
+		WebhookURL    string   `json:"webhook_url"`
+		IntervalSec   int      `json:"interval_sec"`
+		Enabled       *bool    `json:"enabled"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Name != "" {
+		existing.Name = req.Name
+	}
+	if req.GrafanaURL != "" {
+		existing.GrafanaURL = req.GrafanaURL
+	}
+	existing.Username = req.Username
+	if req.Password != "" {
+		existing.Password = req.Password
+	}
+	if req.DatasourceUID != "" {
+		existing.DatasourceUID = req.DatasourceUID
+	}
+	if req.AutoRules != nil {
+		rulesJSON, _ := json.Marshal(req.AutoRules)
+		existing.AutoRules = string(rulesJSON)
+	}
+	if req.WebhookURL != "" {
+		existing.WebhookURL = req.WebhookURL
+	}
+	if req.IntervalSec > 0 {
+		existing.IntervalSec = req.IntervalSec
+	}
+	if req.Enabled != nil {
+		existing.Enabled = *req.Enabled
+	}
+
+	if err := s.store.UpdateGrafanaConfig(existing); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	s.grafanaMgr.Stop(id)
+	if existing.Enabled {
+		if err := s.grafanaMgr.Start(id); err != nil {
+			log.Printf("restart grafana monitor %d: %v", id, err)
+		}
+	}
+	s.audit(r, "update", "grafana", id, "更新Grafana配置 "+existing.Name)
+	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) apiGrafanaDelete(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	s.grafanaMgr.Stop(id)
+	s.grafanaMgr.CleanupGrafanaResources(id)
+	if err := s.store.DeleteGrafanaConfig(id); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "delete", "grafana", id, "删除Grafana配置")
+	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) apiGrafanaToggle(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.ToggleGrafana(id); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cfg, err := s.store.GetGrafanaConfig(id)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if cfg.Enabled {
+		s.grafanaMgr.Start(id)
+	} else {
+		s.grafanaMgr.Stop(id)
+	}
+	action := "启用"
+	if !cfg.Enabled {
+		action = "禁用"
+	}
+	s.audit(r, "toggle", "grafana", id, action+"Grafana配置 "+cfg.Name)
+	jsonOK(w, map[string]bool{"enabled": cfg.Enabled})
+}
+
+func (s *Server) apiGrafanaTest(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := s.store.GetGrafanaConfig(id)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err := monitor.TestGrafanaConnection(cfg); err != nil {
+		jsonOK(w, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	jsonOK(w, map[string]any{"ok": true, "message": "Grafana 连接成功"})
+}
+
+func (s *Server) apiGrafanaProvision(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.grafanaMgr.ProvisionForConfig(id); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "provision", "grafana", id, "同步Grafana告警规则")
+	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) apiGrafanaAlerts(w http.ResponseWriter, r *http.Request) {
+	page := 1
+	pageSize := 20
+	if p := r.URL.Query().Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if ps := r.URL.Query().Get("page_size"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 100 {
+			pageSize = v
+		}
+	}
+	var configID *int64
+	if cid := r.URL.Query().Get("config_id"); cid != "" {
+		if v, err := strconv.ParseInt(cid, 10, 64); err == nil && v > 0 {
+			configID = &v
+		}
+	}
+
+	logs, total, err := s.store.ListGrafanaAlertLogs(configID, page, pageSize)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if logs == nil {
+		logs = []store.GrafanaAlertLog{}
+	}
+	jsonOK(w, map[string]any{"data": logs, "total": total, "page": page, "page_size": pageSize})
+}
+
+func (s *Server) apiGrafanaRuleDefs(w http.ResponseWriter, r *http.Request) {
+	jsonOK(w, monitor.DefaultAlertRules)
+}
+
+func (s *Server) apiGrafanaWebhook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "read body failed")
+		return
+	}
+	defer r.Body.Close()
+	if err := s.grafanaMgr.HandleWebhook(body); err != nil {
+		log.Printf("grafana webhook error: %v", err)
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]string{"status": "ok"})
 }

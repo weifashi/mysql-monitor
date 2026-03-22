@@ -865,6 +865,165 @@ func (s *Store) CountHealthCheckErrorsToday() (int, error) {
 	return count, err
 }
 
+// --- Grafana Config CRUD ---
+
+type GrafanaConfig struct {
+	ID            int64     `json:"id"`
+	Name          string    `json:"name"`
+	GrafanaURL    string    `json:"grafana_url"`
+	Username      string    `json:"username"`
+	Password      string    `json:"password"`
+	DatasourceUID string    `json:"datasource_uid"`
+	AutoRules     string    `json:"auto_rules"`
+	WebhookURL    string    `json:"webhook_url"`
+	WebhookUID    string    `json:"webhook_uid"`
+	FolderUID     string    `json:"folder_uid"`
+	IntervalSec   int       `json:"interval_sec"`
+	Enabled       bool      `json:"enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type GrafanaAlertLog struct {
+	ID          int64      `json:"id"`
+	ConfigID    int64      `json:"config_id"`
+	ConfigName  string     `json:"config_name"`
+	AlertName   string     `json:"alert_name"`
+	Status      string     `json:"status"`
+	Severity    string     `json:"severity"`
+	Summary     string     `json:"summary"`
+	Description string     `json:"description"`
+	Fingerprint string     `json:"fingerprint"`
+	LabelsJSON  string     `json:"labels_json"`
+	StartsAt    time.Time  `json:"starts_at"`
+	EndsAt      *time.Time `json:"ends_at"`
+	DetectedAt  time.Time  `json:"detected_at"`
+}
+
+func (s *Store) ListGrafanaConfigs() ([]GrafanaConfig, error) {
+	rows, err := s.db.Query(`SELECT id, name, grafana_url, username, password, datasource_uid, auto_rules, webhook_url, webhook_uid, folder_uid, interval_sec, enabled, created_at, updated_at FROM grafana_configs ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []GrafanaConfig
+	for rows.Next() {
+		var c GrafanaConfig
+		var enabled int
+		var encPwd string
+		if err := rows.Scan(&c.ID, &c.Name, &c.GrafanaURL, &c.Username, &encPwd, &c.DatasourceUID, &c.AutoRules, &c.WebhookURL, &c.WebhookUID, &c.FolderUID, &c.IntervalSec, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		c.Password, _ = Decrypt(encPwd)
+		c.Enabled = enabled == 1
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) GetGrafanaConfig(id int64) (*GrafanaConfig, error) {
+	var c GrafanaConfig
+	var enabled int
+	var encPwd string
+	err := s.db.QueryRow(`SELECT id, name, grafana_url, username, password, datasource_uid, auto_rules, webhook_url, webhook_uid, folder_uid, interval_sec, enabled, created_at, updated_at FROM grafana_configs WHERE id = ?`, id).
+		Scan(&c.ID, &c.Name, &c.GrafanaURL, &c.Username, &encPwd, &c.DatasourceUID, &c.AutoRules, &c.WebhookURL, &c.WebhookUID, &c.FolderUID, &c.IntervalSec, &enabled, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	c.Password, _ = Decrypt(encPwd)
+	c.Enabled = enabled == 1
+	return &c, nil
+}
+
+func (s *Store) CreateGrafanaConfig(c *GrafanaConfig) (int64, error) {
+	encPwd, _ := Encrypt(c.Password)
+	res, err := s.db.Exec(`INSERT INTO grafana_configs (name, grafana_url, username, password, datasource_uid, auto_rules, webhook_url, interval_sec, enabled) VALUES (?,?,?,?,?,?,?,?,?)`,
+		c.Name, c.GrafanaURL, c.Username, encPwd, c.DatasourceUID, c.AutoRules, c.WebhookURL, c.IntervalSec, boolToInt(c.Enabled))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) UpdateGrafanaConfig(c *GrafanaConfig) error {
+	encPwd, _ := Encrypt(c.Password)
+	_, err := s.db.Exec(`UPDATE grafana_configs SET name=?, grafana_url=?, username=?, password=?, datasource_uid=?, auto_rules=?, webhook_url=?, interval_sec=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
+		c.Name, c.GrafanaURL, c.Username, encPwd, c.DatasourceUID, c.AutoRules, c.WebhookURL, c.IntervalSec, boolToInt(c.Enabled), c.ID)
+	return err
+}
+
+func (s *Store) DeleteGrafanaConfig(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM grafana_configs WHERE id = ?`, id)
+	return err
+}
+
+func (s *Store) ToggleGrafana(id int64) error {
+	_, err := s.db.Exec(`UPDATE grafana_configs SET enabled = 1 - enabled, updated_at = datetime('now') WHERE id = ?`, id)
+	return err
+}
+
+func (s *Store) UpdateGrafanaProvisionUIDs(id int64, webhookUID, folderUID string) error {
+	_, err := s.db.Exec(`UPDATE grafana_configs SET webhook_uid=?, folder_uid=?, updated_at=datetime('now') WHERE id=?`, webhookUID, folderUID, id)
+	return err
+}
+
+func (s *Store) InsertGrafanaAlertLog(l *GrafanaAlertLog) (int64, error) {
+	res, err := s.db.Exec(`INSERT INTO grafana_alert_logs (config_id, config_name, alert_name, status, severity, summary, description, fingerprint, labels_json, starts_at, ends_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		l.ConfigID, l.ConfigName, l.AlertName, l.Status, l.Severity, l.Summary, l.Description, l.Fingerprint, l.LabelsJSON, l.StartsAt, l.EndsAt)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) ListGrafanaAlertLogs(configID *int64, page, pageSize int) ([]GrafanaAlertLog, int, error) {
+	countQ := `SELECT COUNT(*) FROM grafana_alert_logs`
+	dataQ := `SELECT id, config_id, config_name, alert_name, status, severity, summary, description, fingerprint, labels_json, starts_at, ends_at, detected_at FROM grafana_alert_logs`
+	var args []interface{}
+	if configID != nil {
+		countQ += ` WHERE config_id = ?`
+		dataQ += ` WHERE config_id = ?`
+		args = append(args, *configID)
+	}
+	var total int
+	if err := s.db.QueryRow(countQ, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	dataQ += ` ORDER BY detected_at DESC LIMIT ? OFFSET ?`
+	rows, err := s.db.Query(dataQ, append(args, pageSize, (page-1)*pageSize)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var list []GrafanaAlertLog
+	for rows.Next() {
+		var l GrafanaAlertLog
+		if err := rows.Scan(&l.ID, &l.ConfigID, &l.ConfigName, &l.AlertName, &l.Status, &l.Severity, &l.Summary, &l.Description, &l.Fingerprint, &l.LabelsJSON, &l.StartsAt, &l.EndsAt, &l.DetectedAt); err != nil {
+			return nil, 0, err
+		}
+		list = append(list, l)
+	}
+	return list, total, rows.Err()
+}
+
+func (s *Store) CountGrafanaConfigs() (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM grafana_configs`).Scan(&count)
+	return count, err
+}
+
+func (s *Store) CountGrafanaAlertsToday() (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM grafana_alert_logs WHERE detected_at >= date('now')`).Scan(&count)
+	return count, err
+}
+
+func (s *Store) CountGrafanaRunning() (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM grafana_configs WHERE enabled = 1`).Scan(&count)
+	return count, err
+}
+
 // --- Sessions ---
 
 func (s *Store) SaveSession(sess *auth.SessionRow) error {

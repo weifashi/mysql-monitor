@@ -120,8 +120,14 @@ func main() {
 		log.Printf("start health check monitors: %v", err)
 	}
 
+	// Grafana monitors
+	grafanaMgr := monitor.NewGrafanaManager(s, dispatcher, eventBus)
+	if err := grafanaMgr.StartAll(); err != nil {
+		log.Printf("start grafana monitors: %v", err)
+	}
+
 	// Web server
-	srv := web.NewServer(s, authStore, mgr, rocketMQMgr, healthCheckMgr, dispatcher, eventBus)
+	srv := web.NewServer(s, authStore, mgr, rocketMQMgr, healthCheckMgr, grafanaMgr, dispatcher, eventBus)
 	httpSrv := &http.Server{
 		Addr:    listenAddr,
 		Handler: srv.Routes(),
@@ -137,6 +143,7 @@ func main() {
 		mgr.StopAll()
 		rocketMQMgr.StopAll()
 		healthCheckMgr.StopAll()
+		grafanaMgr.StopAll()
 		cancel()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()

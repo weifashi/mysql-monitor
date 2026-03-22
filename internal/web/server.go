@@ -21,17 +21,18 @@ type Server struct {
 	manager         *monitor.Manager
 	rocketMQMgr     *monitor.RocketMQManager
 	healthCheckMgr  *monitor.HealthCheckManager
+	grafanaMgr      *monitor.GrafanaManager
 	dispatcher      *notify.Dispatcher
 	hub             *Hub
 	staticHandler   http.Handler
 }
 
-func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *monitor.RocketMQManager, hc *monitor.HealthCheckManager, d *notify.Dispatcher, eb *monitor.EventBus) *Server {
+func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *monitor.RocketMQManager, hc *monitor.HealthCheckManager, gm *monitor.GrafanaManager, d *notify.Dispatcher, eb *monitor.EventBus) *Server {
 	hub := NewHub(eb)
 	go hub.Run()
 	staticSub, _ := fs.Sub(staticFS, "static")
 	return &Server{
-		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, dispatcher: d, hub: hub,
+		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, grafanaMgr: gm, dispatcher: d, hub: hub,
 		staticHandler: http.StripPrefix("/", http.FileServer(http.FS(staticSub))),
 	}
 }
@@ -50,11 +51,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/auth/github/callback", s.apiGitHubCallback)
 	mux.HandleFunc("GET /api/auth/me", s.apiMe)
 
+	// Grafana webhook (public, called by Grafana)
+	mux.HandleFunc("POST /api/grafana-webhook", s.apiGrafanaWebhook)
+
 	// --- WebSocket routes (auth checked inline) ---
 	mux.HandleFunc("GET /ws/slow-queries", s.wsHandler("slow-queries"))
 	mux.HandleFunc("GET /ws/monitor-logs", s.wsHandler("monitor-logs"))
 	mux.HandleFunc("GET /ws/rocketmq-logs", s.wsHandler("rocketmq-logs"))
 	mux.HandleFunc("GET /ws/healthcheck-logs", s.wsHandler("healthcheck-logs"))
+	mux.HandleFunc("GET /ws/grafana-logs", s.wsHandler("grafana-logs"))
 
 	// --- Protected API routes ---
 	api := http.NewServeMux()
@@ -113,6 +118,17 @@ func (s *Server) Routes() http.Handler {
 	api.HandleFunc("POST /api/health-checks/{id}/toggle", s.apiHealthCheckToggle)
 	api.HandleFunc("POST /api/health-checks/{id}/test", s.apiHealthCheckTest)
 	api.HandleFunc("GET /api/health-checks/logs", s.apiHealthCheckLogs)
+
+	// Grafana
+	api.HandleFunc("GET /api/grafana", s.apiGrafanaList)
+	api.HandleFunc("POST /api/grafana", s.apiGrafanaCreate)
+	api.HandleFunc("PUT /api/grafana/{id}", s.apiGrafanaUpdate)
+	api.HandleFunc("DELETE /api/grafana/{id}", s.apiGrafanaDelete)
+	api.HandleFunc("POST /api/grafana/{id}/toggle", s.apiGrafanaToggle)
+	api.HandleFunc("POST /api/grafana/{id}/test", s.apiGrafanaTest)
+	api.HandleFunc("POST /api/grafana/{id}/provision", s.apiGrafanaProvision)
+	api.HandleFunc("GET /api/grafana/alerts", s.apiGrafanaAlerts)
+	api.HandleFunc("GET /api/grafana/rule-defs", s.apiGrafanaRuleDefs)
 
 	mux.Handle("/api/", s.auth.AuthMiddleware(api))
 

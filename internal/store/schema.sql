@@ -148,3 +148,40 @@ CREATE TABLE IF NOT EXISTS notified_pids (
     notified_at DATETIME NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (database_id, process_id)
 );
+
+CREATE TABLE IF NOT EXISTS grafana_configs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT    NOT NULL,
+    grafana_url     TEXT    NOT NULL,
+    username        TEXT    NOT NULL DEFAULT '',
+    password        TEXT    NOT NULL DEFAULT '',
+    datasource_uid  TEXT    NOT NULL DEFAULT '',
+    auto_rules      TEXT    NOT NULL DEFAULT '[]',
+    webhook_url     TEXT    NOT NULL DEFAULT '',
+    webhook_uid     TEXT    NOT NULL DEFAULT '',
+    folder_uid      TEXT    NOT NULL DEFAULT '',
+    interval_sec    INTEGER NOT NULL DEFAULT 60,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    created_at      DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at      DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS grafana_alert_logs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    config_id       INTEGER NOT NULL,
+    config_name     TEXT    NOT NULL DEFAULT '',
+    alert_name      TEXT    NOT NULL DEFAULT '',
+    status          TEXT    NOT NULL DEFAULT '',
+    severity        TEXT    NOT NULL DEFAULT '',
+    summary         TEXT    NOT NULL DEFAULT '',
+    description     TEXT    NOT NULL DEFAULT '',
+    fingerprint     TEXT    NOT NULL DEFAULT '',
+    labels_json     TEXT    NOT NULL DEFAULT '{}',
+    starts_at       DATETIME NOT NULL DEFAULT (datetime('now')),
+    ends_at         DATETIME,
+    detected_at     DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_grafana_alert_detected ON grafana_alert_logs(detected_at);
+CREATE INDEX IF NOT EXISTS idx_grafana_alert_config ON grafana_alert_logs(config_id, detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_grafana_alert_fingerprint ON grafana_alert_logs(fingerprint);
