@@ -5,7 +5,7 @@
 # 编译产物
 mysql-monitor
 perf_monitor
-monitor
+/monitor
 *.exe
 *.dll
 *.so
