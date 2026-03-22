@@ -1341,7 +1341,7 @@ const AppLayout = defineComponent({
             return h('div', { style: 'height:100vh;overflow:hidden' }, [
                 // Full-width top bar: logo left, user info right
                 h('div', { class: 'topbar' }, [
-                    h('div', { class: 'topbar-left' }, [
+                    h('div', { class: 'topbar-left', style: 'cursor:pointer', onClick: () => router.push('/dashboard') }, [
                         h('div', { class: 'sider-logo' }, 'O'),
                         h('span', { class: 'sider-title' }, 'Ops Monitor'),
                     ]),
