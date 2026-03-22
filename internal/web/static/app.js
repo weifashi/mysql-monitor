@@ -45,7 +45,13 @@ const api = {
             opts.headers['Content-Type'] = 'application/json';
             opts.body = JSON.stringify(body);
         }
-        const res = await fetch(url, opts);
+        let res;
+        try {
+            res = await fetch(url, opts);
+        } catch (e) {
+            // Network error (server restart, offline) — don't logout
+            throw new Error('network_error');
+        }
         if (res.status === 401) {
             _sessionValid = false;
             window.location.hash = '#/login';
@@ -1220,8 +1226,8 @@ const AppLayout = defineComponent({
         const siderCollapsed = ref(_isMobile.value);
 
         onMounted(async () => {
-            try { user.value = await api.get('/api/auth/me'); } catch {
-                if (route.path !== '/login') router.push('/login');
+            try { user.value = await api.get('/api/auth/me'); } catch (e) {
+                if (e.message !== 'network_error' && route.path !== '/login') router.push('/login');
             }
         });
 
@@ -1388,7 +1394,15 @@ const router = createRouter({ history: createWebHashHistory(), routes });
 router.beforeEach(async (to) => {
     if (to.path === '/login') { _sessionValid = false; return true; }
     if (_sessionValid) return true;
-    try { await api.get('/api/auth/me'); _sessionValid = true; return true; } catch { return '/login'; }
+    try {
+        await api.get('/api/auth/me');
+        _sessionValid = true;
+        return true;
+    } catch (e) {
+        // Network error — allow navigation, don't force login
+        if (e.message === 'network_error') return true;
+        return '/login';
+    }
 });
 
 // ============================================================

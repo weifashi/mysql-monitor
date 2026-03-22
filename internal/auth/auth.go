@@ -73,7 +73,7 @@ func (ss *SessionStore) Login(user, pass string) (string, bool) {
 		Token:     token,
 		Username:  user,
 		Role:      "admin",
-		ExpiresAt: time.Now().Add(sessionMaxAge),
+		ExpiresAt: time.Now().UTC().Add(sessionMaxAge),
 	})
 	return token, true
 }
@@ -88,7 +88,7 @@ func (ss *SessionStore) LoginGitHub(userID int64, username, githubLogin, avatarU
 		GitHubLogin: githubLogin,
 		Role:        role,
 		AvatarURL:   avatarURL,
-		ExpiresAt:   time.Now().Add(sessionMaxAge),
+		ExpiresAt:   time.Now().UTC().Add(sessionMaxAge),
 	})
 	return token
 }
@@ -98,7 +98,7 @@ func (ss *SessionStore) Validate(token string) (*Session, bool) {
 	if err != nil {
 		return nil, false
 	}
-	if time.Now().After(row.ExpiresAt) {
+	if time.Now().UTC().After(row.ExpiresAt) {
 		ss.db.DeleteSession(token)
 		return nil, false
 	}
