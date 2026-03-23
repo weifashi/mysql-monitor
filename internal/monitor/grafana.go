@@ -580,7 +580,7 @@ func (c *grafanaClient) CreateAlertRule(folderUID, datasourceUID, ruleGroup, tit
 			},
 		},
 		"for":          def.For,
-		"noDataState":  "NoData",
+		"noDataState":  "OK",
 		"execErrState": "Alerting",
 		"labels": map[string]string{
 			"severity":           "warning",
