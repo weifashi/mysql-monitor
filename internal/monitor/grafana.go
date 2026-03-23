@@ -35,6 +35,7 @@ var DefaultAlertRules = []AlertRuleDef{
 	{Key: "too_many_connections", Title: "连接数过高", Expr: "mysql_global_status_threads_connected", Condition: "gt", Threshold: 100, For: "5m", Summary: "MySQL连接数过高", Description: "连接数超过100持续5分钟"},
 	{Key: "pod_restart", Title: "Pod频繁重启", Expr: "increase(kube_pod_container_status_restarts_total[1h])", Condition: "gt", Threshold: 3, For: "5m", Summary: "Pod频繁重启", Description: "1小时内重启超过3次"},
 	{Key: "disk_full", Title: "磁盘空间不足", Expr: "node_filesystem_avail_bytes / node_filesystem_size_bytes", Condition: "lt", Threshold: 0.1, For: "5m", Summary: "磁盘空间低于10%", Description: "磁盘可用空间不足10%"},
+	{Key: "nginx_slow_response", Title: "Nginx 响应过慢", Expr: "histogram_quantile(0.95, sum(rate(nginx_http_request_duration_seconds_bucket[5m])) by (le))", Condition: "gt", Threshold: 3, For: "5m", Summary: "Nginx P95 响应时间过高", Description: "Nginx P95 响应时间超过3秒持续5分钟"},
 }
 
 // --- GrafanaManager ---
@@ -410,6 +411,43 @@ func (c *grafanaClient) TestConnection() error {
 	return nil
 }
 
+type GrafanaDatasource struct {
+	UID  string `json:"uid"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+func (c *grafanaClient) ListDatasources() ([]GrafanaDatasource, error) {
+	data, status, err := c.doRequest("GET", "/api/datasources", nil)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %w", err)
+	}
+	if status != 200 {
+		return nil, fmt.Errorf("HTTP %d: %s", status, string(data))
+	}
+	var all []GrafanaDatasource
+	if err := json.Unmarshal(data, &all); err != nil {
+		return nil, fmt.Errorf("解析失败: %w", err)
+	}
+	var result []GrafanaDatasource
+	for _, ds := range all {
+		if ds.Type == "prometheus" {
+			result = append(result, ds)
+		}
+	}
+	return result, nil
+}
+
+func ListGrafanaDatasources(grafanaURL, username, password string) ([]GrafanaDatasource, error) {
+	c := &grafanaClient{
+		baseURL:  strings.TrimRight(grafanaURL, "/"),
+		username: username,
+		password: password,
+		http:     &http.Client{Timeout: 15 * time.Second},
+	}
+	return c.ListDatasources()
+}
+
 func (c *grafanaClient) CreateContactPoint(name, webhookURL string) (string, error) {
 	payload := map[string]interface{}{
 		"name": name,
@@ -616,6 +654,69 @@ func (c *grafanaClient) AddNotificationRoute(contactPointName string, configID i
 		return fmt.Errorf("update policies: HTTP %d", putStatus)
 	}
 	return nil
+}
+
+func (c *grafanaClient) ListAlertRules() ([]map[string]interface{}, error) {
+	data, status, err := c.doRequest("GET", "/api/v1/provisioning/alert-rules", nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != 200 {
+		return nil, fmt.Errorf("HTTP %d: %s", status, string(data))
+	}
+	var rules []map[string]interface{}
+	if err := json.Unmarshal(data, &rules); err != nil {
+		return nil, err
+	}
+	return rules, nil
+}
+
+func (c *grafanaClient) DeleteAlertRule(uid string) error {
+	_, status, err := c.doRequest("DELETE", "/api/v1/provisioning/alert-rules/"+uid, nil)
+	if err != nil {
+		return err
+	}
+	if status != 200 && status != 202 && status != 204 {
+		return fmt.Errorf("HTTP %d", status)
+	}
+	return nil
+}
+
+// CleanupAlertRules removes all OpsMonitor-generated alert rules for a config.
+func (m *GrafanaManager) CleanupAlertRules(configID int64) (int, error) {
+	cfg, err := m.store.GetGrafanaConfig(configID)
+	if err != nil {
+		return 0, fmt.Errorf("获取配置失败: %w", err)
+	}
+	client := newGrafanaClient(cfg)
+
+	rules, err := client.ListAlertRules()
+	if err != nil {
+		return 0, fmt.Errorf("获取规则列表失败: %w", err)
+	}
+
+	label := fmt.Sprintf("grafana-%d", configID)
+	deleted := 0
+	for _, rule := range rules {
+		labels, _ := rule["labels"].(map[string]interface{})
+		if src, ok := labels["ops_monitor_source"].(string); ok && src == label {
+			uid, _ := rule["uid"].(string)
+			if uid != "" {
+				if err := client.DeleteAlertRule(uid); err != nil {
+					log.Printf("[Grafana %s] delete rule %s failed: %v", cfg.Name, uid, err)
+				} else {
+					deleted++
+				}
+			}
+		}
+	}
+
+	// Also clean up the folder
+	if cfg.FolderUID != "" {
+		client.doRequest("DELETE", "/api/folders/"+cfg.FolderUID, nil)
+	}
+
+	return deleted, nil
 }
 
 func contains(list []string, item string) bool {

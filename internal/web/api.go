@@ -1552,6 +1552,20 @@ func (s *Server) apiGrafanaProvision(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
+func (s *Server) apiGrafanaCleanupRules(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	deleted, err := s.grafanaMgr.CleanupAlertRules(id)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "cleanup", "grafana", id, fmt.Sprintf("清理Grafana告警规则 %d 条", deleted))
+	jsonOK(w, map[string]interface{}{"deleted": deleted})
+}
+
 func (s *Server) apiGrafanaAlerts(w http.ResponseWriter, r *http.Request) {
 	page := 1
 	pageSize := 20
@@ -1585,6 +1599,46 @@ func (s *Server) apiGrafanaAlerts(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiGrafanaRuleDefs(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, monitor.DefaultAlertRules)
+}
+
+func (s *Server) apiGrafanaDatasources(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		GrafanaURL string `json:"grafana_url"`
+		Username   string `json:"username"`
+		Password   string `json:"password"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.GrafanaURL == "" || req.Username == "" {
+		jsonError(w, http.StatusBadRequest, "grafana_url 和 username 不能为空")
+		return
+	}
+	datasources, err := monitor.ListGrafanaDatasources(req.GrafanaURL, req.Username, req.Password)
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	jsonOK(w, datasources)
+}
+
+func (s *Server) apiGrafanaConfigDatasources(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := s.store.GetGrafanaConfig(id)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "配置不存在")
+		return
+	}
+	datasources, err := monitor.ListGrafanaDatasources(cfg.GrafanaURL, cfg.Username, cfg.Password)
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	jsonOK(w, datasources)
 }
 
 func (s *Server) apiGrafanaWebhook(w http.ResponseWriter, r *http.Request) {

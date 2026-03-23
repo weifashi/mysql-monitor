@@ -127,8 +127,11 @@ func (s *Server) Routes() http.Handler {
 	api.HandleFunc("POST /api/grafana/{id}/toggle", s.apiGrafanaToggle)
 	api.HandleFunc("POST /api/grafana/{id}/test", s.apiGrafanaTest)
 	api.HandleFunc("POST /api/grafana/{id}/provision", s.apiGrafanaProvision)
+	api.HandleFunc("POST /api/grafana/{id}/cleanup-rules", s.apiGrafanaCleanupRules)
 	api.HandleFunc("GET /api/grafana/alerts", s.apiGrafanaAlerts)
 	api.HandleFunc("GET /api/grafana/rule-defs", s.apiGrafanaRuleDefs)
+	api.HandleFunc("POST /api/grafana/datasources", s.apiGrafanaDatasources)
+	api.HandleFunc("GET /api/grafana/{id}/datasources", s.apiGrafanaConfigDatasources)
 
 	mux.Handle("/api/", s.auth.AuthMiddleware(api))
 

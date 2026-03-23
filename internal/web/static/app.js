@@ -1239,7 +1239,24 @@ const GrafanaPage = defineComponent({
         const form = reactive({ name: '', grafana_url: '', username: '', password: '', datasource_uid: '', auto_rules: [], webhook_url: '', interval_sec: 60 });
         const saving = ref(false);
         const provisioning = ref(null);
+        const datasources = ref([]);
+        const dsLoading = ref(false);
         const message = useMessage();
+
+        async function fetchDatasources() {
+            dsLoading.value = true;
+            try {
+                let res;
+                if (editingId.value) {
+                    res = await api.get('/api/grafana/' + editingId.value + '/datasources');
+                } else {
+                    if (!form.grafana_url || !form.username) { dsLoading.value = false; return; }
+                    res = await api.post('/api/grafana/datasources', { grafana_url: form.grafana_url, username: form.username, password: form.password });
+                }
+                datasources.value = (res || []).map(d => ({ label: d.name + ' (' + d.uid + ')', value: d.uid }));
+            } catch (e) { message.error('获取数据源失败: ' + (e.message || '')); }
+            dsLoading.value = false;
+        }
 
         async function load() {
             loading.value = true;
@@ -1256,6 +1273,7 @@ const GrafanaPage = defineComponent({
         function openAdd() {
             editingId.value = null;
             Object.assign(form, { name: '', grafana_url: '', username: '', password: '', datasource_uid: '', auto_rules: [], webhook_url: location.origin + '/api/grafana/webhook', interval_sec: 60 });
+            datasources.value = [];
             showModal.value = true;
         }
         function openEdit(row) {
@@ -1263,6 +1281,7 @@ const GrafanaPage = defineComponent({
             let rules = [];
             try { rules = JSON.parse(row.auto_rules || '[]'); } catch {}
             Object.assign(form, { name: row.name, grafana_url: row.grafana_url, username: row.username, password: '', datasource_uid: row.datasource_uid, auto_rules: rules, webhook_url: row.webhook_url, interval_sec: row.interval_sec });
+            datasources.value = [];
             showModal.value = true;
         }
         async function save() {
@@ -1297,6 +1316,12 @@ const GrafanaPage = defineComponent({
             } catch (e) { message.error(e.message || '同步失败'); }
             provisioning.value = null;
         }
+        async function cleanupRules(row) {
+            try {
+                const res = await api.post('/api/grafana/' + row.id + '/cleanup-rules');
+                message.success('已清理 ' + (res.deleted || 0) + ' 条告警规则');
+            } catch (e) { message.error(e.message || '清理失败'); }
+        }
 
         const columns = useColumns([
             { title: '名称', key: 'name', width: 120 },
@@ -1306,11 +1331,12 @@ const GrafanaPage = defineComponent({
                 h(NTag, { size: 'small', type: row.enabled ? 'success' : 'default' }, () => row.enabled ? '启用' : '禁用'),
                 row.running ? h(NBadge, { dot: true, type: 'success' }) : null,
             ])},
-            { title: '操作', key: 'actions', width: _isMobile.value ? 220 : 340, render: row => h(NSpace, { size: 'small' }, () => [
+            { title: '操作', key: 'actions', width: _isMobile.value ? 260 : 400, render: row => h(NSpace, { size: 'small' }, () => [
                 h(NButton, { size: 'tiny', secondary: true, onClick: () => openEdit(row) }, () => '编辑'),
                 h(NButton, { size: 'tiny', secondary: true, onClick: () => toggle(row) }, () => row.enabled ? '禁用' : '启用'),
                 h(NButton, { size: 'tiny', secondary: true, onClick: () => test(row) }, () => '测试'),
                 h(NButton, { size: 'tiny', type: 'info', secondary: true, loading: provisioning.value === row.id, onClick: () => provision(row) }, () => '同步规则'),
+                h(NPopconfirm, { onPositiveClick: () => cleanupRules(row) }, { trigger: () => h(NButton, { size: 'tiny', type: 'warning', secondary: true }, () => '清理规则'), default: () => '确认清理该配置在Grafana中的所有告警规则？' }),
                 h(NPopconfirm, { onPositiveClick: () => del(row) }, { trigger: () => h(NButton, { size: 'tiny', type: 'error', secondary: true }, () => '删除'), default: () => '确认删除？' }),
             ])},
         ]);
@@ -1328,7 +1354,10 @@ const GrafanaPage = defineComponent({
                     h(NGi, null, () => h(NFormItem, { label: 'Grafana URL', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.grafana_url, onUpdateValue: v => form.grafana_url = v, placeholder: 'http://grafana:3000' }))),
                     h(NGi, null, () => h(NFormItem, { label: '用户名', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.username, onUpdateValue: v => form.username = v, placeholder: 'admin' }))),
                     h(NGi, null, () => h(NFormItem, { label: '密码', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.password, onUpdateValue: v => form.password = v, type: 'password', showPasswordOn: 'click', placeholder: editingId.value ? '留空不修改' : 'Grafana 密码' }))),
-                    h(NGi, null, () => h(NFormItem, { label: '数据源 UID', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.datasource_uid, onUpdateValue: v => form.datasource_uid = v, placeholder: 'Prometheus 数据源 UID' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '数据源 UID', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NSpace, { align: 'center', size: 'small', wrap: false }, () => [
+                        h(NSelect, { value: form.datasource_uid, onUpdateValue: v => form.datasource_uid = v, options: datasources.value, filterable: true, tag: true, placeholder: '选择或输入数据源', style: 'flex:1;min-width:0', loading: dsLoading.value }),
+                        h(NButton, { size: 'small', secondary: true, loading: dsLoading.value, onClick: fetchDatasources }, () => '获取'),
+                    ]))),
                     h(NGi, null, () => h(NFormItem, { label: 'Webhook URL', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.webhook_url, onUpdateValue: v => form.webhook_url = v, placeholder: '本系统公网地址，如 http://x.x.x.x:8080' }))),
                     h(NGi, { span: gridCols.value }, () => h(NFormItem, { label: '告警规则', labelPlacement: 'top' }, () => h(NSelect, { value: form.auto_rules, onUpdateValue: v => form.auto_rules = v, options: ruleOptions.value, multiple: true, placeholder: '选择要自动创建的告警规则' }))),
                     h(NGi, null, () => h(NFormItem, { label: '检查间隔(秒)', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInputNumber, { value: form.interval_sec, onUpdateValue: v => form.interval_sec = v, min: 10 }))),
