@@ -36,6 +36,7 @@ var DefaultAlertRules = []AlertRuleDef{
 	{Key: "pod_restart", Title: "Pod频繁重启", Expr: "increase(kube_pod_container_status_restarts_total[1h])", Condition: "gt", Threshold: 3, For: "5m", Summary: "Pod频繁重启", Description: "1小时内重启超过3次"},
 	{Key: "disk_full", Title: "磁盘空间不足", Expr: "node_filesystem_avail_bytes / node_filesystem_size_bytes", Condition: "lt", Threshold: 0.1, For: "5m", Summary: "磁盘空间低于10%", Description: "磁盘可用空间不足10%"},
 	{Key: "nginx_slow_response", Title: "Nginx 响应过慢", Expr: "histogram_quantile(0.95, sum(rate(nginx_http_request_duration_seconds_bucket[5m])) by (le))", Condition: "gt", Threshold: 3, For: "5m", Summary: "Nginx P95 响应时间过高", Description: "Nginx P95 响应时间超过3秒持续5分钟"},
+	{Key: "nginx_5xx_surge", Title: "Nginx 5xx 错误激增", Expr: "sum(increase(nginx_http_requests_total{status=~\"5..\"}[5m]))", Condition: "gt", Threshold: 10, For: "5m", Summary: "Nginx 5xx 错误数量激增", Description: "5分钟内 5xx 错误超过10次持续5分钟"},
 }
 
 // --- GrafanaManager ---
@@ -207,6 +208,9 @@ func (m *GrafanaManager) ProvisionForConfig(id int64) error {
 	}
 
 	webhookURL := strings.TrimRight(cfg.WebhookURL, "/") + "/api/grafana-webhook"
+	if cfg.WebhookSecret != "" {
+		webhookURL += "?secret=" + cfg.WebhookSecret
+	}
 	contactPointName := fmt.Sprintf("OpsMonitor-%d", cfg.ID)
 
 	// 1. Create or update contact point

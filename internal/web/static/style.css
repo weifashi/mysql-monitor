@@ -236,7 +236,7 @@ html, body {
     align-items: center;
     justify-content: space-between;
     padding: 0 20px;
-    height: 48px;
+    height: 60px;
     background: var(--topbar-bg);
     border-bottom: 1px solid var(--topbar-border);
     flex-shrink: 0;

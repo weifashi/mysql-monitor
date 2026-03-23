@@ -191,7 +191,7 @@ const LoginPage = defineComponent({
         }
 
         // SVG database icon
-        const dbIcon = () => h('svg', { width: 48, height: 48, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', style: 'color:var(--login-accent)' }, [
+        const dbIcon = () => h('svg', { width: 60, height: 60, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', style: 'color:var(--login-accent)' }, [
             h('ellipse', { cx: 12, cy: 5, rx: 9, ry: 3 }),
             h('path', { d: 'M21 12c0 1.66-4 3-9 3s-9-1.34-9-3' }),
             h('path', { d: 'M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5' }),
@@ -861,7 +861,36 @@ const RocketMQPage = defineComponent({
         const editingId = ref(null);
         const form = reactive({ name: '', dashboard_url: '', username: '', password: '', consumer_group: '', topic: '', threshold: 1000, interval_sec: 30 });
         const saving = ref(false);
+        const groupOptions = ref([]);
+        const topicOptions = ref([]);
+        const groupLoading = ref(false);
+        const topicLoading = ref(false);
         const message = useMessage();
+
+        async function fetchGroups() {
+            if (!form.dashboard_url) return;
+            groupLoading.value = true;
+            try {
+                const payload = editingId.value
+                    ? { config_id: editingId.value }
+                    : { dashboard_url: form.dashboard_url, username: form.username, password: form.password };
+                const res = await api.post('/api/rocketmq/consumer-groups', payload);
+                groupOptions.value = (res || []).map(g => ({ label: g, value: g }));
+            } catch (e) { message.error('获取消费组失败: ' + (e.message || '')); }
+            groupLoading.value = false;
+        }
+        async function fetchTopics() {
+            if (!form.dashboard_url) return;
+            topicLoading.value = true;
+            try {
+                const payload = editingId.value
+                    ? { config_id: editingId.value }
+                    : { dashboard_url: form.dashboard_url, username: form.username, password: form.password };
+                const res = await api.post('/api/rocketmq/topics', payload);
+                topicOptions.value = (res || []).map(t => ({ label: t, value: t }));
+            } catch (e) { message.error('获取Topic失败: ' + (e.message || '')); }
+            topicLoading.value = false;
+        }
 
         async function load() {
             loading.value = true;
@@ -873,16 +902,19 @@ const RocketMQPage = defineComponent({
         function openAdd() {
             editingId.value = null;
             Object.assign(form, { name: '', dashboard_url: '', username: '', password: '', consumer_group: '', topic: '', threshold: 1000, interval_sec: 30 });
+            groupOptions.value = []; topicOptions.value = [];
             showModal.value = true;
         }
         function openEdit(row) {
             editingId.value = row.id;
             Object.assign(form, { name: row.name, dashboard_url: row.dashboard_url, username: row.username, password: '', consumer_group: row.consumer_group, topic: row.topic, threshold: row.threshold, interval_sec: row.interval_sec });
+            groupOptions.value = []; topicOptions.value = [];
             showModal.value = true;
         }
         function openClone(row) {
             editingId.value = null;
             Object.assign(form, { name: row.name + ' (副本)', dashboard_url: row.dashboard_url, username: row.username, password: '', consumer_group: row.consumer_group, topic: row.topic, threshold: row.threshold, interval_sec: row.interval_sec });
+            groupOptions.value = []; topicOptions.value = [];
             showModal.value = true;
         }
         async function save() {
@@ -942,8 +974,14 @@ const RocketMQPage = defineComponent({
                     h(NGi, null, () => h(NFormItem, { label: 'Dashboard URL', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.dashboard_url, onUpdateValue: v => form.dashboard_url = v, placeholder: 'http://host:port' }))),
                     h(NGi, null, () => h(NFormItem, { label: '用户名', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.username, onUpdateValue: v => form.username = v, placeholder: '可选' }))),
                     h(NGi, null, () => h(NFormItem, { label: '密码', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.password, onUpdateValue: v => form.password = v, type: 'password', showPasswordOn: 'click', placeholder: editingId.value ? '留空不修改' : '可选' }))),
-                    h(NGi, null, () => h(NFormItem, { label: '消费组', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.consumer_group, onUpdateValue: v => form.consumer_group = v, placeholder: 'ConsumerGroup 名称' }))),
-                    h(NGi, null, () => h(NFormItem, { label: 'Topic', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.topic, onUpdateValue: v => form.topic = v, placeholder: 'Topic 名称' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '消费组', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NSpace, { align: 'center', size: 'small', wrap: false }, () => [
+                        h(NSelect, { value: form.consumer_group, onUpdateValue: v => form.consumer_group = v, options: groupOptions.value, filterable: true, tag: true, placeholder: '选择或输入消费组', style: 'flex:1;min-width:0', loading: groupLoading.value }),
+                        h(NButton, { size: 'small', secondary: true, loading: groupLoading.value, onClick: fetchGroups }, () => '获取'),
+                    ]))),
+                    h(NGi, null, () => h(NFormItem, { label: 'Topic', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NSpace, { align: 'center', size: 'small', wrap: false }, () => [
+                        h(NSelect, { value: form.topic, onUpdateValue: v => form.topic = v, options: topicOptions.value, filterable: true, tag: true, placeholder: '选择或输入Topic', style: 'flex:1;min-width:0', loading: topicLoading.value }),
+                        h(NButton, { size: 'small', secondary: true, loading: topicLoading.value, onClick: fetchTopics }, () => '获取'),
+                    ]))),
                     h(NGi, null, () => h(NFormItem, { label: '堆积阈值', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInputNumber, { value: form.threshold, onUpdateValue: v => form.threshold = v, min: 1 }))),
                     h(NGi, null, () => h(NFormItem, { label: '检查间隔(秒)', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInputNumber, { value: form.interval_sec, onUpdateValue: v => form.interval_sec = v, min: 5 }))),
                     h(NGi, { span: gridCols.value }, () => h(NButton, { type: 'primary', block: true, loading: saving.value, onClick: save }, () => '保存')),
@@ -1235,7 +1273,7 @@ const GrafanaPage = defineComponent({
         const loading = ref(true);
         const showModal = ref(false);
         const editingId = ref(null);
-        const form = reactive({ name: '', grafana_url: '', username: '', password: '', datasource_uid: '', auto_rules: [], webhook_url: '', interval_sec: 60 });
+        const form = reactive({ name: '', grafana_url: '', username: '', password: '', datasource_uid: '', auto_rules: [], webhook_url: '', webhook_secret: '', interval_sec: 60 });
         const saving = ref(false);
         const provisioning = ref(null);
         const datasources = ref([]);
@@ -1269,9 +1307,11 @@ const GrafanaPage = defineComponent({
 
         const ruleOptions = computed(() => ruleDefs.value.map(r => ({ label: r.title + ' (' + r.key + ')', value: r.key })));
 
-        function openAdd() {
+        async function openAdd() {
             editingId.value = null;
-            Object.assign(form, { name: '', grafana_url: '', username: '', password: '', datasource_uid: '', auto_rules: [], webhook_url: location.origin + '/api/grafana/webhook', interval_sec: 60 });
+            let secret = '';
+            try { const res = await api.post('/api/grafana/generate-secret'); secret = res.secret || ''; } catch {}
+            Object.assign(form, { name: '', grafana_url: '', username: '', password: '', datasource_uid: '', auto_rules: [], webhook_url: location.origin, webhook_secret: secret, interval_sec: 60 });
             datasources.value = [];
             showModal.value = true;
         }
@@ -1279,7 +1319,7 @@ const GrafanaPage = defineComponent({
             editingId.value = row.id;
             let rules = [];
             try { rules = JSON.parse(row.auto_rules || '[]'); } catch {}
-            Object.assign(form, { name: row.name, grafana_url: row.grafana_url, username: row.username, password: '', datasource_uid: row.datasource_uid, auto_rules: rules, webhook_url: row.webhook_url, interval_sec: row.interval_sec });
+            Object.assign(form, { name: row.name, grafana_url: row.grafana_url, username: row.username, password: '', datasource_uid: row.datasource_uid, auto_rules: rules, webhook_url: row.webhook_url, webhook_secret: row.webhook_secret || '', interval_sec: row.interval_sec });
             datasources.value = [];
             showModal.value = true;
         }
@@ -1353,11 +1393,15 @@ const GrafanaPage = defineComponent({
                     h(NGi, null, () => h(NFormItem, { label: 'Grafana URL', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.grafana_url, onUpdateValue: v => form.grafana_url = v, placeholder: 'http://grafana:3000' }))),
                     h(NGi, null, () => h(NFormItem, { label: '用户名', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.username, onUpdateValue: v => form.username = v, placeholder: 'admin' }))),
                     h(NGi, null, () => h(NFormItem, { label: '密码', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.password, onUpdateValue: v => form.password = v, type: 'password', showPasswordOn: 'click', placeholder: editingId.value ? '留空不修改' : 'Grafana 密码' }))),
-                    h(NGi, null, () => h(NFormItem, { label: '数据源 UID', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NSpace, { align: 'center', size: 'small', wrap: false }, () => [
+                    h(NGi, { span: gridCols.value }, () => h(NFormItem, { label: '数据源 UID', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NSpace, { align: 'center', size: 'small', wrap: false, style: 'width:100%' }, () => [
                         h(NSelect, { value: form.datasource_uid, onUpdateValue: v => form.datasource_uid = v, options: datasources.value, filterable: true, tag: true, placeholder: '选择或输入数据源', style: 'flex:1;min-width:0', loading: dsLoading.value }),
                         h(NButton, { size: 'small', secondary: true, loading: dsLoading.value, onClick: fetchDatasources }, () => '获取'),
                     ]))),
-                    h(NGi, null, () => h(NFormItem, { label: 'Webhook URL', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.webhook_url, onUpdateValue: v => form.webhook_url = v, placeholder: '本系统公网地址，如 http://x.x.x.x:8080' }))),
+                    h(NGi, null, () => h(NFormItem, { label: 'Webhook URL', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.webhook_url, onUpdateValue: v => form.webhook_url = v, placeholder: '本系统公网地址' }))),
+                    h(NGi, null, () => h(NFormItem, { label: 'Webhook 密钥', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NSpace, { align: 'center', size: 'small', wrap: false }, () => [
+                        h(NInput, { value: form.webhook_secret, onUpdateValue: v => form.webhook_secret = v, placeholder: '自动生成', style: 'flex:1;min-width:0', readonly: true }),
+                        h(NButton, { size: 'small', secondary: true, onClick: async () => { try { const res = await api.post('/api/grafana/generate-secret'); form.webhook_secret = res.secret; } catch {} } }, () => '重新生成'),
+                    ]))),
                     h(NGi, { span: gridCols.value }, () => h(NFormItem, { label: '告警规则', labelPlacement: 'top' }, () => h(NSelect, { value: form.auto_rules, onUpdateValue: v => form.auto_rules = v, options: ruleOptions.value, multiple: true, placeholder: '选择要自动创建的告警规则' }))),
                     h(NGi, null, () => h(NFormItem, { label: '检查间隔(秒)', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInputNumber, { value: form.interval_sec, onUpdateValue: v => form.interval_sec = v, min: 10 }))),
                     h(NGi, { span: gridCols.value }, () => h(NButton, { type: 'primary', block: true, loading: saving.value, onClick: save }, () => '保存')),
@@ -1548,7 +1592,7 @@ const AppLayout = defineComponent({
             }
 
             // Desktop layout: top bar → sidebar | sub-sidebar | content
-            const topbarH = '48px';
+            const topbarH = '60px';
             return h('div', { style: 'height:100vh;overflow:hidden' }, [
                 // Full-width top bar: logo left, user info right
                 h('div', { class: 'topbar' }, [

@@ -105,6 +105,8 @@ func (s *Server) Routes() http.Handler {
 	api.HandleFunc("DELETE /api/rocketmq/{id}", s.apiRocketMQDelete)
 	api.HandleFunc("POST /api/rocketmq/{id}/toggle", s.apiRocketMQToggle)
 	api.HandleFunc("POST /api/rocketmq/{id}/test", s.apiRocketMQTest)
+	api.HandleFunc("POST /api/rocketmq/consumer-groups", s.apiRocketMQConsumerGroups)
+	api.HandleFunc("POST /api/rocketmq/topics", s.apiRocketMQTopics)
 	api.HandleFunc("GET /api/rocketmq/alerts", s.apiRocketMQAlerts)
 
 	// Audit Logs
@@ -131,6 +133,7 @@ func (s *Server) Routes() http.Handler {
 	api.HandleFunc("GET /api/grafana/alerts", s.apiGrafanaAlerts)
 	api.HandleFunc("GET /api/grafana/rule-defs", s.apiGrafanaRuleDefs)
 	api.HandleFunc("POST /api/grafana/datasources", s.apiGrafanaDatasources)
+	api.HandleFunc("POST /api/grafana/generate-secret", s.apiGrafanaGenerateSecret)
 	api.HandleFunc("GET /api/grafana/{id}/datasources", s.apiGrafanaConfigDatasources)
 
 	mux.Handle("/api/", s.auth.AuthMiddleware(api))

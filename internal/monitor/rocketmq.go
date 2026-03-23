@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -130,6 +131,36 @@ func (m *RocketMQManager) settingKey(id int64, suffix string) string {
 	return fmt.Sprintf("rmq_%s_%d", suffix, id)
 }
 
+// queryNewMessagesByOffset is the fallback when consumers are offline.
+// It queries the topic's total maxOffset and returns the increment since the last check.
+// The increment represents new messages produced but not yet consumed.
+func (m *RocketMQManager) queryNewMessagesByOffset(client *http.Client, cfg *store.RocketMQConfig) (int64, error) {
+	current, err := queryTopicMaxOffset(client, cfg)
+	if err != nil {
+		return 0, err
+	}
+
+	key := m.settingKey(cfg.ID, "maxoffset")
+	lastStr := m.store.GetSetting(key)
+
+	var last int64
+	if lastStr != "" {
+		fmt.Sscanf(lastStr, "%d", &last)
+	}
+
+	m.store.SetSetting(key, fmt.Sprintf("%d", current))
+
+	if last == 0 {
+		// First check — no baseline yet, report 0
+		return 0, nil
+	}
+	delta := current - last
+	if delta < 0 {
+		delta = 0
+	}
+	return delta, nil
+}
+
 func (m *RocketMQManager) isNotified(id int64, suffix string) bool {
 	return m.store.GetSetting(m.settingKey(id, suffix)) == "1"
 }
@@ -143,7 +174,11 @@ func (m *RocketMQManager) setNotified(id int64, suffix string, v bool) {
 }
 
 func (m *RocketMQManager) runMonitor(ctx context.Context, cfg *store.RocketMQConfig) {
-	client := newRocketMQClient()
+	client, err := rocketMQLogin(cfg.DashboardURL, cfg.Username, cfg.Password)
+	if err != nil {
+		log.Printf("[RocketMQ %s] login failed: %v", cfg.Name, err)
+		client = newRocketMQClient()
+	}
 	ticker := time.NewTicker(time.Duration(cfg.IntervalSec) * time.Second)
 	defer ticker.Stop()
 
@@ -163,6 +198,20 @@ func (m *RocketMQManager) doCheck(cfg *store.RocketMQConfig, client *http.Client
 	m.emit("rocketmq_checking", cfg.ID, cfg.Name, "检查中...", nil)
 
 	diffTotal, err := queryConsumerLag(client, cfg)
+	// Session expired, re-login and retry
+	if err != nil && err != errConsumerOffline && cfg.Username != "" && strings.Contains(err.Error(), "重定向") {
+		if newClient, loginErr := rocketMQLogin(cfg.DashboardURL, cfg.Username, cfg.Password); loginErr == nil {
+			// Copy cookies to existing client's jar
+			*client = *newClient
+			diffTotal, err = queryConsumerLag(client, cfg)
+		}
+	}
+
+	// Consumer offline: fall back to topic maxOffset increment detection
+	if err == errConsumerOffline {
+		diffTotal, err = m.queryNewMessagesByOffset(client, cfg)
+	}
+
 	if err != nil {
 		log.Printf("[RocketMQ %s] query error: %v", cfg.Name, err)
 		m.emit("rocketmq_error", cfg.ID, cfg.Name, fmt.Sprintf("查询错误: %v", err), nil)
@@ -259,39 +308,17 @@ func newRocketMQClient() *http.Client {
 	}
 }
 
+// errConsumerOffline is returned when the consumer group has no online instances.
+var errConsumerOffline = fmt.Errorf("consumer offline")
+
 // queryConsumerLag queries RocketMQ Dashboard API for consumer lag on the configured topic.
+// Returns errConsumerOffline if the consumer group is offline (so callers can fall back).
 func queryConsumerLag(client *http.Client, cfg *store.RocketMQConfig) (int64, error) {
 	apiURL := strings.TrimRight(cfg.DashboardURL, "/") + "/consumer/queryTopicByConsumer.query?consumerGroup=" + cfg.ConsumerGroup
 
-	req, err := http.NewRequest("GET", apiURL, nil)
+	body, err := rocketMQGet(client, apiURL, cfg.Username, cfg.Password)
 	if err != nil {
-		return 0, fmt.Errorf("create request: %w", err)
-	}
-
-	// Always set Basic Auth if credentials are configured
-	if cfg.Username != "" {
-		req.SetBasicAuth(cfg.Username, cfg.Password)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("http request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		return 0, fmt.Errorf("认证失败 (HTTP %d)，请检查用户名和密码", resp.StatusCode)
-	}
-	if resp.StatusCode == 302 {
-		return 0, fmt.Errorf("Dashboard 重定向到登录页，请检查用户名和密码")
-	}
-	if resp.StatusCode != 200 {
-		return 0, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 200))
+		return 0, err
 	}
 
 	// RocketMQ Dashboard response: { "status": 0, "data": [ { "topic": "X", "diffTotal": N, ... } ] }
@@ -309,43 +336,185 @@ func queryConsumerLag(client *http.Client, cfg *store.RocketMQConfig) (int64, er
 		return 0, fmt.Errorf("Dashboard 返回非 JSON 响应，请检查地址和凭据是否正确")
 	}
 
+	// status=-1 with null data means consumer group has no online instances
+	if result.Status == -1 || result.Data == nil {
+		return 0, errConsumerOffline
+	}
+
 	for _, item := range result.Data {
 		if item.Topic == cfg.Topic {
 			return item.DiffTotal, nil
 		}
 	}
 
-	return 0, fmt.Errorf("topic %q not found in consumer group %q", cfg.Topic, cfg.ConsumerGroup)
+	// topic not in the list → consumer group online but not subscribed to this topic
+	return 0, errConsumerOffline
+}
+
+// queryTopicMaxOffset queries the total maxOffset across all queues for a topic.
+// This works even when consumers are offline.
+func queryTopicMaxOffset(client *http.Client, cfg *store.RocketMQConfig) (int64, error) {
+	apiURL := strings.TrimRight(cfg.DashboardURL, "/") + "/topic/stats.query?topic=" + cfg.Topic
+	body, err := rocketMQGet(client, apiURL, cfg.Username, cfg.Password)
+	if err != nil {
+		return 0, err
+	}
+
+	var result struct {
+		Status int `json:"status"`
+		Data   struct {
+			OffsetTable map[string]struct {
+				MaxOffset int64 `json:"maxOffset"`
+			} `json:"offsetTable"`
+		} `json:"data"`
+		ErrMsg string `json:"errMsg"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return 0, fmt.Errorf("解析 topic stats 失败: %w", err)
+	}
+	if result.Status != 0 {
+		return 0, fmt.Errorf("topic stats 查询失败: %s", result.ErrMsg)
+	}
+
+	var total int64
+	for _, q := range result.Data.OffsetTable {
+		total += q.MaxOffset
+	}
+	return total, nil
 }
 
 // TestRocketMQConnection tests connectivity to RocketMQ Dashboard.
 func TestRocketMQConnection(cfg *store.RocketMQConfig) error {
-	client := newRocketMQClient()
+	client, err := rocketMQLogin(cfg.DashboardURL, cfg.Username, cfg.Password)
+	if err != nil {
+		return err
+	}
 
 	apiURL := strings.TrimRight(cfg.DashboardURL, "/") + "/topic/list.query?skipSysProcess=true&skipRetryAndDlq=true"
-	req, err := http.NewRequest("GET", apiURL, nil)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	if cfg.Username != "" {
-		req.SetBasicAuth(cfg.Username, cfg.Password)
+	_, err = rocketMQGet(client, apiURL, cfg.Username, cfg.Password)
+	return err
+}
+
+// rocketMQLogin performs form-based login to RocketMQ Dashboard and returns an authenticated client.
+func rocketMQLogin(dashboardURL, username, password string) (*http.Client, error) {
+	client := newRocketMQClient()
+	baseURL := strings.TrimRight(dashboardURL, "/")
+
+	if username == "" {
+		return client, nil
 	}
 
+	// RocketMQ Dashboard login API: POST /login/login.do?username=xxx&password=xxx
+	loginURL := fmt.Sprintf("%s/login/login.do?username=%s&password=%s", baseURL, username, password)
+	loginReq, err := http.NewRequest("POST", loginURL, bytes.NewReader([]byte{}))
+	if err != nil {
+		return nil, err
+	}
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginResp, err := client.Do(loginReq)
+	if err != nil {
+		return nil, fmt.Errorf("登录失败: %w", err)
+	}
+	defer loginResp.Body.Close()
+	body, _ := io.ReadAll(loginResp.Body)
+
+	if loginResp.StatusCode == 200 {
+		var result struct {
+			Status int `json:"status"`
+		}
+		json.Unmarshal(body, &result)
+		if result.Status != 0 {
+			return nil, fmt.Errorf("登录失败，请检查用户名和密码")
+		}
+	}
+
+	return client, nil
+}
+
+func rocketMQGet(client *http.Client, url, username, password string) ([]byte, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if username != "" {
+		req.SetBasicAuth(username, password)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("连接失败: %w", err)
+		return nil, fmt.Errorf("连接失败: %w", err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		return fmt.Errorf("认证失败 (HTTP %d)，请检查用户名和密码", resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == 302 || resp.StatusCode == 401 || resp.StatusCode == 403 {
+		return nil, fmt.Errorf("认证失败 (HTTP %d)", resp.StatusCode)
 	}
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 200))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 200))
 	}
+	return body, nil
+}
 
-	return nil
+// ListRocketMQConsumerGroups fetches consumer group list from RocketMQ Dashboard.
+func ListRocketMQConsumerGroups(dashboardURL, username, password string) ([]string, error) {
+	client, err := rocketMQLogin(dashboardURL, username, password)
+	if err != nil {
+		return nil, err
+	}
+	baseURL := strings.TrimRight(dashboardURL, "/")
+	body, err := rocketMQGet(client, baseURL+"/consumer/groupList.query", username, password)
+	if err != nil {
+		return nil, err
+	}
+	// Response: {"data": [{"group": "xxx", "subGroupType": "NORMAL"|"SYSTEM", ...}]}
+	var result struct {
+		Data []struct {
+			Group        string `json:"group"`
+			SubGroupType string `json:"subGroupType"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("解析失败: %w", err)
+	}
+	var groups []string
+	for _, g := range result.Data {
+		if g.SubGroupType != "SYSTEM" {
+			groups = append(groups, g.Group)
+		}
+	}
+	return groups, nil
+}
+
+// ListRocketMQTopics fetches topic list from RocketMQ Dashboard.
+func ListRocketMQTopics(dashboardURL, username, password string) ([]string, error) {
+	client, err := rocketMQLogin(dashboardURL, username, password)
+	if err != nil {
+		return nil, err
+	}
+	baseURL := strings.TrimRight(dashboardURL, "/")
+	body, err := rocketMQGet(client, baseURL+"/topic/list.query?skipSysProcess=true&skipRetryAndDlq=true", username, password)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Data struct {
+			TopicList []string `json:"topicList"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("解析失败: %w", err)
+	}
+	var topics []string
+	for _, t := range result.Data.TopicList {
+		// Skip system topics
+		if strings.HasPrefix(t, "RMQ_SYS_") || strings.HasPrefix(t, "rmq_sys_") ||
+			strings.HasPrefix(t, "%SYS%") || strings.HasPrefix(t, "SCHEDULE_TOPIC") ||
+			strings.HasPrefix(t, "DefaultCluster") || t == "BenchmarkTest" ||
+			t == "SELF_TEST_TOPIC" || t == "TBW102" {
+			continue
+		}
+		topics = append(topics, t)
+	}
+	return topics, nil
 }
 
 func truncateStr(s string, n int) string {

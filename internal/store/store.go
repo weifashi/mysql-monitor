@@ -109,6 +109,13 @@ func New(dataDir string) (*Store, error) {
 	if _, err := db.Exec(schemaSQL); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	// Auto-migrate: add missing columns
+	migrations := []string{
+		"ALTER TABLE grafana_configs ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''",
+	}
+	for _, m := range migrations {
+		db.Exec(m) // ignore errors (column may already exist)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -876,6 +883,7 @@ type GrafanaConfig struct {
 	DatasourceUID string    `json:"datasource_uid"`
 	AutoRules     string    `json:"auto_rules"`
 	WebhookURL    string    `json:"webhook_url"`
+	WebhookSecret string    `json:"webhook_secret"`
 	WebhookUID    string    `json:"webhook_uid"`
 	FolderUID     string    `json:"folder_uid"`
 	IntervalSec   int       `json:"interval_sec"`
@@ -901,7 +909,7 @@ type GrafanaAlertLog struct {
 }
 
 func (s *Store) ListGrafanaConfigs() ([]GrafanaConfig, error) {
-	rows, err := s.db.Query(`SELECT id, name, grafana_url, username, password, datasource_uid, auto_rules, webhook_url, webhook_uid, folder_uid, interval_sec, enabled, created_at, updated_at FROM grafana_configs ORDER BY id`)
+	rows, err := s.db.Query(`SELECT id, name, grafana_url, username, password, datasource_uid, auto_rules, webhook_url, webhook_secret, webhook_uid, folder_uid, interval_sec, enabled, created_at, updated_at FROM grafana_configs ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -911,7 +919,7 @@ func (s *Store) ListGrafanaConfigs() ([]GrafanaConfig, error) {
 		var c GrafanaConfig
 		var enabled int
 		var encPwd string
-		if err := rows.Scan(&c.ID, &c.Name, &c.GrafanaURL, &c.Username, &encPwd, &c.DatasourceUID, &c.AutoRules, &c.WebhookURL, &c.WebhookUID, &c.FolderUID, &c.IntervalSec, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.GrafanaURL, &c.Username, &encPwd, &c.DatasourceUID, &c.AutoRules, &c.WebhookURL, &c.WebhookSecret, &c.WebhookUID, &c.FolderUID, &c.IntervalSec, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Password, _ = Decrypt(encPwd)
@@ -925,8 +933,8 @@ func (s *Store) GetGrafanaConfig(id int64) (*GrafanaConfig, error) {
 	var c GrafanaConfig
 	var enabled int
 	var encPwd string
-	err := s.db.QueryRow(`SELECT id, name, grafana_url, username, password, datasource_uid, auto_rules, webhook_url, webhook_uid, folder_uid, interval_sec, enabled, created_at, updated_at FROM grafana_configs WHERE id = ?`, id).
-		Scan(&c.ID, &c.Name, &c.GrafanaURL, &c.Username, &encPwd, &c.DatasourceUID, &c.AutoRules, &c.WebhookURL, &c.WebhookUID, &c.FolderUID, &c.IntervalSec, &enabled, &c.CreatedAt, &c.UpdatedAt)
+	err := s.db.QueryRow(`SELECT id, name, grafana_url, username, password, datasource_uid, auto_rules, webhook_url, webhook_secret, webhook_uid, folder_uid, interval_sec, enabled, created_at, updated_at FROM grafana_configs WHERE id = ?`, id).
+		Scan(&c.ID, &c.Name, &c.GrafanaURL, &c.Username, &encPwd, &c.DatasourceUID, &c.AutoRules, &c.WebhookURL, &c.WebhookSecret, &c.WebhookUID, &c.FolderUID, &c.IntervalSec, &enabled, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -937,8 +945,8 @@ func (s *Store) GetGrafanaConfig(id int64) (*GrafanaConfig, error) {
 
 func (s *Store) CreateGrafanaConfig(c *GrafanaConfig) (int64, error) {
 	encPwd, _ := Encrypt(c.Password)
-	res, err := s.db.Exec(`INSERT INTO grafana_configs (name, grafana_url, username, password, datasource_uid, auto_rules, webhook_url, interval_sec, enabled) VALUES (?,?,?,?,?,?,?,?,?)`,
-		c.Name, c.GrafanaURL, c.Username, encPwd, c.DatasourceUID, c.AutoRules, c.WebhookURL, c.IntervalSec, boolToInt(c.Enabled))
+	res, err := s.db.Exec(`INSERT INTO grafana_configs (name, grafana_url, username, password, datasource_uid, auto_rules, webhook_url, webhook_secret, interval_sec, enabled) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		c.Name, c.GrafanaURL, c.Username, encPwd, c.DatasourceUID, c.AutoRules, c.WebhookURL, c.WebhookSecret, c.IntervalSec, boolToInt(c.Enabled))
 	if err != nil {
 		return 0, err
 	}
@@ -947,8 +955,8 @@ func (s *Store) CreateGrafanaConfig(c *GrafanaConfig) (int64, error) {
 
 func (s *Store) UpdateGrafanaConfig(c *GrafanaConfig) error {
 	encPwd, _ := Encrypt(c.Password)
-	_, err := s.db.Exec(`UPDATE grafana_configs SET name=?, grafana_url=?, username=?, password=?, datasource_uid=?, auto_rules=?, webhook_url=?, interval_sec=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
-		c.Name, c.GrafanaURL, c.Username, encPwd, c.DatasourceUID, c.AutoRules, c.WebhookURL, c.IntervalSec, boolToInt(c.Enabled), c.ID)
+	_, err := s.db.Exec(`UPDATE grafana_configs SET name=?, grafana_url=?, username=?, password=?, datasource_uid=?, auto_rules=?, webhook_url=?, webhook_secret=?, interval_sec=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
+		c.Name, c.GrafanaURL, c.Username, encPwd, c.DatasourceUID, c.AutoRules, c.WebhookURL, c.WebhookSecret, c.IntervalSec, boolToInt(c.Enabled), c.ID)
 	return err
 }
 

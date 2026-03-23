@@ -1,7 +1,9 @@
 package web
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1035,6 +1037,54 @@ func (s *Server) apiRocketMQTest(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true, "message": "连接成功"})
 }
 
+func (s *Server) rocketMQResolveCredentials(r *http.Request) (dashboardURL, username, password string, err error) {
+	var req struct {
+		ConfigID     int64  `json:"config_id"`
+		DashboardURL string `json:"dashboard_url"`
+		Username     string `json:"username"`
+		Password     string `json:"password"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		return "", "", "", fmt.Errorf("invalid json")
+	}
+	if req.ConfigID > 0 {
+		cfg, err := s.store.GetRocketMQConfig(req.ConfigID)
+		if err != nil {
+			return "", "", "", fmt.Errorf("配置不存在")
+		}
+		return cfg.DashboardURL, cfg.Username, cfg.Password, nil
+	}
+	return req.DashboardURL, req.Username, req.Password, nil
+}
+
+func (s *Server) apiRocketMQConsumerGroups(w http.ResponseWriter, r *http.Request) {
+	dashboardURL, username, password, err := s.rocketMQResolveCredentials(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	groups, err := monitor.ListRocketMQConsumerGroups(dashboardURL, username, password)
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	jsonOK(w, groups)
+}
+
+func (s *Server) apiRocketMQTopics(w http.ResponseWriter, r *http.Request) {
+	dashboardURL, username, password, err := s.rocketMQResolveCredentials(r)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	topics, err := monitor.ListRocketMQTopics(dashboardURL, username, password)
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	jsonOK(w, topics)
+}
+
 func (s *Server) apiRocketMQAlerts(w http.ResponseWriter, r *http.Request) {
 	page := 1
 	pageSize := 20
@@ -1375,6 +1425,7 @@ func (s *Server) apiGrafanaCreate(w http.ResponseWriter, r *http.Request) {
 		DatasourceUID string   `json:"datasource_uid"`
 		AutoRules     []string `json:"auto_rules"`
 		WebhookURL    string   `json:"webhook_url"`
+		WebhookSecret string   `json:"webhook_secret"`
 		IntervalSec   int      `json:"interval_sec"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
@@ -1398,6 +1449,7 @@ func (s *Server) apiGrafanaCreate(w http.ResponseWriter, r *http.Request) {
 		DatasourceUID: req.DatasourceUID,
 		AutoRules:     string(rulesJSON),
 		WebhookURL:    req.WebhookURL,
+		WebhookSecret: req.WebhookSecret,
 		IntervalSec:   req.IntervalSec,
 		Enabled:       true,
 	}
@@ -1431,6 +1483,7 @@ func (s *Server) apiGrafanaUpdate(w http.ResponseWriter, r *http.Request) {
 		DatasourceUID string   `json:"datasource_uid"`
 		AutoRules     []string `json:"auto_rules"`
 		WebhookURL    string   `json:"webhook_url"`
+		WebhookSecret string   `json:"webhook_secret"`
 		IntervalSec   int      `json:"interval_sec"`
 		Enabled       *bool    `json:"enabled"`
 	}
@@ -1457,6 +1510,9 @@ func (s *Server) apiGrafanaUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.WebhookURL != "" {
 		existing.WebhookURL = req.WebhookURL
+	}
+	if req.WebhookSecret != "" {
+		existing.WebhookSecret = req.WebhookSecret
 	}
 	if req.IntervalSec > 0 {
 		existing.IntervalSec = req.IntervalSec
@@ -1623,6 +1679,13 @@ func (s *Server) apiGrafanaDatasources(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, datasources)
 }
 
+func (s *Server) apiGrafanaGenerateSecret(w http.ResponseWriter, r *http.Request) {
+	b := make([]byte, 16)
+	rand.Read(b)
+	secret := hex.EncodeToString(b)
+	jsonOK(w, map[string]string{"secret": secret})
+}
+
 func (s *Server) apiGrafanaConfigDatasources(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -1642,6 +1705,29 @@ func (s *Server) apiGrafanaConfigDatasources(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) apiGrafanaWebhook(w http.ResponseWriter, r *http.Request) {
+	secret := r.URL.Query().Get("secret")
+	if secret == "" {
+		jsonError(w, http.StatusUnauthorized, "missing secret")
+		return
+	}
+	// Validate secret against any grafana config
+	configs, err := s.store.ListGrafanaConfigs()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	valid := false
+	for _, c := range configs {
+		if c.WebhookSecret != "" && c.WebhookSecret == secret {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		jsonError(w, http.StatusForbidden, "invalid secret")
+		return
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, "read body failed")

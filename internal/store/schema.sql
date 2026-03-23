@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS grafana_configs (
     datasource_uid  TEXT    NOT NULL DEFAULT '',
     auto_rules      TEXT    NOT NULL DEFAULT '[]',
     webhook_url     TEXT    NOT NULL DEFAULT '',
+    webhook_secret  TEXT    NOT NULL DEFAULT '',
     webhook_uid     TEXT    NOT NULL DEFAULT '',
     folder_uid      TEXT    NOT NULL DEFAULT '',
     interval_sec    INTEGER NOT NULL DEFAULT 60,
