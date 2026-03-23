@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -199,10 +200,11 @@ func GetSessionToken(r *http.Request) string {
 // --- GitHub OAuth Helpers ---
 
 func (ss *SessionStore) GetGitHubAuthURL(redirectURI string) string {
-	return fmt.Sprintf(
-		"https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&scope=read:user",
-		ss.GitHub.ClientID, redirectURI,
-	)
+	q := url.Values{}
+	q.Set("client_id", ss.GitHub.ClientID)
+	q.Set("redirect_uri", redirectURI)
+	q.Set("scope", "read:user")
+	return "https://github.com/login/oauth/authorize?" + q.Encode()
 }
 
 type GitHubTokenResponse struct {

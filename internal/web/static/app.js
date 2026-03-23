@@ -190,13 +190,6 @@ const LoginPage = defineComponent({
             window.location.href = '/api/auth/github';
         }
 
-        // SVG database icon
-        const dbIcon = () => h('svg', { width: 60, height: 60, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', style: 'color:var(--login-accent)' }, [
-            h('ellipse', { cx: 12, cy: 5, rx: 9, ry: 3 }),
-            h('path', { d: 'M21 12c0 1.66-4 3-9 3s-9-1.34-9-3' }),
-            h('path', { d: 'M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5' }),
-        ]);
-
         return () => h('div', { class: 'login-page' }, [
             // Theme toggle on login page
             h('div', { style: 'position:absolute;top:16px;right:16px;z-index:10' }, [
@@ -206,7 +199,6 @@ const LoginPage = defineComponent({
                 h('div', { class: 'login-card' }, [
                     // Logo area
                     h('div', { class: 'login-header' }, [
-                        h('div', { class: 'login-logo' }, [dbIcon()]),
                         h('h1', { class: 'login-title' }, 'Ops Monitor'),
                         h('p', { class: 'login-subtitle' }, '运维监控管理平台'),
                     ]),
@@ -736,7 +728,7 @@ const MonitorLogsPage = defineComponent({
 // --- Settings ---
 const SettingsPage = defineComponent({
     setup() {
-        const settings = reactive({ github_client_id: '', github_client_secret: '', github_enabled: '0', password_login_enabled: '1' });
+        const settings = reactive({ github_client_id: '', github_client_secret: '', github_enabled: '0', password_login_enabled: '1', oauth_public_base_url: '' });
         const users = ref([]);
         const loading = ref(true);
         const saving = ref(false);
@@ -762,6 +754,7 @@ const SettingsPage = defineComponent({
                     github_client_secret: settings.github_client_secret,
                     github_enabled: settings.github_enabled,
                     password_login_enabled: settings.password_login_enabled,
+                    oauth_public_base_url: settings.oauth_public_base_url,
                 });
                 message.success('设置已保存');
             } catch (e) { message.error(e.message); }
@@ -790,6 +783,7 @@ const SettingsPage = defineComponent({
         return () => h(NSpin, { show: loading.value }, () => h('div', [
             h('h3', { class: 'page-title', style: 'margin-bottom:20px' }, '系统设置'),
             h(NCard, { title: 'GitHub OAuth', size: 'small', style: 'margin-bottom:20px' }, () => h(NForm, { model: settings, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 140 }, [
+                h(NFormItem, { label: 'OAuth 公网根地址' }, () => h(NInput, { value: settings.oauth_public_base_url, 'onUpdate:value': v => settings.oauth_public_base_url = v, placeholder: 'https://你的域名（无末尾/），Docker/反代后必填' })),
                 h(NFormItem, { label: 'Client ID' }, () => h(NInput, { value: settings.github_client_id, 'onUpdate:value': v => settings.github_client_id = v, placeholder: 'GitHub OAuth App Client ID' })),
                 h(NFormItem, { label: 'Client Secret' }, () => h(NInput, { value: settings.github_client_secret, 'onUpdate:value': v => settings.github_client_secret = v, type: 'password', placeholder: '留空不修改' })),
                 h(NFormItem, { label: '启用 GitHub 登录' }, () => h(NSwitch, { value: settings.github_enabled === '1', 'onUpdate:value': v => settings.github_enabled = v ? '1' : '0' })),

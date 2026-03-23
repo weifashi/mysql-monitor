@@ -25,15 +25,18 @@ type Server struct {
 	dispatcher      *notify.Dispatcher
 	hub             *Hub
 	staticHandler   http.Handler
+	// publicBaseURL 若设置（如 https://app.example.com），OAuth redirect_uri 固定由此拼接，避免反向代理下 r.Host 与公网不一致。
+	publicBaseURL string
 }
 
-func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *monitor.RocketMQManager, hc *monitor.HealthCheckManager, gm *monitor.GrafanaManager, d *notify.Dispatcher, eb *monitor.EventBus) *Server {
+func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *monitor.RocketMQManager, hc *monitor.HealthCheckManager, gm *monitor.GrafanaManager, d *notify.Dispatcher, eb *monitor.EventBus, publicBaseURL string) *Server {
 	hub := NewHub(eb)
 	go hub.Run()
 	staticSub, _ := fs.Sub(staticFS, "static")
 	return &Server{
 		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, grafanaMgr: gm, dispatcher: d, hub: hub,
 		staticHandler: http.StripPrefix("/", http.FileServer(http.FS(staticSub))),
+		publicBaseURL: strings.TrimSpace(strings.TrimSuffix(publicBaseURL, "/")),
 	}
 }
 

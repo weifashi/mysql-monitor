@@ -10,6 +10,7 @@ perf_monitor
 *.dll
 *.so
 *.dylib
+.opencode
 
 # 日志文件
 *.log

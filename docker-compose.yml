@@ -10,6 +10,10 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       DATA_DIR: /app/data
       TZ: Asia/Shanghai
+      # 公网访问根 URL（无末尾 /），供 GitHub OAuth redirect_uri 与浏览器一致；Docker 下 .env 里必须写且要出现在这里
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
     volumes:
       - ./data:/app/data
     logging:

@@ -147,6 +147,29 @@ func (s *Server) apiAuthConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) oauthGitHubRedirectURI(r *http.Request) string {
+	if base := strings.TrimSpace(strings.TrimSuffix(s.store.GetSetting("oauth_public_base_url"), "/")); base != "" {
+		return base + "/api/auth/github/callback"
+	}
+	if s.publicBaseURL != "" {
+		return s.publicBaseURL + "/api/auth/github/callback"
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	} else if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		p := strings.ToLower(strings.TrimSpace(strings.Split(proto, ",")[0]))
+		if p == "https" {
+			scheme = "https"
+		}
+	}
+	host := r.Host
+	if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
+		host = strings.TrimSpace(strings.Split(fh, ",")[0])
+	}
+	return fmt.Sprintf("%s://%s/api/auth/github/callback", scheme, host)
+}
+
 func (s *Server) apiGitHubLogin(w http.ResponseWriter, r *http.Request) {
 	clientID := s.store.GetSetting("github_client_id")
 	if clientID == "" {
@@ -157,12 +180,7 @@ func (s *Server) apiGitHubLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build callback URL from request
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	redirectURI := fmt.Sprintf("%s://%s/api/auth/github/callback", scheme, r.Host)
+	redirectURI := s.oauthGitHubRedirectURI(r)
 
 	s.auth.GitHub.ClientID = clientID
 	url := s.auth.GetGitHubAuthURL(redirectURI)
@@ -798,10 +816,11 @@ func (s *Server) apiSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	allowed := map[string]bool{
-		"github_client_id":       true,
-		"github_client_secret":   true,
-		"github_enabled":         true,
-		"password_login_enabled": true,
+		"github_client_id":        true,
+		"github_client_secret":    true,
+		"github_enabled":          true,
+		"password_login_enabled":  true,
+		"oauth_public_base_url":   true,
 	}
 	var changed []string
 	for k, v := range req {

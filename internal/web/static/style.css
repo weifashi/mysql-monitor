@@ -156,12 +156,6 @@ html, body {
     margin-bottom: 36px;
 }
 
-.login-logo {
-    display: flex;
-    justify-content: center;
-    margin-bottom: 20px;
-}
-
 .login-title {
     margin: 0;
     font-size: 1.6rem;

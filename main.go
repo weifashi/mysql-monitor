@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"os/signal"
 	"syscall"
 	"time"
@@ -26,6 +27,7 @@ func main() {
 
 	dataDir := getEnv("DATA_DIR", "./data")
 	listenAddr := getEnv("LISTEN_ADDR", ":8080")
+	publicBaseURL := strings.TrimSpace(strings.TrimSuffix(getEnv("PUBLIC_BASE_URL", ""), "/"))
 
 	// Ensure data directory exists
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
@@ -127,7 +129,7 @@ func main() {
 	}
 
 	// Web server
-	srv := web.NewServer(s, authStore, mgr, rocketMQMgr, healthCheckMgr, grafanaMgr, dispatcher, eventBus)
+	srv := web.NewServer(s, authStore, mgr, rocketMQMgr, healthCheckMgr, grafanaMgr, dispatcher, eventBus, publicBaseURL)
 	httpSrv := &http.Server{
 		Addr:    listenAddr,
 		Handler: srv.Routes(),
