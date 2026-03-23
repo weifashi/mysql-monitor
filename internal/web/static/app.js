@@ -859,7 +859,7 @@ const RocketMQPage = defineComponent({
         const loading = ref(true);
         const showModal = ref(false);
         const editingId = ref(null);
-        const form = reactive({ name: '', dashboard_url: '', username: '', password: '', consumer_group: '', topic: '', threshold: 1000, interval_sec: 30 });
+        const form = reactive({ name: '', dashboard_url: '', username: '', password: '', consumer_group: '', topic: '', threshold: 1000, interval_sec: 30, notify_new_msg: false });
         const saving = ref(false);
         const groupOptions = ref([]);
         const topicOptions = ref([]);
@@ -901,19 +901,19 @@ const RocketMQPage = defineComponent({
 
         function openAdd() {
             editingId.value = null;
-            Object.assign(form, { name: '', dashboard_url: '', username: '', password: '', consumer_group: '', topic: '', threshold: 1000, interval_sec: 30 });
+            Object.assign(form, { name: '', dashboard_url: '', username: '', password: '', consumer_group: '', topic: '', threshold: 1000, interval_sec: 30, notify_new_msg: false });
             groupOptions.value = []; topicOptions.value = [];
             showModal.value = true;
         }
         function openEdit(row) {
             editingId.value = row.id;
-            Object.assign(form, { name: row.name, dashboard_url: row.dashboard_url, username: row.username, password: '', consumer_group: row.consumer_group, topic: row.topic, threshold: row.threshold, interval_sec: row.interval_sec });
+            Object.assign(form, { name: row.name, dashboard_url: row.dashboard_url, username: row.username, password: '', consumer_group: row.consumer_group, topic: row.topic, threshold: row.threshold, interval_sec: row.interval_sec, notify_new_msg: !!row.notify_new_msg });
             groupOptions.value = []; topicOptions.value = [];
             showModal.value = true;
         }
         function openClone(row) {
             editingId.value = null;
-            Object.assign(form, { name: row.name + ' (副本)', dashboard_url: row.dashboard_url, username: row.username, password: '', consumer_group: row.consumer_group, topic: row.topic, threshold: row.threshold, interval_sec: row.interval_sec });
+            Object.assign(form, { name: row.name + ' (副本)', dashboard_url: row.dashboard_url, username: row.username, password: '', consumer_group: row.consumer_group, topic: row.topic, threshold: row.threshold, interval_sec: row.interval_sec, notify_new_msg: !!row.notify_new_msg });
             groupOptions.value = []; topicOptions.value = [];
             showModal.value = true;
         }
@@ -982,8 +982,12 @@ const RocketMQPage = defineComponent({
                         h(NSelect, { value: form.topic, onUpdateValue: v => form.topic = v, options: topicOptions.value, filterable: true, tag: true, placeholder: '选择或输入Topic', style: 'flex:1;min-width:0', loading: topicLoading.value }),
                         h(NButton, { size: 'small', secondary: true, loading: topicLoading.value, onClick: fetchTopics }, () => '获取'),
                     ]))),
-                    h(NGi, null, () => h(NFormItem, { label: '堆积阈值', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInputNumber, { value: form.threshold, onUpdateValue: v => form.threshold = v, min: 1 }))),
+                    h(NGi, null, () => h(NFormItem, { label: '堆积阈值', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInputNumber, { value: form.threshold, onUpdateValue: v => form.threshold = v, min: 1, disabled: form.notify_new_msg }))),
                     h(NGi, null, () => h(NFormItem, { label: '检查间隔(秒)', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInputNumber, { value: form.interval_sec, onUpdateValue: v => form.interval_sec = v, min: 5 }))),
+                    h(NGi, { span: gridCols.value }, () => h(NFormItem, { labelPlacement: 'left', label: '有新消息即告警' }, () => h(NSpace, { align: 'center' }, () => [
+                        h(NSwitch, { value: form.notify_new_msg, onUpdateValue: v => form.notify_new_msg = v }),
+                        h('span', { style: 'color:#999;font-size:12px' }, form.notify_new_msg ? '每次检查有新消息时即发送告警（根据消息ID去重）' : '关闭：按堆积量阈值告警'),
+                    ]))),
                     h(NGi, { span: gridCols.value }, () => h(NButton, { type: 'primary', block: true, loading: saving.value, onClick: save }, () => '保存')),
                 ])
             ),

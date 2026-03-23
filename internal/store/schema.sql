@@ -60,18 +60,19 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS rocketmq_configs (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    name           TEXT    NOT NULL,
-    dashboard_url  TEXT    NOT NULL,
-    username       TEXT    NOT NULL DEFAULT '',
-    password       TEXT    NOT NULL DEFAULT '',
-    consumer_group TEXT    NOT NULL,
-    topic          TEXT    NOT NULL,
-    threshold      INTEGER NOT NULL DEFAULT 1000,
-    interval_sec   INTEGER NOT NULL DEFAULT 30,
-    enabled        INTEGER NOT NULL DEFAULT 1,
-    created_at     DATETIME NOT NULL DEFAULT (datetime('now')),
-    updated_at     DATETIME NOT NULL DEFAULT (datetime('now'))
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT    NOT NULL,
+    dashboard_url   TEXT    NOT NULL,
+    username        TEXT    NOT NULL DEFAULT '',
+    password        TEXT    NOT NULL DEFAULT '',
+    consumer_group  TEXT    NOT NULL,
+    topic           TEXT    NOT NULL,
+    threshold       INTEGER NOT NULL DEFAULT 1000,
+    interval_sec    INTEGER NOT NULL DEFAULT 30,
+    notify_new_msg  INTEGER NOT NULL DEFAULT 0,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    created_at      DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at      DATETIME NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS rocketmq_alert_logs (

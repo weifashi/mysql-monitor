@@ -878,6 +878,7 @@ func (s *Server) apiRocketMQCreate(w http.ResponseWriter, r *http.Request) {
 		Topic         string `json:"topic"`
 		Threshold     int    `json:"threshold"`
 		IntervalSec   int    `json:"interval_sec"`
+		NotifyNewMsg  bool   `json:"notify_new_msg"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json")
@@ -899,6 +900,7 @@ func (s *Server) apiRocketMQCreate(w http.ResponseWriter, r *http.Request) {
 		Username: req.Username, Password: req.Password,
 		ConsumerGroup: req.ConsumerGroup, Topic: req.Topic,
 		Threshold: req.Threshold, IntervalSec: req.IntervalSec,
+		NotifyNewMsg: req.NotifyNewMsg,
 		Enabled: true,
 	}
 	id, err := s.store.CreateRocketMQConfig(cfg)
@@ -932,6 +934,7 @@ func (s *Server) apiRocketMQUpdate(w http.ResponseWriter, r *http.Request) {
 		Topic         string `json:"topic"`
 		Threshold     int    `json:"threshold"`
 		IntervalSec   int    `json:"interval_sec"`
+		NotifyNewMsg  *bool  `json:"notify_new_msg"`
 		Enabled       *bool  `json:"enabled"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
@@ -959,6 +962,9 @@ func (s *Server) apiRocketMQUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.IntervalSec > 0 {
 		existing.IntervalSec = req.IntervalSec
+	}
+	if req.NotifyNewMsg != nil {
+		existing.NotifyNewMsg = *req.NotifyNewMsg
 	}
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled

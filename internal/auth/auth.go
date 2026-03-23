@@ -35,6 +35,7 @@ type SessionDB interface {
 	GetSession(token string) (*SessionRow, error)
 	DeleteSession(token string) error
 	CleanupExpiredSessions() error
+	UpdateSessionExpiry(token string, expiresAt time.Time) error
 }
 
 // SessionRow mirrors store.SessionRow to avoid circular imports.
@@ -112,6 +113,21 @@ func (ss *SessionStore) Validate(token string) (*Session, bool) {
 	}, true
 }
 
+// RenewIfNeeded extends the session if less than half the max age remains.
+// Returns true if the session was renewed.
+func (ss *SessionStore) RenewIfNeeded(token string, sess *Session) bool {
+	remaining := time.Until(sess.ExpiresAt)
+	if remaining > sessionMaxAge/2 {
+		return false
+	}
+	newExpiry := time.Now().UTC().Add(sessionMaxAge)
+	if err := ss.db.UpdateSessionExpiry(token, newExpiry); err != nil {
+		return false
+	}
+	sess.ExpiresAt = newExpiry
+	return true
+}
+
 func (ss *SessionStore) CleanupExpired() {
 	ss.db.CleanupExpiredSessions()
 }
@@ -129,6 +145,8 @@ func (ss *SessionStore) AdminPassword() string {
 }
 
 // AuthMiddleware protects routes — returns 401 JSON for API requests.
+// It also performs sliding session renewal: when less than half the max age
+// remains, the session expiry and cookie are refreshed automatically.
 func (ss *SessionStore) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(cookieName)
@@ -136,9 +154,14 @@ func (ss *SessionStore) AuthMiddleware(next http.Handler) http.Handler {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
-		if _, ok := ss.Validate(cookie.Value); !ok {
+		sess, ok := ss.Validate(cookie.Value)
+		if !ok {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
+		}
+		// Sliding renewal: refresh session and cookie when < 50% time remains
+		if ss.RenewIfNeeded(cookie.Value, sess) {
+			SetSessionCookie(w, cookie.Value)
 		}
 		next.ServeHTTP(w, r)
 	})

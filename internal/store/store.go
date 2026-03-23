@@ -112,6 +112,7 @@ func New(dataDir string) (*Store, error) {
 	// Auto-migrate: add missing columns
 	migrations := []string{
 		"ALTER TABLE grafana_configs ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE rocketmq_configs ADD COLUMN notify_new_msg INTEGER NOT NULL DEFAULT 0",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore errors (column may already exist)
@@ -517,6 +518,7 @@ type RocketMQConfig struct {
 	Topic         string    `json:"topic"`
 	Threshold     int       `json:"threshold"`
 	IntervalSec   int       `json:"interval_sec"`
+	NotifyNewMsg  bool      `json:"notify_new_msg"`
 	Enabled       bool      `json:"enabled"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
@@ -533,7 +535,7 @@ type RocketMQAlertLog struct {
 }
 
 func (s *Store) ListRocketMQConfigs() ([]RocketMQConfig, error) {
-	rows, err := s.db.Query(`SELECT id, name, dashboard_url, username, password, consumer_group, topic, threshold, interval_sec, enabled, created_at, updated_at FROM rocketmq_configs ORDER BY id`)
+	rows, err := s.db.Query(`SELECT id, name, dashboard_url, username, password, consumer_group, topic, threshold, interval_sec, notify_new_msg, enabled, created_at, updated_at FROM rocketmq_configs ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -541,13 +543,14 @@ func (s *Store) ListRocketMQConfigs() ([]RocketMQConfig, error) {
 	var list []RocketMQConfig
 	for rows.Next() {
 		var c RocketMQConfig
-		var enabled int
+		var enabled, notifyNewMsg int
 		var encPwd string
-		if err := rows.Scan(&c.ID, &c.Name, &c.DashboardURL, &c.Username, &encPwd, &c.ConsumerGroup, &c.Topic, &c.Threshold, &c.IntervalSec, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.DashboardURL, &c.Username, &encPwd, &c.ConsumerGroup, &c.Topic, &c.Threshold, &c.IntervalSec, &notifyNewMsg, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Password, _ = Decrypt(encPwd)
 		c.Enabled = enabled == 1
+		c.NotifyNewMsg = notifyNewMsg == 1
 		list = append(list, c)
 	}
 	return list, rows.Err()
@@ -555,15 +558,16 @@ func (s *Store) ListRocketMQConfigs() ([]RocketMQConfig, error) {
 
 func (s *Store) GetRocketMQConfig(id int64) (*RocketMQConfig, error) {
 	var c RocketMQConfig
-	var enabled int
+	var enabled, notifyNewMsg int
 	var encPwd string
-	err := s.db.QueryRow(`SELECT id, name, dashboard_url, username, password, consumer_group, topic, threshold, interval_sec, enabled, created_at, updated_at FROM rocketmq_configs WHERE id=?`, id).
-		Scan(&c.ID, &c.Name, &c.DashboardURL, &c.Username, &encPwd, &c.ConsumerGroup, &c.Topic, &c.Threshold, &c.IntervalSec, &enabled, &c.CreatedAt, &c.UpdatedAt)
+	err := s.db.QueryRow(`SELECT id, name, dashboard_url, username, password, consumer_group, topic, threshold, interval_sec, notify_new_msg, enabled, created_at, updated_at FROM rocketmq_configs WHERE id=?`, id).
+		Scan(&c.ID, &c.Name, &c.DashboardURL, &c.Username, &encPwd, &c.ConsumerGroup, &c.Topic, &c.Threshold, &c.IntervalSec, &notifyNewMsg, &enabled, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	c.Password, _ = Decrypt(encPwd)
 	c.Enabled = enabled == 1
+	c.NotifyNewMsg = notifyNewMsg == 1
 	return &c, nil
 }
 
@@ -572,8 +576,8 @@ func (s *Store) CreateRocketMQConfig(c *RocketMQConfig) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("encrypt password: %w", err)
 	}
-	res, err := s.db.Exec(`INSERT INTO rocketmq_configs (name, dashboard_url, username, password, consumer_group, topic, threshold, interval_sec, enabled) VALUES (?,?,?,?,?,?,?,?,?)`,
-		c.Name, c.DashboardURL, c.Username, encPwd, c.ConsumerGroup, c.Topic, c.Threshold, c.IntervalSec, boolToInt(c.Enabled))
+	res, err := s.db.Exec(`INSERT INTO rocketmq_configs (name, dashboard_url, username, password, consumer_group, topic, threshold, interval_sec, notify_new_msg, enabled) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		c.Name, c.DashboardURL, c.Username, encPwd, c.ConsumerGroup, c.Topic, c.Threshold, c.IntervalSec, boolToInt(c.NotifyNewMsg), boolToInt(c.Enabled))
 	if err != nil {
 		return 0, err
 	}
@@ -585,8 +589,8 @@ func (s *Store) UpdateRocketMQConfig(c *RocketMQConfig) error {
 	if err != nil {
 		return fmt.Errorf("encrypt password: %w", err)
 	}
-	_, err = s.db.Exec(`UPDATE rocketmq_configs SET name=?, dashboard_url=?, username=?, password=?, consumer_group=?, topic=?, threshold=?, interval_sec=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
-		c.Name, c.DashboardURL, c.Username, encPwd, c.ConsumerGroup, c.Topic, c.Threshold, c.IntervalSec, boolToInt(c.Enabled), c.ID)
+	_, err = s.db.Exec(`UPDATE rocketmq_configs SET name=?, dashboard_url=?, username=?, password=?, consumer_group=?, topic=?, threshold=?, interval_sec=?, notify_new_msg=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
+		c.Name, c.DashboardURL, c.Username, encPwd, c.ConsumerGroup, c.Topic, c.Threshold, c.IntervalSec, boolToInt(c.NotifyNewMsg), boolToInt(c.Enabled), c.ID)
 	return err
 }
 
@@ -1057,6 +1061,11 @@ func (s *Store) DeleteSession(token string) error {
 
 func (s *Store) CleanupExpiredSessions() error {
 	_, err := s.db.Exec(`DELETE FROM sessions WHERE expires_at < datetime('now')`)
+	return err
+}
+
+func (s *Store) UpdateSessionExpiry(token string, expiresAt time.Time) error {
+	_, err := s.db.Exec(`UPDATE sessions SET expires_at = ? WHERE token = ?`, expiresAt, token)
 	return err
 }
 

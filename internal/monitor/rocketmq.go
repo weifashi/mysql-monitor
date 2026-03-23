@@ -173,6 +173,109 @@ func (m *RocketMQManager) setNotified(id int64, suffix string, v bool) {
 	}
 }
 
+// doCheckNewMsg handles the notify_new_msg mode: queries actual messages by time range,
+// deduplicates by msgId, and alerts for each new batch of unseen messages.
+func (m *RocketMQManager) doCheckNewMsg(cfg *store.RocketMQConfig, client *http.Client) {
+	lastKey := m.settingKey(cfg.ID, "last_msg_time")
+	lastStr := m.store.GetSetting(lastKey)
+
+	now := time.Now().UnixMilli()
+	var begin int64
+	if lastStr != "" {
+		fmt.Sscanf(lastStr, "%d", &begin)
+	} else {
+		// First run: use now as baseline, don't alert
+		m.store.SetSetting(lastKey, fmt.Sprintf("%d", now))
+		m.emit("rocketmq_ok", cfg.ID, cfg.Name, "新消息监控已启动，等待下次检查", nil)
+		return
+	}
+
+	msgs, err := queryNewMessages(client, cfg, begin, now)
+	if err != nil {
+		log.Printf("[RocketMQ %s] query new messages error: %v", cfg.Name, err)
+		m.emit("rocketmq_error", cfg.ID, cfg.Name, fmt.Sprintf("查询错误: %v", err), nil)
+		return
+	}
+
+	// Update last check time
+	m.store.SetSetting(lastKey, fmt.Sprintf("%d", now))
+
+	if len(msgs) == 0 {
+		m.emit("rocketmq_ok", cfg.ID, cfg.Name, "无新消息", nil)
+		return
+	}
+
+	// Build notification
+	msgCount := len(msgs)
+	var msgIDSnippet string
+	for i, id := range msgs {
+		if i >= 3 {
+			msgIDSnippet += fmt.Sprintf("... 等 %d 条", msgCount)
+			break
+		}
+		if i > 0 {
+			msgIDSnippet += "\n"
+		}
+		msgIDSnippet += id
+	}
+	if msgCount <= 3 {
+		msgIDSnippet = strings.Join(msgs, "\n")
+	}
+
+	m.emit("rocketmq_alert", cfg.ID, cfg.Name, fmt.Sprintf("新消息 %d 条", msgCount), map[string]interface{}{
+		"msg_count": msgCount,
+		"msg_ids":   msgs,
+	})
+
+	alertLog := &store.RocketMQAlertLog{
+		ConfigID:      cfg.ID,
+		ConfigName:    cfg.Name,
+		ConsumerGroup: cfg.ConsumerGroup,
+		Topic:         cfg.Topic,
+		DiffTotal:     int64(msgCount),
+	}
+	if _, err := m.store.InsertRocketMQAlertLog(alertLog); err != nil {
+		log.Printf("[RocketMQ %s] insert alert log error: %v", cfg.Name, err)
+	}
+
+	alertMsg := fmt.Sprintf("RocketMQ 新消息告警\n\n配置: %s\nTopic: %s\n消费组: %s\n新消息数: %d\n消息ID:\n%s",
+		cfg.Name, cfg.Topic, cfg.ConsumerGroup, msgCount, msgIDSnippet)
+	if sendErr := m.dispatcher.SendGlobalNotifications(alertMsg); sendErr != nil {
+		log.Printf("[RocketMQ %s] new msg notification failed: %v", cfg.Name, sendErr)
+	} else {
+		m.emit("rocketmq_notified", cfg.ID, cfg.Name, fmt.Sprintf("已发送新消息告警 (%d条)", msgCount), nil)
+	}
+}
+
+// queryNewMessages queries messages from the topic in the given time range and returns msgIds.
+func queryNewMessages(client *http.Client, cfg *store.RocketMQConfig, beginMs, endMs int64) ([]string, error) {
+	apiURL := fmt.Sprintf("%s/message/queryMessageByTopic.query?topic=%s&begin=%d&end=%d",
+		strings.TrimRight(cfg.DashboardURL, "/"), cfg.Topic, beginMs, endMs)
+
+	body, err := rocketMQGet(client, apiURL, cfg.Username, cfg.Password)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Status int `json:"status"`
+		Data   []struct {
+			MsgID string `json:"msgId"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("解析消息列表失败: %w", err)
+	}
+
+	var ids []string
+	for _, m := range result.Data {
+		if m.MsgID != "" {
+			ids = append(ids, m.MsgID)
+		}
+	}
+	return ids, nil
+}
+
 func (m *RocketMQManager) runMonitor(ctx context.Context, cfg *store.RocketMQConfig) {
 	client, err := rocketMQLogin(cfg.DashboardURL, cfg.Username, cfg.Password)
 	if err != nil {
@@ -196,6 +299,12 @@ func (m *RocketMQManager) runMonitor(ctx context.Context, cfg *store.RocketMQCon
 
 func (m *RocketMQManager) doCheck(cfg *store.RocketMQConfig, client *http.Client) {
 	m.emit("rocketmq_checking", cfg.ID, cfg.Name, "检查中...", nil)
+
+	// New-message mode: alert on every new message by msgId
+	if cfg.NotifyNewMsg {
+		m.doCheckNewMsg(cfg, client)
+		return
+	}
 
 	diffTotal, err := queryConsumerLag(client, cfg)
 	// Session expired, re-login and retry
