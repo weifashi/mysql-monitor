@@ -386,13 +386,13 @@ func (s *Store) runPurge() {
 
 func (s *Store) CountSlowQueriesToday() (int, error) {
 	var count int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM slow_query_logs WHERE detected_at >= date('now')`).Scan(&count)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM slow_query_logs WHERE datetime(detected_at, 'localtime') >= date('now', 'localtime')`).Scan(&count)
 	return count, err
 }
 
 func (s *Store) CountSlowQueriesWeek() (int, error) {
 	var count int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM slow_query_logs WHERE detected_at >= date('now', '-7 days')`).Scan(&count)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM slow_query_logs WHERE datetime(detected_at, 'localtime') >= date('now', 'localtime', '-7 days')`).Scan(&count)
 	return count, err
 }
 
@@ -642,7 +642,7 @@ func (s *Store) CountRocketMQConfigs() (int, error) {
 
 func (s *Store) CountRocketMQAlertsToday() (int, error) {
 	var count int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM rocketmq_alert_logs WHERE detected_at >= date('now')`).Scan(&count)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM rocketmq_alert_logs WHERE datetime(detected_at, 'localtime') >= date('now', 'localtime')`).Scan(&count)
 	return count, err
 }
 
@@ -861,7 +861,7 @@ func (s *Store) CountHealthChecks() (int, error) {
 
 func (s *Store) CountHealthCheckErrorsToday() (int, error) {
 	var count int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM health_check_logs WHERE status != 'ok' AND detected_at >= date('now')`).Scan(&count)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM health_check_logs WHERE status != 'up' AND datetime(detected_at, 'localtime') >= date('now', 'localtime')`).Scan(&count)
 	return count, err
 }
 
@@ -1014,7 +1014,7 @@ func (s *Store) CountGrafanaConfigs() (int, error) {
 
 func (s *Store) CountGrafanaAlertsToday() (int, error) {
 	var count int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM grafana_alert_logs WHERE detected_at >= date('now')`).Scan(&count)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM grafana_alert_logs WHERE datetime(detected_at, 'localtime') >= date('now', 'localtime')`).Scan(&count)
 	return count, err
 }
 

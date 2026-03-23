@@ -1255,7 +1255,7 @@ const GrafanaPage = defineComponent({
 
         function openAdd() {
             editingId.value = null;
-            Object.assign(form, { name: '', grafana_url: '', username: '', password: '', datasource_uid: '', auto_rules: [], webhook_url: '', interval_sec: 60 });
+            Object.assign(form, { name: '', grafana_url: '', username: '', password: '', datasource_uid: '', auto_rules: [], webhook_url: location.origin + '/api/grafana/webhook', interval_sec: 60 });
             showModal.value = true;
         }
         function openEdit(row) {
