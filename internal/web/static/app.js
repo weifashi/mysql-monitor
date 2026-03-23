@@ -54,7 +54,6 @@ const api = {
         }
         if (res.status === 401) {
             _sessionValid = false;
-            window.location.hash = '#/login';
             throw new Error('unauthorized');
         }
         const data = await res.json();
