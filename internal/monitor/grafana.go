@@ -32,7 +32,7 @@ type AlertRuleDef struct {
 var DefaultAlertRules = []AlertRuleDef{
 	{Key: "mysql_down", Title: "MySQL 宕机", Expr: "mysql_up", Condition: "lt", Threshold: 1, For: "1m", Summary: "MySQL 实例宕机", Description: "mysql_up == 0 超过 1 分钟"},
 	{Key: "slow_query_surge", Title: "慢SQL激增", Expr: "increase(mysql_global_status_slow_queries[5m])", Condition: "gt", Threshold: 10, For: "5m", Summary: "慢SQL数量激增", Description: "5分钟内慢SQL超过10条"},
-	{Key: "too_many_connections", Title: "连接数过高", Expr: "mysql_global_status_threads_connected", Condition: "gt", Threshold: 2000, For: "5m", Summary: "MySQL连接数过高", Description: "连接数超过2000持续5分钟"},
+	{Key: "too_many_connections", Title: "连接数过高", Expr: "mysql_global_status_threads_connected", Condition: "gt", Threshold: 1200, For: "5m", Summary: "MySQL连接数过高", Description: "连接数超过1200持续5分钟"},
 	{Key: "pod_restart", Title: "Pod频繁重启", Expr: "increase(kube_pod_container_status_restarts_total[1h])", Condition: "gt", Threshold: 3, For: "5m", Summary: "Pod频繁重启", Description: "1小时内重启超过3次"},
 	{Key: "disk_full", Title: "磁盘空间不足", Expr: "node_filesystem_avail_bytes / node_filesystem_size_bytes", Condition: "lt", Threshold: 0.1, For: "5m", Summary: "磁盘空间低于10%", Description: "磁盘可用空间不足10%"},
 	{Key: "nginx_slow_response", Title: "Nginx 响应过慢", Expr: "histogram_quantile(0.95, sum(rate(nginx_http_request_duration_seconds_bucket[5m])) by (le))", Condition: "gt", Threshold: 3, For: "5m", Summary: "Nginx P95 响应时间过高", Description: "Nginx P95 响应时间超过3秒持续5分钟"},
