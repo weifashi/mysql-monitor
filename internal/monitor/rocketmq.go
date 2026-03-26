@@ -259,6 +259,7 @@ type rocketMQMessage struct {
 }
 
 // queryNewMessages queries messages from the topic in the given time range and returns messages.
+// It first lists message IDs, then fetches each message's body via viewMessage API.
 func queryNewMessages(client *http.Client, cfg *store.RocketMQConfig, beginMs, endMs int64) ([]rocketMQMessage, error) {
 	apiURL := fmt.Sprintf("%s/message/queryMessageByTopic.query?topic=%s&begin=%d&end=%d",
 		strings.TrimRight(cfg.DashboardURL, "/"), cfg.Topic, beginMs, endMs)
@@ -269,20 +270,50 @@ func queryNewMessages(client *http.Client, cfg *store.RocketMQConfig, beginMs, e
 	}
 
 	var result struct {
-		Status int               `json:"status"`
-		Data   []rocketMQMessage `json:"data"`
+		Status int `json:"status"`
+		Data   []struct {
+			MsgID string `json:"msgId"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("解析消息列表失败: %w", err)
 	}
 
 	var msgs []rocketMQMessage
-	for _, m := range result.Data {
-		if m.MsgID != "" {
-			msgs = append(msgs, m)
+	baseURL := strings.TrimRight(cfg.DashboardURL, "/")
+	for _, item := range result.Data {
+		if item.MsgID == "" {
+			continue
 		}
+		msg := rocketMQMessage{MsgID: item.MsgID}
+		// Fetch message body via viewMessage API
+		msgBody, err := queryMessageBody(client, baseURL, cfg.Topic, item.MsgID, cfg.Username, cfg.Password)
+		if err == nil {
+			msg.MessageBody = msgBody
+		}
+		msgs = append(msgs, msg)
 	}
 	return msgs, nil
+}
+
+// queryMessageBody fetches a single message's body from RocketMQ Dashboard.
+func queryMessageBody(client *http.Client, baseURL, topic, msgID, username, password string) (string, error) {
+	apiURL := fmt.Sprintf("%s/message/viewMessage.query?msgId=%s&topic=%s", baseURL, msgID, topic)
+	body, err := rocketMQGet(client, apiURL, username, password)
+	if err != nil {
+		return "", err
+	}
+
+	var result struct {
+		Status int `json:"status"`
+		Data   struct {
+			MessageBody string `json:"messageBody"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("解析消息详情失败: %w", err)
+	}
+	return result.Data.MessageBody, nil
 }
 
 func (m *RocketMQManager) runMonitor(ctx context.Context, cfg *store.RocketMQConfig) {
