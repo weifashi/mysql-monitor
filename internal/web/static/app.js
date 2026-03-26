@@ -450,7 +450,7 @@ const NotificationsPage = defineComponent({
         const loading = ref(true);
         const showModal = ref(false);
         const editingId = ref(null);
-        const form = reactive({ type: 'dingtalk', scope_type: 'all', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '' });
+        const form = reactive({ type: 'dingtalk', scope_type: 'all', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '', dootask_base_url: '', dootask_token: '', dootask_dialog_id: '' });
         const saving = ref(false);
         const message = useMessage();
 
@@ -467,6 +467,7 @@ const NotificationsPage = defineComponent({
         const typeOptions = [
             { label: '钉钉', value: 'dingtalk' },
             { label: '飞书', value: 'feishu' },
+            { label: 'DooTask', value: 'dootask' },
             { label: '邮件', value: 'email' },
         ];
         const scopeTypeOptions = [
@@ -484,7 +485,7 @@ const NotificationsPage = defineComponent({
 
         function openAdd() {
             editingId.value = null;
-            Object.assign(form, { type: 'dingtalk', scope_type: 'all', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '' });
+            Object.assign(form, { type: 'dingtalk', scope_type: 'all', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '', dootask_base_url: '', dootask_token: '', dootask_dialog_id: '' });
             showModal.value = true;
         }
         function fillFormFromRow(row) {
@@ -495,6 +496,10 @@ const NotificationsPage = defineComponent({
             if (row.type === 'dingtalk' || row.type === 'feishu') {
                 form.webhook = cfg.webhook || '';
                 form.secret = cfg.secret || '';
+            } else if (row.type === 'dootask') {
+                form.dootask_base_url = cfg.base_url || '';
+                form.dootask_token = cfg.token || '';
+                form.dootask_dialog_id = cfg.dialog_id || '';
             } else if (row.type === 'email') {
                 form.smtp_host = cfg.smtp_host || '';
                 form.smtp_port = cfg.smtp_port || 587;
@@ -542,7 +547,7 @@ const NotificationsPage = defineComponent({
         }
 
         const columns = useColumns([
-            { title: '类型', key: 'type', width: 80, render: row => h(NTag, { type: 'info', size: 'small' }, () => row.type === 'dingtalk' ? '钉钉' : row.type === 'feishu' ? '飞书' : '邮件') },
+            { title: '类型', key: 'type', width: 80, render: row => h(NTag, { type: 'info', size: 'small' }, () => ({ dingtalk: '钉钉', feishu: '飞书', dootask: 'DooTask', email: '邮件' }[row.type] || row.type)) },
             { title: '关联配置', key: 'scope_name', render: row => {
                 const label = scopeTypeLabels[row.scope_type] || '全局';
                 if (row.scope_type === 'all') return h(NTag, { size: 'small' }, () => '全局');
@@ -572,9 +577,13 @@ const NotificationsPage = defineComponent({
                     h(NGi, null, () => h(NFormItem, { label: '关联范围' }, () => h(NSelect, { value: form.scope_type, 'onUpdate:value': v => { form.scope_type = v; form.database_id = null; }, options: scopeTypeOptions }))),
                 ]),
                 form.scope_type !== 'all' ? h(NFormItem, { label: '关联配置' }, () => h(NSelect, { value: form.database_id, 'onUpdate:value': v => form.database_id = v, options: scopeItemOptions.value, clearable: true, placeholder: '选择具体配置（不选则该类型全部）' })) : null,
-                form.type !== 'email' ? h('div', [
+                (form.type === 'dingtalk' || form.type === 'feishu') ? h('div', [
                     h(NFormItem, { label: 'Webhook URL' }, () => h(NInput, { value: form.webhook, 'onUpdate:value': v => form.webhook = v, placeholder: 'https://...' })),
                     h(NFormItem, { label: '签名密钥' }, () => h(NInput, { value: form.secret, 'onUpdate:value': v => form.secret = v, placeholder: '可选' })),
+                ]) : form.type === 'dootask' ? h('div', [
+                    h(NFormItem, { label: '服务地址' }, () => h(NInput, { value: form.dootask_base_url, 'onUpdate:value': v => form.dootask_base_url = v, placeholder: 'https://t.hitosea.com' })),
+                    h(NFormItem, { label: 'Token' }, () => h(NInput, { value: form.dootask_token, 'onUpdate:value': v => form.dootask_token = v, placeholder: '机器人Token' })),
+                    h(NFormItem, { label: '对话ID' }, () => h(NInput, { value: form.dootask_dialog_id, 'onUpdate:value': v => form.dootask_dialog_id = v, placeholder: 'dialog_id' })),
                 ]) : h('div', [
                     h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                         h(NGi, null, () => h(NFormItem, { label: 'SMTP 主机' }, () => h(NInput, { value: form.smtp_host, 'onUpdate:value': v => form.smtp_host = v }))),

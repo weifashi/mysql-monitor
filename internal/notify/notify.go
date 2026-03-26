@@ -38,60 +38,7 @@ func (d *Dispatcher) SendNotifications(databaseID int64, message string) error {
 	if len(configs) == 0 {
 		return nil
 	}
-
-	var lastErr error
-	for _, cfg := range configs {
-		switch cfg.Type {
-		case "dingtalk":
-			var c store.DingTalkConfig
-			if err := json.Unmarshal(cfg.ConfigJSON, &c); err != nil {
-				log.Printf("parse dingtalk config: %v", err)
-				continue
-			}
-			if c.Webhook == "" {
-				continue
-			}
-			if err := SendDingTalk(c, message); err != nil {
-				log.Printf("dingtalk send failed: %v", err)
-				lastErr = err
-			} else {
-				log.Printf("dingtalk notification sent for db %d", databaseID)
-			}
-
-		case "feishu":
-			var c store.FeishuConfig
-			if err := json.Unmarshal(cfg.ConfigJSON, &c); err != nil {
-				log.Printf("parse feishu config: %v", err)
-				continue
-			}
-			if c.Webhook == "" {
-				continue
-			}
-			if err := SendFeishu(c, message); err != nil {
-				log.Printf("feishu send failed: %v", err)
-				lastErr = err
-			} else {
-				log.Printf("feishu notification sent for db %d", databaseID)
-			}
-
-		case "email":
-			var c store.EmailConfig
-			if err := json.Unmarshal(cfg.ConfigJSON, &c); err != nil {
-				log.Printf("parse email config: %v", err)
-				continue
-			}
-			if c.From == "" || c.To == "" {
-				continue
-			}
-			if err := SendEmail(c, message); err != nil {
-				log.Printf("email send failed: %v", err)
-				lastErr = err
-			} else {
-				log.Printf("email notification sent for db %d", databaseID)
-			}
-		}
-	}
-	return lastErr
+	return d.dispatchToConfigs(configs, message)
 }
 
 // SendGlobalNotifications sends message using global notification configs (scope_type='all').
@@ -161,6 +108,19 @@ func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, messa
 				log.Printf("email send failed: %v", err)
 				lastErr = err
 			}
+		case "dootask":
+			var c store.DooTaskConfig
+			if err := json.Unmarshal(cfg.ConfigJSON, &c); err != nil {
+				log.Printf("parse dootask config: %v", err)
+				continue
+			}
+			if c.BaseURL == "" || c.Token == "" || c.DialogID == "" {
+				continue
+			}
+			if err := SendDooTask(c, message); err != nil {
+				log.Printf("dootask send failed: %v", err)
+				lastErr = err
+			}
 		}
 	}
 	return lastErr
@@ -189,6 +149,12 @@ func SendTestNotification(nc *store.NotificationConfig) error {
 			return fmt.Errorf("parse config: %w", err)
 		}
 		return SendEmail(c, message)
+	case "dootask":
+		var c store.DooTaskConfig
+		if err := json.Unmarshal(nc.ConfigJSON, &c); err != nil {
+			return fmt.Errorf("parse config: %w", err)
+		}
+		return SendDooTask(c, message)
 	default:
 		return fmt.Errorf("unknown type: %s", nc.Type)
 	}

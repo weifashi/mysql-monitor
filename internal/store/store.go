@@ -66,6 +66,12 @@ type EmailConfig struct {
 	To       string `json:"to"`
 }
 
+type DooTaskConfig struct {
+	BaseURL  string `json:"base_url"`
+	Token    string `json:"token"`
+	DialogID string `json:"dialog_id"`
+}
+
 type User struct {
 	ID          int64     `json:"id"`
 	Username    string    `json:"username"`
@@ -122,6 +128,20 @@ func New(dataDir string) (*Store, error) {
 	for _, m := range migrations {
 		db.Exec(m) // ignore errors (column may already exist)
 	}
+
+	// Recreate notification_configs without CHECK constraint to support new types (dootask etc.)
+	var hasCheck int
+	db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='notification_configs' AND sql LIKE '%CHECK%'`).Scan(&hasCheck)
+	if hasCheck > 0 {
+		db.Exec(`CREATE TABLE IF NOT EXISTS notification_configs_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, database_id INTEGER, scope_type TEXT NOT NULL DEFAULT 'all',
+			type TEXT NOT NULL, config_json TEXT NOT NULL DEFAULT '{}', enabled INTEGER NOT NULL DEFAULT 1,
+			created_at DATETIME NOT NULL DEFAULT (datetime('now')), updated_at DATETIME NOT NULL DEFAULT (datetime('now')))`)
+		db.Exec(`INSERT INTO notification_configs_new SELECT id, database_id, scope_type, type, config_json, enabled, created_at, updated_at FROM notification_configs`)
+		db.Exec(`DROP TABLE notification_configs`)
+		db.Exec(`ALTER TABLE notification_configs_new RENAME TO notification_configs`)
+	}
+
 	return &Store{db: db}, nil
 }
 

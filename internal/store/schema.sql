@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS notification_configs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     database_id INTEGER,
     scope_type  TEXT    NOT NULL DEFAULT 'all',
-    type        TEXT    NOT NULL CHECK(type IN ('dingtalk','feishu','email')),
+    type        TEXT    NOT NULL,
     config_json TEXT    NOT NULL DEFAULT '{}',
     enabled     INTEGER NOT NULL DEFAULT 1,
     created_at  DATETIME NOT NULL DEFAULT (datetime('now')),

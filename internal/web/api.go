@@ -573,6 +573,11 @@ func getConfigSummary(nc store.NotificationConfig) string {
 		if json.Unmarshal(nc.ConfigJSON, &c) == nil && c.To != "" {
 			return fmt.Sprintf("%s -> %s", c.From, c.To)
 		}
+	case "dootask":
+		var c store.DooTaskConfig
+		if json.Unmarshal(nc.ConfigJSON, &c) == nil && c.BaseURL != "" {
+			return fmt.Sprintf("DooTask: %s (dialog: %s)", truncateStr(c.BaseURL, 30), c.DialogID)
+		}
 	}
 	return "-"
 }
@@ -664,6 +669,10 @@ func parseNotificationJSON(r *http.Request) (*store.NotificationConfig, error) {
 		SMTPPassword string `json:"smtp_password"`
 		EmailFrom    string `json:"email_from"`
 		EmailTo      string `json:"email_to"`
+		// DooTask fields
+		DootaskBaseURL  string `json:"dootask_base_url"`
+		DootaskToken    string `json:"dootask_token"`
+		DootaskDialogID string `json:"dootask_dialog_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
@@ -709,6 +718,12 @@ func parseNotificationJSON(r *http.Request) (*store.NotificationConfig, error) {
 			Password: strings.TrimSpace(req.SMTPPassword),
 			From:     strings.TrimSpace(req.EmailFrom),
 			To:       strings.TrimSpace(req.EmailTo),
+		})
+	case "dootask":
+		configJSON, err = json.Marshal(store.DooTaskConfig{
+			BaseURL:  strings.TrimSpace(req.DootaskBaseURL),
+			Token:    strings.TrimSpace(req.DootaskToken),
+			DialogID: strings.TrimSpace(req.DootaskDialogID),
 		})
 	default:
 		return nil, fmt.Errorf("unknown notification type: %s", nc.Type)
