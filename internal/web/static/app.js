@@ -571,7 +571,7 @@ const NotificationsPage = defineComponent({
                 h(NButton, { type: 'primary', onClick: openAdd, size: _isMobile.value ? 'small' : 'medium' }, () => '+ 添加'),
             ]),
             h(NDataTable, { columns: columns.value, data: list.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 350 : undefined }),
-            h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑通知' : '添加通知', style: _isMobile.value ? 'width:95vw' : 'width:520px', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 100 }, [
+            h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑通知' : '添加通知', style: _isMobile.value ? 'width:95vw' : 'width:680px', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 100 }, [
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '通知类型' }, () => h(NSelect, { value: form.type, 'onUpdate:value': v => form.type = v, options: typeOptions }))),
                     h(NGi, null, () => h(NFormItem, { label: '关联范围' }, () => h(NSelect, { value: form.scope_type, 'onUpdate:value': v => { form.scope_type = v; form.database_id = null; }, options: scopeTypeOptions }))),
