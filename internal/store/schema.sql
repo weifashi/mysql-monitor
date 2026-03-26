@@ -151,6 +151,17 @@ CREATE TABLE IF NOT EXISTS notified_pids (
     PRIMARY KEY (database_id, process_id)
 );
 
+CREATE TABLE IF NOT EXISTS ignored_sql_patterns (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    database_id   INTEGER NOT NULL,
+    fingerprint   TEXT    NOT NULL,
+    sample_sql    TEXT    NOT NULL DEFAULT '',
+    created_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (database_id) REFERENCES databases(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ignored_sql_db_fp ON ignored_sql_patterns(database_id, fingerprint);
+
 CREATE TABLE IF NOT EXISTS grafana_configs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT    NOT NULL,

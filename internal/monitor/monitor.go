@@ -219,17 +219,23 @@ func (m *Manager) doCheck(dbID int64, dbCfg *store.Database, mysqlDB *sql.DB, no
 		}
 	}
 
-	if !notifier.SyncAndShouldNotify(queries) {
+	// Filter out ignored SQL patterns before notification
+	notifyQueries := notifier.FilterIgnored(queries)
+	if len(notifyQueries) == 0 {
 		return
 	}
 
-	log.Printf("[%s] detected %d slow queries, sending notifications", dbCfg.Name, len(queries))
-	message := FormatNotificationText(dbCfg.Name, dbCfg.Host, dbCfg.Port, queries)
+	if !notifier.SyncAndShouldNotify(notifyQueries) {
+		return
+	}
+
+	log.Printf("[%s] detected %d slow queries, sending notifications", dbCfg.Name, len(notifyQueries))
+	message := FormatNotificationText(dbCfg.Name, dbCfg.Host, dbCfg.Port, notifyQueries)
 	if err := m.dispatcher.SendNotifications(dbID, message); err != nil {
 		log.Printf("[%s] notification error: %v", dbCfg.Name, err)
 		m.emit("error", dbID, dbCfg.Name, fmt.Sprintf("通知发送失败: %v", err), nil)
 	} else {
 		m.emit("notified", dbID, dbCfg.Name, "已发送通知", nil)
 	}
-	notifier.MarkPIDsNotified(queries)
+	notifier.MarkPIDsNotified(notifyQueries)
 }

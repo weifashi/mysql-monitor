@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"mysql-monitor/internal/notify"
+	"mysql-monitor/internal/store"
 )
 
 const maxSlowQueries = 20
@@ -88,11 +89,12 @@ func FormatErrorNotificationText(name, host string, port int, err error) string 
 	return b.String()
 }
 
-// NotifierDB is the persistence interface for notified PIDs.
+// NotifierDB is the persistence interface for notified PIDs and ignored SQL.
 type NotifierDB interface {
 	IsProcessNotified(dbID int64, processID uint64) bool
 	MarkProcessNotified(dbID int64, processID uint64)
 	ClearNotifiedPIDs(dbID int64, activeProcessIDs []uint64)
+	IsSQLIgnored(databaseID int64, fingerprint string) bool
 }
 
 // Notifier tracks which process IDs have been notified to avoid duplicate alerts.
@@ -130,4 +132,16 @@ func (n *Notifier) MarkPIDsNotified(queries []notify.LongQuery) {
 	for _, q := range queries {
 		n.db.MarkProcessNotified(n.dbID, q.ProcessID)
 	}
+}
+
+// FilterIgnored removes queries whose SQL fingerprint matches an ignored pattern.
+func (n *Notifier) FilterIgnored(queries []notify.LongQuery) []notify.LongQuery {
+	var filtered []notify.LongQuery
+	for _, q := range queries {
+		fp := store.NormalizeSQL(q.SQLText)
+		if !n.db.IsSQLIgnored(n.dbID, fp) {
+			filtered = append(filtered, q)
+		}
+	}
+	return filtered
 }

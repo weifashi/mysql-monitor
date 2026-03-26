@@ -90,6 +90,11 @@ func (s *Server) Routes() http.Handler {
 	// Slow queries
 	api.HandleFunc("GET /api/slow-queries", s.apiSlowQueries)
 
+	// Ignored SQL patterns
+	api.HandleFunc("GET /api/ignored-sql", s.apiIgnoredSQLList)
+	api.HandleFunc("POST /api/ignored-sql", s.apiIgnoredSQLCreate)
+	api.HandleFunc("DELETE /api/ignored-sql/{id}", s.apiIgnoredSQLDelete)
+
 	// Users
 	api.HandleFunc("GET /api/users", s.apiUsersList)
 	api.HandleFunc("POST /api/users", s.apiUserCreate)

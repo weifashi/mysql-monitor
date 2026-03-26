@@ -125,6 +125,19 @@ function renderSqlCell(row, maxLen) {
 }
 function SqlDetailModal() {
     const row = _sqlDetail.row;
+    const ignoring = ref(false);
+    async function handleIgnore() {
+        if (!row || !row.database_id || !row.sql_text) return;
+        ignoring.value = true;
+        try {
+            await api.post('/api/ignored-sql', { database_id: row.database_id, sql_text: row.sql_text });
+            window.$message && window.$message.success('已忽略该SQL模式，后续相同SQL将不再通知');
+            _sqlDetail.show = false;
+        } catch (e) {
+            window.$message && window.$message.error('忽略失败: ' + (e.message || e));
+        }
+        ignoring.value = false;
+    }
     return h(NModal, {
         show: _sqlDetail.show, 'onUpdate:show': v => _sqlDetail.show = v,
         preset: 'card', title: 'SQL 详情',
@@ -143,7 +156,10 @@ function SqlDetailModal() {
         h('div', { class: 'sql-detail-block' }, [
             h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px' }, [
                 h(NText, { depth: 3, style: 'font-size:12px' }, () => 'SQL 语句'),
-                h(NButton, { size: 'tiny', secondary: true, onClick: () => { copyText(_sqlDetail.sql); } }, () => '复制'),
+                h('div', { style: 'display:flex;gap:8px' }, [
+                    row && row.database_id ? h(NButton, { size: 'tiny', type: 'warning', secondary: true, loading: ignoring.value, onClick: handleIgnore }, () => '忽略此SQL') : null,
+                    h(NButton, { size: 'tiny', secondary: true, onClick: () => { copyText(_sqlDetail.sql); } }, () => '复制'),
+                ]),
             ]),
             h('pre', { class: 'sql-detail-code' }, _sqlDetail.sql),
         ]),
@@ -674,6 +690,63 @@ const SlowQueriesPage = defineComponent({
             data.value.total_pages > 1 ? h('div', { style: 'margin-top:16px;display:flex;justify-content:center' }, [
                 h(NPagination, { page: page.value, 'onUpdate:page': v => page.value = v, pageCount: data.value.total_pages, size: 'small' }),
             ]) : null,
+        ]);
+    }
+});
+
+// --- Ignored SQL Patterns ---
+const IgnoredSQLPage = defineComponent({
+    setup() {
+        const data = ref([]);
+        const databases = ref([]);
+        const loading = ref(true);
+        const filterDB = ref(null);
+
+        async function load() {
+            loading.value = true;
+            try {
+                let url = '/api/ignored-sql';
+                if (filterDB.value) url += '?database_id=' + filterDB.value;
+                data.value = await api.get(url);
+                databases.value = await api.get('/api/databases-simple');
+            } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+        watch(filterDB, () => load());
+
+        const dbOptions = computed(() => [
+            { label: '全部', value: null },
+            ...databases.value.map(d => ({ label: d.name, value: d.id }))
+        ]);
+
+        async function handleDelete(row) {
+            try {
+                await api.del('/api/ignored-sql/' + row.id);
+                window.$message && window.$message.success('已取消忽略');
+                load();
+            } catch (e) {
+                window.$message && window.$message.error('操作失败: ' + (e.message || e));
+            }
+        }
+
+        const columns = useColumns([
+            { title: '数据库', key: 'database_name', width: 120 },
+            { title: 'SQL 指纹', key: 'fingerprint', ellipsis: { tooltip: true }, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.7' }, truncate(row.fingerprint, _isMobile.value ? 40 : 80)) },
+            { title: '样例SQL', key: 'sample_sql', ellipsis: { tooltip: true }, _hideOnMobile: true, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.5' }, truncate(row.sample_sql, 60)) },
+            { title: '添加时间', key: 'created_at', width: 140, _hideOnMobile: true, render: row => formatTime(row.created_at) },
+            { title: '操作', key: 'actions', width: 80, render: row => h(NButton, { size: 'tiny', type: 'error', secondary: true, onClick: () => handleDelete(row) }, () => '取消忽略') },
+        ]);
+
+        return () => h('div', { class: 'page-body' }, [
+            h('div', { style: _isMobile.value ? 'margin-bottom:12px' : 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+                h('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:' + (_isMobile.value ? '8px' : '0') }, [
+                    h('h3', { class: 'page-title' }, '已忽略的SQL'),
+                    h(NText, { depth: 3 }, () => '共 ' + (data.value || []).length + ' 条'),
+                ]),
+                h(NSelect, { value: filterDB.value, 'onUpdate:value': v => { filterDB.value = v; }, options: dbOptions.value, style: _isMobile.value ? 'width:100%' : 'width:180px', placeholder: '筛选数据库', clearable: true, size: 'small' }),
+            ]),
+            h(NDataTable, { columns: columns.value, data: data.value || [], bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 500 : undefined }),
         ]);
     }
 });
@@ -1550,6 +1623,7 @@ const AppLayout = defineComponent({
             'g-mysql': [
                 { label: '数据库', key: 'databases' },
                 { label: '慢SQL', key: 'slow-queries' },
+                { label: '已忽略SQL', key: 'ignored-sql' },
             ],
             'g-rocketmq': [
                 { label: 'MQ 配置', key: 'rocketmq' },
@@ -1688,6 +1762,7 @@ const routes = [
     { path: '/databases', component: DatabasesPage },
     { path: '/notifications', component: NotificationsPage },
     { path: '/slow-queries', component: SlowQueriesPage },
+    { path: '/ignored-sql', component: IgnoredSQLPage },
     { path: '/monitor-logs', component: MonitorLogsPage },
     { path: '/rocketmq', component: RocketMQPage },
     { path: '/rocketmq-alerts', component: RocketMQAlertsPage },

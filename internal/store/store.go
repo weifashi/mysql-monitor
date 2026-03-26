@@ -1142,6 +1142,109 @@ func (s *Store) CleanupOldNotifiedPIDs() {
 	s.db.Exec(`DELETE FROM notified_pids WHERE notified_at < datetime('now', '-1 day')`)
 }
 
+// --- Ignored SQL Patterns ---
+
+type IgnoredSQLPattern struct {
+	ID         int64     `json:"id"`
+	DatabaseID int64     `json:"database_id"`
+	Fingerprint string   `json:"fingerprint"`
+	SampleSQL  string    `json:"sample_sql"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// NormalizeSQL replaces literal values in SQL with ? placeholders to create a fingerprint.
+func NormalizeSQL(sql string) string {
+	out := make([]byte, 0, len(sql))
+	i := 0
+	for i < len(sql) {
+		ch := sql[i]
+		// String literals: 'xxx' or "xxx"
+		if ch == '\'' || ch == '"' {
+			quote := ch
+			i++
+			for i < len(sql) {
+				if sql[i] == '\\' {
+					i += 2
+					continue
+				}
+				if sql[i] == quote {
+					i++
+					break
+				}
+				i++
+			}
+			out = append(out, '?')
+			continue
+		}
+		// Numbers (including decimals)
+		if (ch >= '0' && ch <= '9') || (ch == '.' && i+1 < len(sql) && sql[i+1] >= '0' && sql[i+1] <= '9') {
+			// Check that it's not part of an identifier
+			if len(out) > 0 {
+				prev := out[len(out)-1]
+				if (prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') || prev == '_' {
+					out = append(out, ch)
+					i++
+					continue
+				}
+			}
+			for i < len(sql) && ((sql[i] >= '0' && sql[i] <= '9') || sql[i] == '.' || sql[i] == 'e' || sql[i] == 'E' || sql[i] == '+' || sql[i] == '-') {
+				i++
+			}
+			out = append(out, '?')
+			continue
+		}
+		out = append(out, ch)
+		i++
+	}
+	// Collapse whitespace
+	result := strings.Join(strings.Fields(string(out)), " ")
+	return result
+}
+
+func (s *Store) AddIgnoredSQL(databaseID int64, fingerprint, sampleSQL string) (int64, error) {
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO ignored_sql_patterns (database_id, fingerprint, sample_sql) VALUES (?, ?, ?)`,
+		databaseID, fingerprint, sampleSQL)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) RemoveIgnoredSQL(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM ignored_sql_patterns WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) ListIgnoredSQL(databaseID *int64) ([]IgnoredSQLPattern, error) {
+	query := `SELECT p.id, p.database_id, p.fingerprint, p.sample_sql, p.created_at FROM ignored_sql_patterns p`
+	var args []interface{}
+	if databaseID != nil {
+		query += ` WHERE p.database_id=?`
+		args = append(args, *databaseID)
+	}
+	query += ` ORDER BY p.created_at DESC`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []IgnoredSQLPattern
+	for rows.Next() {
+		var p IgnoredSQLPattern
+		if err := rows.Scan(&p.ID, &p.DatabaseID, &p.Fingerprint, &p.SampleSQL, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, p)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) IsSQLIgnored(databaseID int64, fingerprint string) bool {
+	var n int
+	err := s.db.QueryRow(`SELECT 1 FROM ignored_sql_patterns WHERE database_id=? AND fingerprint=?`, databaseID, fingerprint).Scan(&n)
+	return err == nil
+}
+
 func (s *Store) InitDefaultSettings() {
 	defaults := map[string]string{
 		"password_login_enabled": "1",

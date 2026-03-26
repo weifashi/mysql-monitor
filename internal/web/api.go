@@ -1851,3 +1851,75 @@ func (s *Server) apiGrafanaWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOK(w, map[string]string{"status": "ok"})
 }
+
+// --- Ignored SQL Patterns ---
+
+func (s *Server) apiIgnoredSQLList(w http.ResponseWriter, r *http.Request) {
+	var dbID *int64
+	if v := r.URL.Query().Get("database_id"); v != "" {
+		id, _ := strconv.ParseInt(v, 10, 64)
+		if id > 0 {
+			dbID = &id
+		}
+	}
+	list, err := s.store.ListIgnoredSQL(dbID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if list == nil {
+		list = []store.IgnoredSQLPattern{}
+	}
+	dbs, _ := s.store.ListDatabases()
+	nameMap := make(map[int64]string)
+	for _, d := range dbs {
+		nameMap[d.ID] = d.Name
+	}
+	type item struct {
+		store.IgnoredSQLPattern
+		DatabaseName string `json:"database_name"`
+	}
+	items := make([]item, len(list))
+	for i, p := range list {
+		items[i] = item{IgnoredSQLPattern: p, DatabaseName: nameMap[p.DatabaseID]}
+	}
+	jsonOK(w, items)
+}
+
+func (s *Server) apiIgnoredSQLCreate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseID int64  `json:"database_id"`
+		SQLText    string `json:"sql_text"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.DatabaseID <= 0 || req.SQLText == "" {
+		jsonError(w, http.StatusBadRequest, "database_id and sql_text required")
+		return
+	}
+	fp := store.NormalizeSQL(req.SQLText)
+	sample := req.SQLText
+	if len(sample) > 500 {
+		sample = sample[:500]
+	}
+	id, err := s.store.AddIgnoredSQL(req.DatabaseID, fp, sample)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]any{"id": id, "fingerprint": fp})
+}
+
+func (s *Server) apiIgnoredSQLDelete(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.RemoveIgnoredSQL(id); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]string{"status": "ok"})
+}
