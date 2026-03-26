@@ -1062,7 +1062,7 @@ const RocketMQAlertsPage = defineComponent({
                 h(NDescriptionsItem, { label: '消费组' }, () => detailRow.value.consumer_group),
                 h(NDescriptionsItem, { label: 'Topic' }, () => detailRow.value.topic),
                 h(NDescriptionsItem, { label: '堆积量' }, () => h(NText, { type: 'error', strong: true }, () => String(detailRow.value.diff_total))),
-                detailRow.value.message_body ? h(NDescriptionsItem, { label: 'Message Body' }, () => h('pre', { style: 'white-space:pre-wrap;word-break:break-all;font-family:var(--font-mono);font-size:12px;margin:0;max-height:300px;overflow:auto' }, detailRow.value.message_body)) : null,
+                detailRow.value.message_body ? h(NDescriptionsItem, { label: '消息详情' }, () => h('pre', { style: 'white-space:pre-wrap;word-break:break-all;font-family:var(--font-mono);font-size:12px;margin:0;max-height:400px;overflow:auto' }, detailRow.value.message_body)) : null,
             ]) : null),
         ]);
     }
