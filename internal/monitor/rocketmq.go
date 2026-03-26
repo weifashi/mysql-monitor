@@ -288,7 +288,9 @@ func queryNewMessages(client *http.Client, cfg *store.RocketMQConfig, beginMs, e
 		msg := rocketMQMessage{MsgID: item.MsgID}
 		// Fetch message body via viewMessage API
 		msgBody, err := queryMessageBody(client, baseURL, cfg.Topic, item.MsgID, cfg.Username, cfg.Password)
-		if err == nil {
+		if err != nil {
+			log.Printf("[RocketMQ %s] fetch message body for %s error: %v", cfg.Name, item.MsgID, err)
+		} else {
 			msg.MessageBody = msgBody
 		}
 		msgs = append(msgs, msg)
@@ -304,16 +306,36 @@ func queryMessageBody(client *http.Client, baseURL, topic, msgID, username, pass
 		return "", err
 	}
 
+	log.Printf("[RocketMQ] viewMessage raw response for %s: %s", msgID, truncateStr(string(body), 1000))
+
+	// Try parsing with messageBody at different nesting levels
 	var result struct {
 		Status int `json:"status"`
-		Data   struct {
-			MessageBody string `json:"messageBody"`
-		} `json:"data"`
+		Data   json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return "", fmt.Errorf("解析消息详情失败: %w", err)
 	}
-	return result.Data.MessageBody, nil
+
+	// Try flat: data.messageBody
+	var flat struct {
+		MessageBody string `json:"messageBody"`
+	}
+	if err := json.Unmarshal(result.Data, &flat); err == nil && flat.MessageBody != "" {
+		return flat.MessageBody, nil
+	}
+
+	// Try nested: data.messageView.messageBody
+	var nested struct {
+		MessageView struct {
+			MessageBody string `json:"messageBody"`
+		} `json:"messageView"`
+	}
+	if err := json.Unmarshal(result.Data, &nested); err == nil && nested.MessageView.MessageBody != "" {
+		return nested.MessageView.MessageBody, nil
+	}
+
+	return "", fmt.Errorf("messageBody not found in response")
 }
 
 func (m *RocketMQManager) runMonitor(ctx context.Context, cfg *store.RocketMQConfig) {
