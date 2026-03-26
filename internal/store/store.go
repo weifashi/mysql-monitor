@@ -39,6 +39,7 @@ func (d *Database) DSN() string {
 type NotificationConfig struct {
 	ID         int64           `json:"id"`
 	DatabaseID *int64          `json:"database_id"`
+	ScopeType  string          `json:"scope_type"`
 	Type       string          `json:"type"`
 	ConfigJSON json.RawMessage `json:"config_json"`
 	Enabled    bool            `json:"enabled"`
@@ -114,7 +115,10 @@ func New(dataDir string) (*Store, error) {
 		"ALTER TABLE grafana_configs ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE rocketmq_configs ADD COLUMN notify_new_msg INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE rocketmq_alert_logs ADD COLUMN message_body TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE notification_configs ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'all'",
 	}
+	// Migrate existing data: database_id not null → scope_type='mysql'
+	db.Exec(`UPDATE notification_configs SET scope_type='mysql' WHERE database_id IS NOT NULL AND scope_type='all'`)
 	for _, m := range migrations {
 		db.Exec(m) // ignore errors (column may already exist)
 	}
@@ -213,7 +217,7 @@ func (s *Store) CountEnabledDatabases() (int, error) {
 // --- Notification Config CRUD ---
 
 func (s *Store) ListNotificationConfigs() ([]NotificationConfig, error) {
-	rows, err := s.db.Query(`SELECT id, database_id, type, config_json, enabled, created_at, updated_at FROM notification_configs ORDER BY id`)
+	rows, err := s.db.Query(`SELECT id, database_id, scope_type, type, config_json, enabled, created_at, updated_at FROM notification_configs ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +227,7 @@ func (s *Store) ListNotificationConfigs() ([]NotificationConfig, error) {
 		var nc NotificationConfig
 		var enabled int
 		var configStr string
-		if err := rows.Scan(&nc.ID, &nc.DatabaseID, &nc.Type, &configStr, &enabled, &nc.CreatedAt, &nc.UpdatedAt); err != nil {
+		if err := rows.Scan(&nc.ID, &nc.DatabaseID, &nc.ScopeType, &nc.Type, &configStr, &enabled, &nc.CreatedAt, &nc.UpdatedAt); err != nil {
 			return nil, err
 		}
 		nc.ConfigJSON = json.RawMessage(configStr)
@@ -240,8 +244,8 @@ func (s *Store) GetNotificationConfig(id int64) (*NotificationConfig, error) {
 	var nc NotificationConfig
 	var enabled int
 	var configStr string
-	err := s.db.QueryRow(`SELECT id, database_id, type, config_json, enabled, created_at, updated_at FROM notification_configs WHERE id=?`, id).
-		Scan(&nc.ID, &nc.DatabaseID, &nc.Type, &configStr, &enabled, &nc.CreatedAt, &nc.UpdatedAt)
+	err := s.db.QueryRow(`SELECT id, database_id, scope_type, type, config_json, enabled, created_at, updated_at FROM notification_configs WHERE id=?`, id).
+		Scan(&nc.ID, &nc.DatabaseID, &nc.ScopeType, &nc.Type, &configStr, &enabled, &nc.CreatedAt, &nc.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -251,8 +255,11 @@ func (s *Store) GetNotificationConfig(id int64) (*NotificationConfig, error) {
 }
 
 func (s *Store) CreateNotificationConfig(nc *NotificationConfig) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO notification_configs (database_id, type, config_json, enabled) VALUES (?,?,?,?)`,
-		nc.DatabaseID, nc.Type, string(nc.ConfigJSON), boolToInt(nc.Enabled))
+	if nc.ScopeType == "" {
+		nc.ScopeType = "all"
+	}
+	res, err := s.db.Exec(`INSERT INTO notification_configs (database_id, scope_type, type, config_json, enabled) VALUES (?,?,?,?,?)`,
+		nc.DatabaseID, nc.ScopeType, nc.Type, string(nc.ConfigJSON), boolToInt(nc.Enabled))
 	if err != nil {
 		return 0, err
 	}
@@ -260,8 +267,11 @@ func (s *Store) CreateNotificationConfig(nc *NotificationConfig) (int64, error) 
 }
 
 func (s *Store) UpdateNotificationConfig(nc *NotificationConfig) error {
-	_, err := s.db.Exec(`UPDATE notification_configs SET database_id=?, type=?, config_json=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
-		nc.DatabaseID, nc.Type, string(nc.ConfigJSON), boolToInt(nc.Enabled), nc.ID)
+	if nc.ScopeType == "" {
+		nc.ScopeType = "all"
+	}
+	_, err := s.db.Exec(`UPDATE notification_configs SET database_id=?, scope_type=?, type=?, config_json=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
+		nc.DatabaseID, nc.ScopeType, nc.Type, string(nc.ConfigJSON), boolToInt(nc.Enabled), nc.ID)
 	return err
 }
 
@@ -271,8 +281,13 @@ func (s *Store) DeleteNotificationConfig(id int64) error {
 }
 
 func (s *Store) GetEffectiveNotifications(databaseID int64) ([]NotificationConfig, error) {
-	// Order by database_id DESC NULLS LAST so DB-specific configs come first.
-	rows, err := s.db.Query(`SELECT id, database_id, type, config_json, enabled, created_at, updated_at FROM notification_configs WHERE enabled=1 AND (database_id=? OR database_id IS NULL) ORDER BY database_id DESC`, databaseID)
+	return s.GetScopedNotifications("mysql", databaseID)
+}
+
+// GetScopedNotifications returns notifications for a given scope type and ID.
+// It returns scope-specific configs first, then falls back to global (scope_type='all').
+func (s *Store) GetScopedNotifications(scopeType string, scopeID int64) ([]NotificationConfig, error) {
+	rows, err := s.db.Query(`SELECT id, database_id, scope_type, type, config_json, enabled, created_at, updated_at FROM notification_configs WHERE enabled=1 AND ((scope_type=? AND database_id=?) OR scope_type='all') ORDER BY CASE WHEN scope_type='all' THEN 1 ELSE 0 END, database_id DESC`, scopeType, scopeID)
 	if err != nil {
 		return nil, err
 	}
@@ -283,12 +298,11 @@ func (s *Store) GetEffectiveNotifications(databaseID int64) ([]NotificationConfi
 		var nc NotificationConfig
 		var enabled int
 		var configStr string
-		if err := rows.Scan(&nc.ID, &nc.DatabaseID, &nc.Type, &configStr, &enabled, &nc.CreatedAt, &nc.UpdatedAt); err != nil {
+		if err := rows.Scan(&nc.ID, &nc.DatabaseID, &nc.ScopeType, &nc.Type, &configStr, &enabled, &nc.CreatedAt, &nc.UpdatedAt); err != nil {
 			return nil, err
 		}
 		nc.ConfigJSON = json.RawMessage(configStr)
 		nc.Enabled = enabled == 1
-		// Deduplicate by type: DB-specific config takes priority over global.
 		if seenType[nc.Type] {
 			continue
 		}
@@ -660,7 +674,7 @@ func (s *Store) CountRocketMQAlertsToday() (int, error) {
 }
 
 func (s *Store) GetGlobalNotifications() ([]NotificationConfig, error) {
-	rows, err := s.db.Query(`SELECT id, database_id, type, config_json, enabled, created_at, updated_at FROM notification_configs WHERE enabled=1 AND database_id IS NULL`)
+	rows, err := s.db.Query(`SELECT id, database_id, scope_type, type, config_json, enabled, created_at, updated_at FROM notification_configs WHERE enabled=1 AND scope_type='all'`)
 	if err != nil {
 		return nil, err
 	}
@@ -670,7 +684,7 @@ func (s *Store) GetGlobalNotifications() ([]NotificationConfig, error) {
 		var nc NotificationConfig
 		var enabled int
 		var configStr string
-		if err := rows.Scan(&nc.ID, &nc.DatabaseID, &nc.Type, &configStr, &enabled, &nc.CreatedAt, &nc.UpdatedAt); err != nil {
+		if err := rows.Scan(&nc.ID, &nc.DatabaseID, &nc.ScopeType, &nc.Type, &configStr, &enabled, &nc.CreatedAt, &nc.UpdatedAt); err != nil {
 			return nil, err
 		}
 		nc.ConfigJSON = json.RawMessage(configStr)

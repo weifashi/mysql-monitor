@@ -85,6 +85,7 @@ func (s *Server) Routes() http.Handler {
 	api.HandleFunc("PUT /api/notifications/{id}", s.apiNotificationUpdate)
 	api.HandleFunc("DELETE /api/notifications/{id}", s.apiNotificationDelete)
 	api.HandleFunc("POST /api/notifications/{id}/test", s.apiNotificationTest)
+	api.HandleFunc("GET /api/notification-scopes", s.apiNotificationScopes)
 
 	// Slow queries
 	api.HandleFunc("GET /api/slow-queries", s.apiSlowQueries)

@@ -170,7 +170,7 @@ func (m *HealthCheckManager) doCheck(cfg *store.HealthCheck) {
 		if m.isDownNotified(cfg.ID) {
 			m.setDownNotified(cfg.ID, false)
 			recoveryMsg := fmt.Sprintf("服务恢复通知\n\n服务: %s\nURL: %s\n状态: 已恢复正常", cfg.Name, cfg.URL)
-			if sendErr := m.dispatcher.SendGlobalNotifications(recoveryMsg); sendErr != nil {
+			if sendErr := m.dispatcher.SendScopedNotifications("health", cfg.ID,recoveryMsg); sendErr != nil {
 				log.Printf("[HealthCheck %s] recovery notification failed: %v", cfg.Name, sendErr)
 			} else {
 				m.emit("healthcheck_notified", cfg.ID, cfg.Name, "已发送恢复通知", nil)
@@ -186,7 +186,7 @@ func (m *HealthCheckManager) doCheck(cfg *store.HealthCheck) {
 		if !m.isDownNotified(cfg.ID) {
 			alertMsg := fmt.Sprintf("服务异常告警\n\n服务: %s\nURL: %s\n状态: %s\n错误: %s\n\n该告警仅发送一次，恢复后如再次异常将重新通知。",
 				cfg.Name, cfg.URL, result.Status, errMsg)
-			if sendErr := m.dispatcher.SendGlobalNotifications(alertMsg); sendErr != nil {
+			if sendErr := m.dispatcher.SendScopedNotifications("health", cfg.ID,alertMsg); sendErr != nil {
 				log.Printf("[HealthCheck %s] alert notification failed: %v", cfg.Name, sendErr)
 			} else {
 				m.emit("healthcheck_notified", cfg.ID, cfg.Name, "已发送异常告警通知", nil)

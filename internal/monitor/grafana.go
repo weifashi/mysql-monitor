@@ -177,7 +177,7 @@ func (m *GrafanaManager) doCheck(cfg *store.GrafanaConfig) {
 		key := fmt.Sprintf("grafana_err_%d", cfg.ID)
 		if m.store.GetSetting(key) != "1" {
 			errMsg := fmt.Sprintf("Grafana 连接异常告警\n\n配置: %s\nURL: %s\n错误: %v", cfg.Name, cfg.GrafanaURL, err)
-			m.dispatcher.SendGlobalNotifications(errMsg)
+			m.dispatcher.SendScopedNotifications("grafana", cfg.ID, errMsg)
 			m.store.SetSetting(key, "1")
 		}
 		return
@@ -188,7 +188,7 @@ func (m *GrafanaManager) doCheck(cfg *store.GrafanaConfig) {
 	if m.store.GetSetting(key) == "1" {
 		m.store.SetSetting(key, "")
 		recoveryMsg := fmt.Sprintf("Grafana 连接恢复\n\n配置: %s\nURL: %s\n状态: 已恢复正常", cfg.Name, cfg.GrafanaURL)
-		m.dispatcher.SendGlobalNotifications(recoveryMsg)
+		m.dispatcher.SendScopedNotifications("grafana", cfg.ID, recoveryMsg)
 	}
 
 	m.emit("grafana_ok", cfg.ID, cfg.Name, "Grafana 连接正常", nil)
@@ -339,13 +339,13 @@ func (m *GrafanaManager) HandleWebhook(body []byte) error {
 		if alert.Status == "firing" {
 			msg := fmt.Sprintf("Grafana 告警通知\n\n告警: %s\n严重度: %s\n摘要: %s\n详情: %s\n状态: %s\n配置: %s",
 				alertName, severity, summary, description, alert.Status, configName)
-			if sendErr := m.dispatcher.SendGlobalNotifications(msg); sendErr != nil {
+			if sendErr := m.dispatcher.SendScopedNotifications("grafana", configID, msg); sendErr != nil {
 				log.Printf("[Grafana webhook] notification failed: %v", sendErr)
 			}
 		} else if alert.Status == "resolved" {
 			msg := fmt.Sprintf("Grafana 告警恢复\n\n告警: %s\n摘要: %s\n状态: 已恢复\n配置: %s",
 				alertName, summary, configName)
-			m.dispatcher.SendGlobalNotifications(msg)
+			m.dispatcher.SendScopedNotifications("grafana", configID, msg)
 		}
 	}
 

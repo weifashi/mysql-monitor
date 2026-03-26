@@ -15,12 +15,12 @@ CREATE TABLE IF NOT EXISTS databases (
 CREATE TABLE IF NOT EXISTS notification_configs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     database_id INTEGER,
+    scope_type  TEXT    NOT NULL DEFAULT 'all',
     type        TEXT    NOT NULL CHECK(type IN ('dingtalk','feishu','email')),
     config_json TEXT    NOT NULL DEFAULT '{}',
     enabled     INTEGER NOT NULL DEFAULT 1,
     created_at  DATETIME NOT NULL DEFAULT (datetime('now')),
-    updated_at  DATETIME NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (database_id) REFERENCES databases(id) ON DELETE CASCADE
+    updated_at  DATETIME NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS slow_query_logs (

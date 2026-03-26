@@ -446,11 +446,11 @@ const DatabasesPage = defineComponent({
 const NotificationsPage = defineComponent({
     setup() {
         const list = ref([]);
-        const databases = ref([]);
+        const scopes = ref({});
         const loading = ref(true);
         const showModal = ref(false);
         const editingId = ref(null);
-        const form = reactive({ type: 'dingtalk', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '' });
+        const form = reactive({ type: 'dingtalk', scope_type: 'all', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '' });
         const saving = ref(false);
         const message = useMessage();
 
@@ -458,7 +458,7 @@ const NotificationsPage = defineComponent({
             loading.value = true;
             try {
                 list.value = await api.get('/api/notifications');
-                databases.value = await api.get('/api/databases-simple');
+                scopes.value = await api.get('/api/notification-scopes');
             } catch {}
             loading.value = false;
         }
@@ -469,18 +469,27 @@ const NotificationsPage = defineComponent({
             { label: '飞书', value: 'feishu' },
             { label: '邮件', value: 'email' },
         ];
-        const dbOptions = computed(() => [
-            { label: '全局（所有数据库）', value: null },
-            ...databases.value.map(d => ({ label: d.name, value: d.id }))
-        ]);
+        const scopeTypeOptions = [
+            { label: '全局（所有告警）', value: 'all' },
+            { label: '健康检查', value: 'health' },
+            { label: 'MySQL', value: 'mysql' },
+            { label: 'RocketMQ', value: 'rocketmq' },
+            { label: 'Grafana', value: 'grafana' },
+        ];
+        const scopeTypeLabels = { all: '全局', health: '健康检查', mysql: 'MySQL', rocketmq: 'RocketMQ', grafana: 'Grafana' };
+        const scopeItemOptions = computed(() => {
+            const items = scopes.value[form.scope_type] || [];
+            return items.map(d => ({ label: d.name, value: d.id }));
+        });
 
         function openAdd() {
             editingId.value = null;
-            Object.assign(form, { type: 'dingtalk', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '' });
+            Object.assign(form, { type: 'dingtalk', scope_type: 'all', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '' });
             showModal.value = true;
         }
         function fillFormFromRow(row) {
             form.type = row.type;
+            form.scope_type = row.scope_type || 'all';
             form.database_id = row.database_id;
             const cfg = typeof row.config_json === 'string' ? JSON.parse(row.config_json) : row.config_json;
             if (row.type === 'dingtalk' || row.type === 'feishu') {
@@ -508,11 +517,13 @@ const NotificationsPage = defineComponent({
         async function save() {
             saving.value = true;
             try {
+                const payload = { ...form };
+                if (payload.scope_type === 'all') payload.database_id = null;
                 if (editingId.value) {
-                    await api.put('/api/notifications/' + editingId.value, form);
+                    await api.put('/api/notifications/' + editingId.value, payload);
                     message.success('更新成功');
                 } else {
-                    await api.post('/api/notifications', form);
+                    await api.post('/api/notifications', payload);
                     message.success('创建成功');
                 }
                 showModal.value = false;
@@ -532,7 +543,11 @@ const NotificationsPage = defineComponent({
 
         const columns = useColumns([
             { title: '类型', key: 'type', width: 80, render: row => h(NTag, { type: 'info', size: 'small' }, () => row.type === 'dingtalk' ? '钉钉' : row.type === 'feishu' ? '飞书' : '邮件') },
-            { title: '关联数据库', key: 'database_name', _hideOnMobile: true },
+            { title: '关联配置', key: 'scope_name', render: row => {
+                const label = scopeTypeLabels[row.scope_type] || '全局';
+                if (row.scope_type === 'all') return h(NTag, { size: 'small' }, () => '全局');
+                return h('span', [h(NTag, { size: 'small', type: 'info' }, () => label), row.scope_name ? h('span', { style: 'margin-left:4px;font-size:12px' }, row.scope_name) : null]);
+            }, _hideOnMobile: true },
             { title: '配置摘要', key: 'config_summary', render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => row.config_summary) },
             { title: '状态', key: 'enabled', width: 70, _hideOnMobile: true, render: row => row.enabled ? h(NTag, { type: 'success', size: 'small' }, () => '启用') : h(NTag, { size: 'small' }, () => '禁用') },
             { title: '操作', key: 'actions', width: _isMobile.value ? 140 : 250, render: row => h(NSpace, { size: 'small' }, () => [
@@ -554,8 +569,9 @@ const NotificationsPage = defineComponent({
             h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑通知' : '添加通知', style: _isMobile.value ? 'width:95vw' : 'width:520px', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 100 }, [
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '通知类型' }, () => h(NSelect, { value: form.type, 'onUpdate:value': v => form.type = v, options: typeOptions }))),
-                    h(NGi, null, () => h(NFormItem, { label: '关联数据库' }, () => h(NSelect, { value: form.database_id, 'onUpdate:value': v => form.database_id = v, options: dbOptions.value, clearable: true }))),
+                    h(NGi, null, () => h(NFormItem, { label: '关联范围' }, () => h(NSelect, { value: form.scope_type, 'onUpdate:value': v => { form.scope_type = v; form.database_id = null; }, options: scopeTypeOptions }))),
                 ]),
+                form.scope_type !== 'all' ? h(NFormItem, { label: '关联配置' }, () => h(NSelect, { value: form.database_id, 'onUpdate:value': v => form.database_id = v, options: scopeItemOptions.value, clearable: true, placeholder: '选择具体配置（不选则该类型全部）' })) : null,
                 form.type !== 'email' ? h('div', [
                     h(NFormItem, { label: 'Webhook URL' }, () => h(NInput, { value: form.webhook, 'onUpdate:value': v => form.webhook = v, placeholder: 'https://...' })),
                     h(NFormItem, { label: '签名密钥' }, () => h(NInput, { value: form.secret, 'onUpdate:value': v => form.secret = v, placeholder: '可选' })),

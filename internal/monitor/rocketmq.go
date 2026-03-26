@@ -246,7 +246,7 @@ func (m *RocketMQManager) doCheckNewMsg(cfg *store.RocketMQConfig, client *http.
 
 	alertMsg := fmt.Sprintf("RocketMQ 新消息告警\n\n配置: %s\nTopic: %s\n消费组: %s\n新消息数: %d\n\n%s",
 		cfg.Name, cfg.Topic, cfg.ConsumerGroup, msgCount, msgSnippet)
-	if sendErr := m.dispatcher.SendGlobalNotifications(alertMsg); sendErr != nil {
+	if sendErr := m.dispatcher.SendScopedNotifications("rocketmq", cfg.ID,alertMsg); sendErr != nil {
 		log.Printf("[RocketMQ %s] new msg notification failed: %v", cfg.Name, sendErr)
 	} else {
 		m.emit("rocketmq_notified", cfg.ID, cfg.Name, fmt.Sprintf("已发送新消息告警 (%d条)", msgCount), nil)
@@ -391,7 +391,7 @@ func (m *RocketMQManager) doCheck(cfg *store.RocketMQConfig, client *http.Client
 		if !m.isNotified(cfg.ID, "err") {
 			errMsg := fmt.Sprintf("RocketMQ 连接异常告警\n\n配置: %s\nDashboard: %s\n消费组: %s\nTopic: %s\n错误: %v\n\n该告警仅发送一次，恢复后如再次异常将重新通知。",
 				cfg.Name, cfg.DashboardURL, cfg.ConsumerGroup, cfg.Topic, err)
-			if sendErr := m.dispatcher.SendGlobalNotifications(errMsg); sendErr != nil {
+			if sendErr := m.dispatcher.SendScopedNotifications("rocketmq", cfg.ID,errMsg); sendErr != nil {
 				log.Printf("[RocketMQ %s] error notification failed: %v", cfg.Name, sendErr)
 			} else {
 				m.emit("rocketmq_notified", cfg.ID, cfg.Name, "已发送连接错误通知", nil)
@@ -405,7 +405,7 @@ func (m *RocketMQManager) doCheck(cfg *store.RocketMQConfig, client *http.Client
 	if m.isNotified(cfg.ID, "err") {
 		m.setNotified(cfg.ID, "err", false)
 		recoveryMsg := fmt.Sprintf("RocketMQ 连接恢复通知\n\n配置: %s\nDashboard: %s\n状态: 连接已恢复正常", cfg.Name, cfg.DashboardURL)
-		if sendErr := m.dispatcher.SendGlobalNotifications(recoveryMsg); sendErr != nil {
+		if sendErr := m.dispatcher.SendScopedNotifications("rocketmq", cfg.ID,recoveryMsg); sendErr != nil {
 			log.Printf("[RocketMQ %s] recovery notification failed: %v", cfg.Name, sendErr)
 		} else {
 			m.emit("rocketmq_notified", cfg.ID, cfg.Name, "已发送连接恢复通知", nil)
@@ -433,7 +433,7 @@ func (m *RocketMQManager) doCheck(cfg *store.RocketMQConfig, client *http.Client
 
 			alertMsg := fmt.Sprintf("RocketMQ 消息堆积告警\n\n配置: %s\nDashboard: %s\n消费组: %s\nTopic: %s\n堆积量: %d\n阈值: %d\n\n该告警仅发送一次，堆积消除后如再次超阈值将重新通知。",
 				cfg.Name, cfg.DashboardURL, cfg.ConsumerGroup, cfg.Topic, diffTotal, cfg.Threshold)
-			if sendErr := m.dispatcher.SendGlobalNotifications(alertMsg); sendErr != nil {
+			if sendErr := m.dispatcher.SendScopedNotifications("rocketmq", cfg.ID,alertMsg); sendErr != nil {
 				log.Printf("[RocketMQ %s] alert notification failed: %v", cfg.Name, sendErr)
 			} else {
 				m.emit("rocketmq_notified", cfg.ID, cfg.Name, "已发送堆积告警通知", nil)
@@ -448,7 +448,7 @@ func (m *RocketMQManager) doCheck(cfg *store.RocketMQConfig, client *http.Client
 			m.setNotified(cfg.ID, "alert", false)
 			recoveryMsg := fmt.Sprintf("RocketMQ 堆积恢复通知\n\n配置: %s\n消费组: %s\nTopic: %s\n当前堆积: %d (阈值: %d)\n状态: 堆积已消除",
 				cfg.Name, cfg.ConsumerGroup, cfg.Topic, diffTotal, cfg.Threshold)
-			if sendErr := m.dispatcher.SendGlobalNotifications(recoveryMsg); sendErr != nil {
+			if sendErr := m.dispatcher.SendScopedNotifications("rocketmq", cfg.ID,recoveryMsg); sendErr != nil {
 				log.Printf("[RocketMQ %s] recovery notification failed: %v", cfg.Name, sendErr)
 			} else {
 				m.emit("rocketmq_notified", cfg.ID, cfg.Name, "已发送堆积恢复通知", nil)

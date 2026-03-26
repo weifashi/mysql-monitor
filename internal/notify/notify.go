@@ -94,11 +94,23 @@ func (d *Dispatcher) SendNotifications(databaseID int64, message string) error {
 	return lastErr
 }
 
-// SendGlobalNotifications sends message using global notification configs (database_id IS NULL).
+// SendGlobalNotifications sends message using global notification configs (scope_type='all').
 func (d *Dispatcher) SendGlobalNotifications(message string) error {
 	configs, err := d.store.GetGlobalNotifications()
 	if err != nil {
 		return fmt.Errorf("load global notification configs: %w", err)
+	}
+	if len(configs) == 0 {
+		return nil
+	}
+	return d.dispatchToConfigs(configs, message)
+}
+
+// SendScopedNotifications sends message using scope-specific + global notification configs.
+func (d *Dispatcher) SendScopedNotifications(scopeType string, scopeID int64, message string) error {
+	configs, err := d.store.GetScopedNotifications(scopeType, scopeID)
+	if err != nil {
+		return fmt.Errorf("load scoped notification configs: %w", err)
 	}
 	if len(configs) == 0 {
 		return nil

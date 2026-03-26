@@ -501,24 +501,51 @@ func (s *Server) apiNotificationsList(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Build name maps for all scope types
+	nameMap := make(map[string]map[int64]string) // scopeType -> id -> name
 	dbs, _ := s.store.ListDatabases()
 	dbMap := make(map[int64]string)
 	for _, db := range dbs {
 		dbMap[db.ID] = db.Name
 	}
+	nameMap["mysql"] = dbMap
+
+	hcList, _ := s.store.ListHealthChecks()
+	hcMap := make(map[int64]string)
+	for _, h := range hcList {
+		hcMap[h.ID] = h.Name
+	}
+	nameMap["health"] = hcMap
+
+	rmqList, _ := s.store.ListRocketMQConfigs()
+	rmqMap := make(map[int64]string)
+	for _, r := range rmqList {
+		rmqMap[r.ID] = r.Name
+	}
+	nameMap["rocketmq"] = rmqMap
+
+	gfList, _ := s.store.ListGrafanaConfigs()
+	gfMap := make(map[int64]string)
+	for _, g := range gfList {
+		gfMap[g.ID] = g.Name
+	}
+	nameMap["grafana"] = gfMap
 
 	type ncDisplay struct {
 		store.NotificationConfig
-		DatabaseName  string `json:"database_name"`
+		ScopeName     string `json:"scope_name"`
 		ConfigSummary string `json:"config_summary"`
 	}
 	var list []ncDisplay
 	for _, nc := range configs {
 		d := ncDisplay{NotificationConfig: nc}
-		if nc.DatabaseID != nil {
-			d.DatabaseName = dbMap[*nc.DatabaseID]
-		} else {
-			d.DatabaseName = "全局"
+		if nc.ScopeType == "all" || nc.ScopeType == "" {
+			d.ScopeName = "全局"
+		} else if nc.DatabaseID != nil {
+			if m, ok := nameMap[nc.ScopeType]; ok {
+				d.ScopeName = m[*nc.DatabaseID]
+			}
 		}
 		d.ConfigSummary = getConfigSummary(nc)
 		list = append(list, d)
@@ -624,6 +651,7 @@ func (s *Server) apiNotificationTest(w http.ResponseWriter, r *http.Request) {
 func parseNotificationJSON(r *http.Request) (*store.NotificationConfig, error) {
 	var req struct {
 		Type       string `json:"type"`
+		ScopeType  string `json:"scope_type"`
 		DatabaseID *int64 `json:"database_id"`
 		Enabled    *bool  `json:"enabled"`
 		// Webhook fields
@@ -642,8 +670,12 @@ func parseNotificationJSON(r *http.Request) (*store.NotificationConfig, error) {
 	}
 
 	nc := &store.NotificationConfig{
-		Type:    req.Type,
-		Enabled: true,
+		Type:      req.Type,
+		ScopeType: req.ScopeType,
+		Enabled:   true,
+	}
+	if nc.ScopeType == "" {
+		nc.ScopeType = "all"
 	}
 	if req.Enabled != nil {
 		nc.Enabled = *req.Enabled
@@ -686,6 +718,44 @@ func parseNotificationJSON(r *http.Request) (*store.NotificationConfig, error) {
 	}
 	nc.ConfigJSON = configJSON
 	return nc, nil
+}
+
+func (s *Server) apiNotificationScopes(w http.ResponseWriter, r *http.Request) {
+	type scopeItem struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	result := make(map[string][]scopeItem)
+
+	dbs, _ := s.store.ListDatabases()
+	var mysqlItems []scopeItem
+	for _, db := range dbs {
+		mysqlItems = append(mysqlItems, scopeItem{ID: db.ID, Name: db.Name})
+	}
+	result["mysql"] = mysqlItems
+
+	hcList, _ := s.store.ListHealthChecks()
+	var healthItems []scopeItem
+	for _, h := range hcList {
+		healthItems = append(healthItems, scopeItem{ID: h.ID, Name: h.Name})
+	}
+	result["health"] = healthItems
+
+	rmqList, _ := s.store.ListRocketMQConfigs()
+	var rmqItems []scopeItem
+	for _, r := range rmqList {
+		rmqItems = append(rmqItems, scopeItem{ID: r.ID, Name: r.Name})
+	}
+	result["rocketmq"] = rmqItems
+
+	gfList, _ := s.store.ListGrafanaConfigs()
+	var gfItems []scopeItem
+	for _, g := range gfList {
+		gfItems = append(gfItems, scopeItem{ID: g.ID, Name: g.Name})
+	}
+	result["grafana"] = gfItems
+
+	jsonOK(w, result)
 }
 
 // --- Slow Queries ---
