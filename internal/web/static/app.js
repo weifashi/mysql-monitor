@@ -421,7 +421,7 @@ const DatabasesPage = defineComponent({
                 h('h3', { class: 'page-title' }, '数据库管理'),
                 h(NButton, { type: 'primary', onClick: openAdd, size: _isMobile.value ? 'small' : 'medium' }, () => '+ 添加'),
             ]),
-            h(NDataTable, { columns: columns.value, data: databases.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 400 : undefined }),
+            h(NDataTable, { columns: columns.value, data: databases.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 400 : undefined }),
             h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑数据库' : '添加数据库', style: _isMobile.value ? 'width:95vw' : 'width:620px', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 110 }, [
                 h(NFormItem, { label: '名称' }, () => h(NInput, { value: form.name, 'onUpdate:value': v => form.name = v, placeholder: '如: 生产数据库' })),
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
@@ -570,7 +570,7 @@ const NotificationsPage = defineComponent({
                 h('h3', { class: 'page-title' }, '通知配置'),
                 h(NButton, { type: 'primary', onClick: openAdd, size: _isMobile.value ? 'small' : 'medium' }, () => '+ 添加'),
             ]),
-            h(NDataTable, { columns: columns.value, data: list.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 350 : undefined }),
+            h(NDataTable, { columns: columns.value, data: list.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 350 : undefined }),
             h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑通知' : '添加通知', style: _isMobile.value ? 'width:95vw' : 'width:680px', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 100 }, [
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '通知类型' }, () => h(NSelect, { value: form.type, 'onUpdate:value': v => form.type = v, options: typeOptions }))),
@@ -670,7 +670,7 @@ const SlowQueriesPage = defineComponent({
                 ]),
                 h(NSelect, { value: filterDB.value, 'onUpdate:value': v => { filterDB.value = v; page.value = 1; }, options: dbOptions.value, style: _isMobile.value ? 'width:100%' : 'width:180px', placeholder: '筛选数据库', clearable: true, size: 'small' }),
             ]),
-            h(NDataTable, { columns: columns.value, data: data.value.logs || [], bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 500 : undefined }),
+            h(NDataTable, { columns: columns.value, data: data.value.logs || [], bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 500 : undefined }),
             data.value.total_pages > 1 ? h('div', { style: 'margin-top:16px;display:flex;justify-content:center' }, [
                 h(NPagination, { page: page.value, 'onUpdate:page': v => page.value = v, pageCount: data.value.total_pages, size: 'small' }),
             ]) : null,
@@ -986,7 +986,7 @@ const RocketMQPage = defineComponent({
                 h('h3', { class: 'page-title' }, 'RocketMQ 监控'),
                 h(NButton, { type: 'primary', size: 'small', onClick: openAdd }, () => '+ 新增'),
             ]),
-            h(NDataTable, { columns: columns.value, data: configs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 500 : undefined }),
+            h(NDataTable, { columns: columns.value, data: configs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 500 : undefined }),
             h(NModal, { show: showModal.value, onUpdateShow: v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑配置' : '新增配置', style: _isMobile.value ? 'width:95vw' : 'width:680px' }, () =>
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '名称', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.name, onUpdateValue: v => form.name = v, placeholder: '如: 订单系统MQ' }))),
@@ -1072,7 +1072,7 @@ const RocketMQAlertsPage = defineComponent({
                     ]),
                 ]),
             ]),
-            h(NDataTable, { columns: columns.value, data: alerts.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 400 : undefined, rowProps }),
+            h(NDataTable, { columns: columns.value, data: alerts.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 400 : undefined, rowProps }),
             total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
                 h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
             ) : null,
@@ -1130,7 +1130,7 @@ const AuditLogsPage = defineComponent({
 
         return () => h('div', { class: 'page-body' }, [
             h('h3', { class: 'page-title', style: 'margin-bottom:16px' }, '操作记录'),
-            h(NDataTable, { columns: columns.value, data: logs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 500 : undefined }),
+            h(NDataTable, { columns: columns.value, data: logs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 500 : undefined }),
             total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
                 h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
             ) : null,
@@ -1229,7 +1229,7 @@ const HealthChecksPage = defineComponent({
                 h('h3', { class: 'page-title' }, '健康检查'),
                 h(NButton, { type: 'primary', size: 'small', onClick: openAdd }, () => '+ 添加'),
             ]),
-            h(NDataTable, { columns: columns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 500 : undefined }),
+            h(NDataTable, { columns: columns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 500 : undefined }),
             h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑健康检查' : '添加健康检查', style: 'width:560px;max-width:95vw', segmented: true }, () =>
                 h(NForm, { labelPlacement: 'left', labelWidth: 100 }, () => [
                     h(NFormItem, { label: '名称' }, () => h(NInput, { value: form.name, onUpdateValue: v => form.name = v, placeholder: '服务名称' })),
@@ -1302,7 +1302,7 @@ const HealthCheckLogsPage = defineComponent({
                     ]),
                 ]),
             ]),
-            h(NDataTable, { columns: columns.value, data: logs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 400 : undefined }),
+            h(NDataTable, { columns: columns.value, data: logs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 400 : undefined }),
             total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
                 h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
             ) : null,
@@ -1431,7 +1431,7 @@ const GrafanaPage = defineComponent({
                 h('h3', { class: 'page-title' }, 'Grafana 告警配置'),
                 h(NButton, { type: 'primary', size: 'small', onClick: openAdd }, () => '+ 新增'),
             ]),
-            h(NDataTable, { columns: columns.value, data: configs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 500 : undefined }),
+            h(NDataTable, { columns: columns.value, data: configs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 500 : undefined }),
             h(NModal, { show: showModal.value, onUpdateShow: v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑 Grafana 配置' : '新增 Grafana 配置', style: _isMobile.value ? 'width:95vw' : 'width:680px' }, () =>
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '名称', labelPlacement: _isMobile.value ? 'top' : 'left' }, () => h(NInput, { value: form.name, onUpdateValue: v => form.name = v, placeholder: '如: 生产环境 Grafana' }))),
@@ -1510,7 +1510,7 @@ const GrafanaAlertsPage = defineComponent({
                     ]),
                 ]),
             ]),
-            h(NDataTable, { columns: columns.value, data: alerts.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 400 : undefined }),
+            h(NDataTable, { columns: columns.value, data: alerts.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 400 : undefined }),
             total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
                 h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
             ) : null,
