@@ -207,24 +207,29 @@ func (m *RocketMQManager) doCheckNewMsg(cfg *store.RocketMQConfig, client *http.
 
 	// Build notification
 	msgCount := len(msgs)
-	var msgIDSnippet string
-	for i, id := range msgs {
+	var msgSnippet string
+	for i, msg := range msgs {
 		if i >= 3 {
-			msgIDSnippet += fmt.Sprintf("... 等 %d 条", msgCount)
+			msgSnippet += fmt.Sprintf("\n... 等 %d 条", msgCount)
 			break
 		}
 		if i > 0 {
-			msgIDSnippet += "\n"
+			msgSnippet += "\n\n"
 		}
-		msgIDSnippet += id
+		msgSnippet += fmt.Sprintf("MsgID: %s", msg.MsgID)
+		if msg.MessageBody != "" {
+			msgSnippet += fmt.Sprintf("\nMessage body:\n%s", truncateStr(msg.MessageBody, 500))
+		}
 	}
-	if msgCount <= 3 {
-		msgIDSnippet = strings.Join(msgs, "\n")
+
+	var msgIDs []string
+	for _, msg := range msgs {
+		msgIDs = append(msgIDs, msg.MsgID)
 	}
 
 	m.emit("rocketmq_alert", cfg.ID, cfg.Name, fmt.Sprintf("新消息 %d 条", msgCount), map[string]interface{}{
 		"msg_count": msgCount,
-		"msg_ids":   msgs,
+		"msg_ids":   msgIDs,
 	})
 
 	alertLog := &store.RocketMQAlertLog{
@@ -238,8 +243,8 @@ func (m *RocketMQManager) doCheckNewMsg(cfg *store.RocketMQConfig, client *http.
 		log.Printf("[RocketMQ %s] insert alert log error: %v", cfg.Name, err)
 	}
 
-	alertMsg := fmt.Sprintf("RocketMQ 新消息告警\n\n配置: %s\nTopic: %s\n消费组: %s\n新消息数: %d\n消息ID:\n%s",
-		cfg.Name, cfg.Topic, cfg.ConsumerGroup, msgCount, msgIDSnippet)
+	alertMsg := fmt.Sprintf("RocketMQ 新消息告警\n\n配置: %s\nTopic: %s\n消费组: %s\n新消息数: %d\n\n%s",
+		cfg.Name, cfg.Topic, cfg.ConsumerGroup, msgCount, msgSnippet)
 	if sendErr := m.dispatcher.SendGlobalNotifications(alertMsg); sendErr != nil {
 		log.Printf("[RocketMQ %s] new msg notification failed: %v", cfg.Name, sendErr)
 	} else {
@@ -247,8 +252,14 @@ func (m *RocketMQManager) doCheckNewMsg(cfg *store.RocketMQConfig, client *http.
 	}
 }
 
-// queryNewMessages queries messages from the topic in the given time range and returns msgIds.
-func queryNewMessages(client *http.Client, cfg *store.RocketMQConfig, beginMs, endMs int64) ([]string, error) {
+// rocketMQMessage holds a message's ID and body from the Dashboard API.
+type rocketMQMessage struct {
+	MsgID       string `json:"msgId"`
+	MessageBody string `json:"messageBody"`
+}
+
+// queryNewMessages queries messages from the topic in the given time range and returns messages.
+func queryNewMessages(client *http.Client, cfg *store.RocketMQConfig, beginMs, endMs int64) ([]rocketMQMessage, error) {
 	apiURL := fmt.Sprintf("%s/message/queryMessageByTopic.query?topic=%s&begin=%d&end=%d",
 		strings.TrimRight(cfg.DashboardURL, "/"), cfg.Topic, beginMs, endMs)
 
@@ -258,22 +269,20 @@ func queryNewMessages(client *http.Client, cfg *store.RocketMQConfig, beginMs, e
 	}
 
 	var result struct {
-		Status int `json:"status"`
-		Data   []struct {
-			MsgID string `json:"msgId"`
-		} `json:"data"`
+		Status int               `json:"status"`
+		Data   []rocketMQMessage `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("解析消息列表失败: %w", err)
 	}
 
-	var ids []string
+	var msgs []rocketMQMessage
 	for _, m := range result.Data {
 		if m.MsgID != "" {
-			ids = append(ids, m.MsgID)
+			msgs = append(msgs, m)
 		}
 	}
-	return ids, nil
+	return msgs, nil
 }
 
 func (m *RocketMQManager) runMonitor(ctx context.Context, cfg *store.RocketMQConfig) {
