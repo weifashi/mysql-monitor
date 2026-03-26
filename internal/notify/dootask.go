@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"mysql-monitor/internal/store"
 )
+
+var dootaskClient = &http.Client{Timeout: 30 * time.Second}
 
 func SendDooTask(cfg store.DooTaskConfig, message string) error {
 	baseURL := strings.TrimRight(cfg.BaseURL, "/")
@@ -31,8 +35,7 @@ func SendDooTask(cfg store.DooTaskConfig, message string) error {
 	req.Header.Set("version", "1.6.89")
 	req.Header.Set("token", cfg.Token)
 
-	client := &http.Client{Timeout: 30 * 1e9}
-	resp, err := client.Do(req)
+	resp, err := dootaskClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("http post: %w", err)
 	}
@@ -52,7 +55,8 @@ func SendDooTask(cfg store.DooTaskConfig, message string) error {
 		Data any    `json:"data"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil // non-JSON response, assume success
+		log.Printf("dootask: unexpected non-JSON response: %s", string(respBody[:min(len(respBody), 200)]))
+		return nil
 	}
 	if result.Ret != 1 {
 		return fmt.Errorf("dootask api ret=%d: %s", result.Ret, result.Msg)

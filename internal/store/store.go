@@ -133,13 +133,19 @@ func New(dataDir string) (*Store, error) {
 	var hasCheck int
 	db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='notification_configs' AND sql LIKE '%CHECK%'`).Scan(&hasCheck)
 	if hasCheck > 0 {
-		db.Exec(`CREATE TABLE IF NOT EXISTS notification_configs_new (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, database_id INTEGER, scope_type TEXT NOT NULL DEFAULT 'all',
-			type TEXT NOT NULL, config_json TEXT NOT NULL DEFAULT '{}', enabled INTEGER NOT NULL DEFAULT 1,
-			created_at DATETIME NOT NULL DEFAULT (datetime('now')), updated_at DATETIME NOT NULL DEFAULT (datetime('now')))`)
-		db.Exec(`INSERT INTO notification_configs_new SELECT id, database_id, scope_type, type, config_json, enabled, created_at, updated_at FROM notification_configs`)
-		db.Exec(`DROP TABLE notification_configs`)
-		db.Exec(`ALTER TABLE notification_configs_new RENAME TO notification_configs`)
+		if tx, txErr := db.Begin(); txErr == nil {
+			if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS notification_configs_new (
+				id INTEGER PRIMARY KEY AUTOINCREMENT, database_id INTEGER, scope_type TEXT NOT NULL DEFAULT 'all',
+				type TEXT NOT NULL, config_json TEXT NOT NULL DEFAULT '{}', enabled INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME NOT NULL DEFAULT (datetime('now')), updated_at DATETIME NOT NULL DEFAULT (datetime('now')))`); err == nil {
+				if _, err = tx.Exec(`INSERT INTO notification_configs_new SELECT id, database_id, scope_type, type, config_json, enabled, created_at, updated_at FROM notification_configs`); err == nil {
+					if _, err = tx.Exec(`DROP TABLE notification_configs`); err == nil {
+						tx.Exec(`ALTER TABLE notification_configs_new RENAME TO notification_configs`)
+					}
+				}
+			}
+			tx.Commit()
+		}
 	}
 
 	return &Store{db: db}, nil
