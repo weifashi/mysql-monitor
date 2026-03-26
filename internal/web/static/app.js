@@ -997,6 +997,8 @@ const RocketMQAlertsPage = defineComponent({
         const page = ref(1);
         const pageSize = 20;
         const loading = ref(true);
+        const detailRow = ref(null);
+        const showDetail = ref(false);
         const { connected, messages, stop } = useWebSocket('/ws/rocketmq-logs');
         onUnmounted(stop);
 
@@ -1028,6 +1030,13 @@ const RocketMQAlertsPage = defineComponent({
             { title: '堆积量', key: 'diff_total', width: 100, render: row => h(NText, { type: 'error', strong: true }, () => String(row.diff_total)) },
         ]);
 
+        function onRowClick(row) {
+            detailRow.value = row;
+            showDetail.value = true;
+        }
+
+        const rowProps = (row) => ({ style: 'cursor:pointer', onClick: () => onRowClick(row) });
+
         return () => h('div', { class: 'page-body' }, [
             h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px' }, [
@@ -1038,10 +1047,23 @@ const RocketMQAlertsPage = defineComponent({
                     ]),
                 ]),
             ]),
-            h(NDataTable, { columns: columns.value, data: alerts.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 400 : undefined }),
+            h(NDataTable, { columns: columns.value, data: alerts.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 260px)', scrollX: _isMobile.value ? 400 : undefined, rowProps }),
             total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
                 h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
             ) : null,
+            // Detail modal
+            h(NModal, {
+                show: showDetail.value, 'onUpdate:show': v => showDetail.value = v,
+                preset: 'card', title: '告警详情',
+                style: _isMobile.value ? 'width:95vw' : 'width:520px',
+            }, () => detailRow.value ? h(NDescriptions, { bordered: true, column: 1, labelPlacement: 'top', size: 'small' }, () => [
+                h(NDescriptionsItem, { label: '时间' }, () => formatTime(detailRow.value.detected_at)),
+                h(NDescriptionsItem, { label: '配置' }, () => detailRow.value.config_name),
+                h(NDescriptionsItem, { label: '消费组' }, () => detailRow.value.consumer_group),
+                h(NDescriptionsItem, { label: 'Topic' }, () => detailRow.value.topic),
+                h(NDescriptionsItem, { label: '堆积量' }, () => h(NText, { type: 'error', strong: true }, () => String(detailRow.value.diff_total))),
+                detailRow.value.message_body ? h(NDescriptionsItem, { label: 'Message Body' }, () => h('pre', { style: 'white-space:pre-wrap;word-break:break-all;font-family:var(--font-mono);font-size:12px;margin:0;max-height:300px;overflow:auto' }, detailRow.value.message_body)) : null,
+            ]) : null),
         ]);
     }
 });

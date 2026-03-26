@@ -113,6 +113,7 @@ func New(dataDir string) (*Store, error) {
 	migrations := []string{
 		"ALTER TABLE grafana_configs ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE rocketmq_configs ADD COLUMN notify_new_msg INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE rocketmq_alert_logs ADD COLUMN message_body TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range migrations {
 		db.Exec(m) // ignore errors (column may already exist)
@@ -531,6 +532,7 @@ type RocketMQAlertLog struct {
 	ConsumerGroup string    `json:"consumer_group"`
 	Topic         string    `json:"topic"`
 	DiffTotal     int64     `json:"diff_total"`
+	MessageBody   string    `json:"message_body"`
 	DetectedAt    time.Time `json:"detected_at"`
 }
 
@@ -605,8 +607,8 @@ func (s *Store) ToggleRocketMQ(id int64) error {
 }
 
 func (s *Store) InsertRocketMQAlertLog(l *RocketMQAlertLog) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO rocketmq_alert_logs (config_id, config_name, consumer_group, topic, diff_total) VALUES (?,?,?,?,?)`,
-		l.ConfigID, l.ConfigName, l.ConsumerGroup, l.Topic, l.DiffTotal)
+	res, err := s.db.Exec(`INSERT INTO rocketmq_alert_logs (config_id, config_name, consumer_group, topic, diff_total, message_body) VALUES (?,?,?,?,?,?)`,
+		l.ConfigID, l.ConfigName, l.ConsumerGroup, l.Topic, l.DiffTotal, l.MessageBody)
 	if err != nil {
 		return 0, err
 	}
@@ -615,7 +617,7 @@ func (s *Store) InsertRocketMQAlertLog(l *RocketMQAlertLog) (int64, error) {
 
 func (s *Store) ListRocketMQAlertLogs(configID *int64, page, pageSize int) ([]RocketMQAlertLog, int, error) {
 	countQ := `SELECT COUNT(*) FROM rocketmq_alert_logs`
-	dataQ := `SELECT id, config_id, config_name, consumer_group, topic, diff_total, detected_at FROM rocketmq_alert_logs`
+	dataQ := `SELECT id, config_id, config_name, consumer_group, topic, diff_total, message_body, detected_at FROM rocketmq_alert_logs`
 	var args []interface{}
 	if configID != nil {
 		countQ += ` WHERE config_id=?`
@@ -637,7 +639,7 @@ func (s *Store) ListRocketMQAlertLogs(configID *int64, page, pageSize int) ([]Ro
 	var list []RocketMQAlertLog
 	for rows.Next() {
 		var l RocketMQAlertLog
-		if err := rows.Scan(&l.ID, &l.ConfigID, &l.ConfigName, &l.ConsumerGroup, &l.Topic, &l.DiffTotal, &l.DetectedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.ConfigID, &l.ConfigName, &l.ConsumerGroup, &l.Topic, &l.DiffTotal, &l.MessageBody, &l.DetectedAt); err != nil {
 			return nil, 0, err
 		}
 		list = append(list, l)

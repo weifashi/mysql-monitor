@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS rocketmq_alert_logs (
     consumer_group TEXT    NOT NULL,
     topic          TEXT    NOT NULL,
     diff_total     INTEGER NOT NULL,
+    message_body   TEXT    NOT NULL DEFAULT '',
     detected_at    DATETIME NOT NULL DEFAULT (datetime('now'))
 );
 

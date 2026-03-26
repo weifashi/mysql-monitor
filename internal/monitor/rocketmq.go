@@ -238,6 +238,7 @@ func (m *RocketMQManager) doCheckNewMsg(cfg *store.RocketMQConfig, client *http.
 		ConsumerGroup: cfg.ConsumerGroup,
 		Topic:         cfg.Topic,
 		DiffTotal:     int64(msgCount),
+		MessageBody:   msgSnippet,
 	}
 	if _, err := m.store.InsertRocketMQAlertLog(alertLog); err != nil {
 		log.Printf("[RocketMQ %s] insert alert log error: %v", cfg.Name, err)
