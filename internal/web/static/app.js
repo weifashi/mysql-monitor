@@ -732,8 +732,8 @@ const IgnoredSQLPage = defineComponent({
 
         const columns = useColumns([
             { title: '数据库', key: 'database_name', width: 120 },
-            { title: 'SQL 指纹', key: 'fingerprint', ellipsis: { tooltip: true }, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.7' }, truncate(row.fingerprint, _isMobile.value ? 40 : 80)) },
-            { title: '样例SQL', key: 'sample_sql', ellipsis: { tooltip: true }, _hideOnMobile: true, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.5' }, truncate(row.sample_sql, 60)) },
+            { title: 'SQL 指纹', key: 'fingerprint', ellipsis: { tooltip: true }, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.7;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px', onClick: () => showSqlDetail({ sql_text: row.fingerprint, database_name: row.database_name }) }, truncate(row.fingerprint, _isMobile.value ? 40 : 80)) },
+            { title: '样例SQL', key: 'sample_sql', ellipsis: { tooltip: true }, _hideOnMobile: true, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.5;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px', onClick: () => showSqlDetail({ sql_text: row.sample_sql, database_name: row.database_name }) }, truncate(row.sample_sql, 60)) },
             { title: '添加时间', key: 'created_at', width: 140, _hideOnMobile: true, render: row => formatTime(row.created_at) },
             { title: '操作', key: 'actions', width: 80, render: row => h(NButton, { size: 'tiny', type: 'error', secondary: true, onClick: () => handleDelete(row) }, () => '取消忽略') },
         ]);
