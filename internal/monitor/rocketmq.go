@@ -232,8 +232,8 @@ func (m *RocketMQManager) doCheckNewMsg(cfg *store.RocketMQConfig, client *http.
 	for id := range notifiedSet {
 		allIDs = append(allIDs, id)
 	}
-	if len(allIDs) > 500 {
-		allIDs = allIDs[len(allIDs)-500:]
+	if len(allIDs) > 2000 {
+		allIDs = allIDs[len(allIDs)-2000:]
 	}
 	m.store.SetSetting(notifiedKey, strings.Join(allIDs, ","))
 
