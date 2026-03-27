@@ -209,10 +209,6 @@ func (m *RocketMQManager) doCheckNewMsg(cfg *store.RocketMQConfig, client *http.
 	msgCount := len(msgs)
 	var msgSnippet string
 	for i, msg := range msgs {
-		if i >= 3 {
-			msgSnippet += fmt.Sprintf("\n... 等 %d 条", msgCount)
-			break
-		}
 		if i > 0 {
 			msgSnippet += "\n\n"
 		}
