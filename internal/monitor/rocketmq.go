@@ -190,7 +190,7 @@ func (m *RocketMQManager) doCheckNewMsg(cfg *store.RocketMQConfig, client *http.
 		return
 	}
 
-	msgs, err := queryNewMessages(client, cfg, begin, now)
+	allMsgs, err := queryNewMessages(client, cfg, begin, now)
 	if err != nil {
 		log.Printf("[RocketMQ %s] query new messages error: %v", cfg.Name, err)
 		m.emit("rocketmq_error", cfg.ID, cfg.Name, fmt.Sprintf("查询错误: %v", err), nil)
@@ -200,10 +200,42 @@ func (m *RocketMQManager) doCheckNewMsg(cfg *store.RocketMQConfig, client *http.
 	// Update last check time
 	m.store.SetSetting(lastKey, fmt.Sprintf("%d", now))
 
+	// Filter out already-notified message IDs
+	notifiedKey := m.settingKey(cfg.ID, "notified_ids")
+	notifiedRaw := m.store.GetSetting(notifiedKey)
+	notifiedSet := make(map[string]bool)
+	if notifiedRaw != "" {
+		for _, id := range strings.Split(notifiedRaw, ",") {
+			if id != "" {
+				notifiedSet[id] = true
+			}
+		}
+	}
+
+	var msgs []rocketMQMessage
+	for _, msg := range allMsgs {
+		if !notifiedSet[msg.MsgID] {
+			msgs = append(msgs, msg)
+		}
+	}
+
 	if len(msgs) == 0 {
 		m.emit("rocketmq_ok", cfg.ID, cfg.Name, "无新消息", nil)
 		return
 	}
+
+	// Update notified IDs (keep last 500 to prevent unbounded growth)
+	for _, msg := range msgs {
+		notifiedSet[msg.MsgID] = true
+	}
+	var allIDs []string
+	for id := range notifiedSet {
+		allIDs = append(allIDs, id)
+	}
+	if len(allIDs) > 500 {
+		allIDs = allIDs[len(allIDs)-500:]
+	}
+	m.store.SetSetting(notifiedKey, strings.Join(allIDs, ","))
 
 	// Build notification
 	msgCount := len(msgs)
