@@ -156,9 +156,21 @@ func (m *CustomSQLManager) runMonitor(ctx context.Context, cfg *store.CustomSQLC
 func (m *CustomSQLManager) doCheck(cfg *store.CustomSQLCheck) {
 	m.emit("custom_sql_checking", cfg.ID, cfg.Name, "检查中...", nil)
 
+	type touchedState struct {
+		ruleKey string
+		field   string
+		state   *healthMetricState
+	}
+	var touched []touchedState
 	logEntry := TestCustomSQLCheckWithMetricStateProvider(m.store, cfg, func(ruleKey, field string) *healthMetricState {
-		return m.metricState(cfg.ID, ruleKey, field)
+		st := m.metricState(cfg.ID, ruleKey, field)
+		touched = append(touched, touchedState{ruleKey: ruleKey, field: field, state: st})
+		return st
 	})
+	for _, item := range touched {
+		m.saveMetricState(cfg.ID, item.ruleKey, item.field, item.state)
+	}
+	logEntry.DetectedAt = time.Now()
 	if id, err := m.store.InsertCustomSQLLog(&logEntry); err == nil {
 		logEntry.ID = id
 	} else {
@@ -168,12 +180,133 @@ func (m *CustomSQLManager) doCheck(cfg *store.CustomSQLCheck) {
 	m.emit("custom_sql_result", cfg.ID, cfg.Name, logEntry.Message, logEntry)
 
 	if logEntry.Status == "alert" {
+		m.notifyAlert(cfg, &logEntry)
 		return
 	}
 
 	if logEntry.Status == "ok" && m.isAlertNotified(cfg.ID) {
 		m.setAlertNotified(cfg.ID, false)
+		m.notifyRecovery(cfg, &logEntry)
 	}
+}
+
+func (m *CustomSQLManager) notifyAlert(cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog) {
+	if !cfg.NotifyEnabled || m.isAlertNotified(cfg.ID) {
+		return
+	}
+	message := customSQLNotificationMessage("SQL 告警", cfg, logEntry, false)
+	if strings.TrimSpace(cfg.MessageTemplate) != "" {
+		message = renderCustomSQLMessageTemplate(cfg.MessageTemplate, cfg, logEntry)
+	}
+	if err := m.dispatcher.SendNotifications(cfg.DatabaseID, message); err != nil {
+		log.Printf("[CustomSQL %s] notification send failed: %v", cfg.Name, err)
+		m.emit("custom_sql_notify_error", cfg.ID, cfg.Name, fmt.Sprintf("通知发送失败: %v", err), logEntry)
+		return
+	}
+	m.setAlertNotified(cfg.ID, true)
+	m.emit("custom_sql_notified", cfg.ID, cfg.Name, "已发送 SQL 告警通知", logEntry)
+}
+
+func (m *CustomSQLManager) notifyRecovery(cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog) {
+	if !cfg.NotifyEnabled || !cfg.RecoveryNotify {
+		return
+	}
+	message := customSQLNotificationMessage("SQL 恢复通知", cfg, logEntry, true)
+	if err := m.dispatcher.SendNotifications(cfg.DatabaseID, message); err != nil {
+		log.Printf("[CustomSQL %s] recovery notification send failed: %v", cfg.Name, err)
+		m.emit("custom_sql_notify_error", cfg.ID, cfg.Name, fmt.Sprintf("恢复通知发送失败: %v", err), logEntry)
+		return
+	}
+	m.emit("custom_sql_notified", cfg.ID, cfg.Name, "已发送 SQL 恢复通知", logEntry)
+}
+
+func customSQLNotificationMessage(title string, cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog, recovery bool) string {
+	var b strings.Builder
+	b.WriteString(title)
+	b.WriteString("\n\n")
+	b.WriteString("规则: ")
+	b.WriteString(cfg.Name)
+	b.WriteString("\n数据库: ")
+	if logEntry.DatabaseName != "" {
+		b.WriteString(logEntry.DatabaseName)
+	} else {
+		b.WriteString(cfg.DatabaseName)
+	}
+	b.WriteString("\n执行库: ")
+	b.WriteString(cfg.DBName)
+	b.WriteString("\n结果字段: ")
+	if cfg.ResultField != "" {
+		b.WriteString(cfg.ResultField)
+	} else {
+		b.WriteString("见结果详情")
+	}
+	b.WriteString("\n异常策略: ")
+	b.WriteString(cfg.AlertStrategy)
+	b.WriteString("\n条件: ")
+	b.WriteString(cfg.Condition)
+	if logEntry.ExpectedValue != "" {
+		b.WriteString(" ")
+		b.WriteString(logEntry.ExpectedValue)
+	} else if cfg.ExpectedValue != "" {
+		b.WriteString(" ")
+		b.WriteString(cfg.ExpectedValue)
+	}
+	b.WriteString("\n当前值: ")
+	if logEntry.Value != "" {
+		b.WriteString(logEntry.Value)
+	} else {
+		b.WriteString("-")
+	}
+	b.WriteString("\n结果: ")
+	if recovery {
+		b.WriteString("已恢复正常")
+	} else if logEntry.Message != "" {
+		b.WriteString(logEntry.Message)
+	} else if logEntry.Error != "" {
+		b.WriteString(logEntry.Error)
+	} else {
+		b.WriteString("命中告警")
+	}
+	b.WriteString("\n耗时: ")
+	b.WriteString(strconv.FormatInt(logEntry.DurationMs, 10))
+	b.WriteString("ms")
+	if !recovery {
+		b.WriteString("\n\n该告警仅发送一次，恢复后如再次异常将重新通知。")
+	}
+	return b.String()
+}
+
+func renderCustomSQLMessageTemplate(tpl string, cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog) string {
+	replacements := map[string]string{
+		"{{name}}":           cfg.Name,
+		"{{database}}":       logEntry.DatabaseName,
+		"{{db_name}}":        cfg.DBName,
+		"{{result_field}}":   cfg.ResultField,
+		"{{alert_strategy}}": cfg.AlertStrategy,
+		"{{value}}":          logEntry.Value,
+		"{{expected}}":       logEntry.ExpectedValue,
+		"{{condition}}":      logEntry.Condition,
+		"{{message}}":        logEntry.Message,
+		"{{sql}}":            "[SQL 已省略，请在页面查看配置]",
+		"{{duration_ms}}":    strconv.FormatInt(logEntry.DurationMs, 10),
+	}
+	if replacements["{{database}}"] == "" {
+		replacements["{{database}}"] = cfg.DatabaseName
+	}
+	if replacements["{{expected}}"] == "" {
+		replacements["{{expected}}"] = cfg.ExpectedValue
+	}
+	if replacements["{{condition}}"] == "" {
+		replacements["{{condition}}"] = cfg.Condition
+	}
+	out := tpl
+	for k, v := range replacements {
+		out = strings.ReplaceAll(out, k, v)
+	}
+	if !strings.Contains(out, "\n") {
+		out = "SQL 告警\n\n" + out
+	}
+	return out
 }
 
 func (m *CustomSQLManager) metricState(id int64, ruleKey, field string) *healthMetricState {
@@ -185,10 +318,40 @@ func (m *CustomSQLManager) metricState(id int64, ruleKey, field string) *healthM
 	key := fmt.Sprintf("%d:%s:%s", id, ruleKey, field)
 	st := m.metricStates[key]
 	if st == nil || st.Field != field {
-		st = &healthMetricState{Field: field}
+		st = m.loadMetricState(id, ruleKey, field)
 		m.metricStates[key] = st
 	}
 	return st
+}
+
+func (m *CustomSQLManager) loadMetricState(id int64, ruleKey, field string) *healthMetricState {
+	st := &healthMetricState{Field: field}
+	raw := m.store.GetSetting(m.metricStateSettingKey(id, ruleKey, field))
+	if raw == "" {
+		return st
+	}
+	if err := json.Unmarshal([]byte(raw), st); err != nil {
+		return &healthMetricState{Field: field}
+	}
+	st.Field = field
+	return st
+}
+
+func (m *CustomSQLManager) saveMetricState(id int64, ruleKey, field string, st *healthMetricState) {
+	if st == nil {
+		return
+	}
+	data, err := json.Marshal(st)
+	if err != nil {
+		return
+	}
+	if err := m.store.SetSetting(m.metricStateSettingKey(id, ruleKey, field), string(data)); err != nil {
+		log.Printf("save custom sql metric state id=%d rule=%s field=%s: %v", id, ruleKey, field, err)
+	}
+}
+
+func (m *CustomSQLManager) metricStateSettingKey(id int64, ruleKey, field string) string {
+	return fmt.Sprintf("custom_sql_metric_state_%d_%s_%s", id, safeCustomSQLSettingSuffix(ruleKey), safeCustomSQLSettingSuffix(field))
 }
 
 func (m *CustomSQLManager) deleteMetricStatesLocked(id int64) {
@@ -315,6 +478,7 @@ func TestCustomSQLCheckWithMetricStateProvider(s *store.Store, cfg *store.Custom
 	}
 
 	var summaries []string
+	var firstAlert *store.CustomSQLLog
 	for i, rule := range rules {
 		value, err := selectedCustomSQLValue(cols, values, rule.ResultField)
 		if err != nil {
@@ -349,9 +513,12 @@ func TestCustomSQLCheckWithMetricStateProvider(s *store.Store, cfg *store.Custom
 			result.ExpectedValue = ruleCfg.ExpectedValue
 			result.Condition = ruleCfg.Condition
 			if last != "" && last != value {
-				result.Status = "alert"
-				result.Message = fmt.Sprintf("命中规则: %s\n字段: %s\n当前值: %s\n上次值: %s\n策略: 发生变化", ruleName, fieldName, value, last)
-				return result
+				if firstAlert == nil {
+					alert := result
+					alert.Status = "alert"
+					alert.Message = fmt.Sprintf("命中规则: %s\n字段: %s\n当前值: %s\n上次值: %s\n策略: 发生变化", ruleName, fieldName, value, last)
+					firstAlert = &alert
+				}
 			}
 			continue
 		}
@@ -362,13 +529,20 @@ func TestCustomSQLCheckWithMetricStateProvider(s *store.Store, cfg *store.Custom
 		}
 		matched, reason := EvaluateCustomSQLRule(value, ruleCfg, st)
 		if matched {
-			result.Status = "alert"
-			result.Value = value
-			result.ExpectedValue = ruleCfg.ExpectedValue
-			result.Condition = ruleCfg.Condition
-			result.Message = fmt.Sprintf("命中规则: %s\n%s", ruleName, reason)
-			return result
+			if firstAlert == nil {
+				alert := result
+				alert.Status = "alert"
+				alert.Value = value
+				alert.ExpectedValue = ruleCfg.ExpectedValue
+				alert.Condition = ruleCfg.Condition
+				alert.Message = fmt.Sprintf("命中规则: %s\n%s", ruleName, reason)
+				firstAlert = &alert
+			}
 		}
+	}
+
+	if firstAlert != nil {
+		return *firstAlert
 	}
 
 	result.Status = "ok"
@@ -502,6 +676,9 @@ func EvaluateCustomSQLRule(value string, cfg *store.CustomSQLCheck, st *healthMe
 		matched := st.ConsecutiveMatched >= consecutive
 		return matched, fmt.Sprintf("%s %s %s 连续命中 %d/%d 次: %s", field, cfg.Condition, cfg.ExpectedValue, st.ConsecutiveMatched, consecutive, thresholdMsg)
 	case "increase", "sudden_increase":
+		if strings.TrimSpace(value) == "" {
+			return false, fmt.Sprintf("%s 突增等待有效数值，当前值为空", field)
+		}
 		current, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
 		if err != nil {
 			return true, fmt.Sprintf("%s 突增判断需要数值，当前值=%q", field, value)
@@ -514,6 +691,9 @@ func EvaluateCustomSQLRule(value string, cfg *store.CustomSQLCheck, st *healthMe
 		st.LastValue = current
 		return matched, msg
 	case "continuous_increase":
+		if strings.TrimSpace(value) == "" {
+			return false, fmt.Sprintf("%s 连续上升等待有效数值，当前值为空", field)
+		}
 		current, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
 		if err != nil {
 			return true, fmt.Sprintf("%s 连续上升判断需要数值，当前值=%q", field, value)

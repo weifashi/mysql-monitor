@@ -805,8 +805,8 @@ const CustomSQLPage = defineComponent({
             alert_delta_percent: '',
             alert_consecutive: 1,
             alert_rules: [],
-            notify_enabled: false,
-            recovery_notify: false,
+            notify_enabled: true,
+            recovery_notify: true,
             message_template: '',
         });
         const message = useMessage();
@@ -866,8 +866,8 @@ const CustomSQLPage = defineComponent({
                 alert_delta_percent: '',
                 alert_consecutive: 1,
                 alert_rules: [],
-                notify_enabled: false,
-                recovery_notify: false,
+                notify_enabled: true,
+                recovery_notify: true,
                 message_template: '',
             });
         }
@@ -894,9 +894,9 @@ const CustomSQLPage = defineComponent({
                 alert_delta_percent: row.alert_delta_percent || '',
                 alert_consecutive: row.alert_consecutive || 1,
                 alert_rules: rules,
-                notify_enabled: false,
-                recovery_notify: false,
-                message_template: '',
+                notify_enabled: row.notify_enabled !== false,
+                recovery_notify: row.recovery_notify !== false,
+                message_template: row.message_template || '',
             });
             showModal.value = true;
         }
@@ -991,9 +991,9 @@ const CustomSQLPage = defineComponent({
                 alert_delta_value: firstRule.alert_delta_value || '',
                 alert_delta_percent: firstRule.alert_delta_percent || '',
                 alert_consecutive: firstRule.alert_consecutive || 1,
-                notify_enabled: false,
-                recovery_notify: false,
-                message_template: '',
+                notify_enabled: !!form.notify_enabled,
+                recovery_notify: !!form.recovery_notify,
+                message_template: form.message_template || '',
             };
         }
         function customSQLExportItem(row) {
@@ -1013,9 +1013,9 @@ const CustomSQLPage = defineComponent({
                 alert_delta_percent: row.alert_delta_percent || '',
                 alert_consecutive: row.alert_consecutive || 1,
                 alert_rules: row.alert_rules || '[]',
-                notify_enabled: false,
-                recovery_notify: false,
-                message_template: '',
+                notify_enabled: row.notify_enabled !== false,
+                recovery_notify: row.recovery_notify !== false,
+                message_template: row.message_template || '',
                 enabled: row.enabled !== false,
             };
         }
@@ -1081,9 +1081,9 @@ const CustomSQLPage = defineComponent({
                 alert_delta_percent: item.alert_delta_percent || firstRule.alert_delta_percent || '',
                 alert_consecutive: item.alert_consecutive || firstRule.alert_consecutive || 1,
                 alert_rules: JSON.stringify(rules),
-                notify_enabled: false,
-                recovery_notify: false,
-                message_template: '',
+                notify_enabled: item.notify_enabled !== false,
+                recovery_notify: item.recovery_notify !== false,
+                message_template: item.message_template || '',
             };
         }
         async function importCustomSQLFile(event) {
@@ -1237,6 +1237,22 @@ const CustomSQLPage = defineComponent({
                             }),
                             h(NButton, { size: 'tiny', secondary: true, type: 'error', onClick: () => removeCustomSQLAlertRule(index) }, () => '删除'),
                         ]),
+                    ])),
+                ])),
+                h(NFormItem, { label: '通知' }, () => h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 12, yGap: 8, style: 'width:100%' }, () => [
+                    h(NGi, null, () => h('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid rgba(128,128,128,.18);border-radius:6px;padding:10px 12px' }, [
+                        h('div', null, [
+                            h(NText, null, () => '命中后通知'),
+                            h(NText, { depth: 3, style: 'display:block;font-size:12px;line-height:1.35;margin-top:2px' }, () => '异常首次命中时发送，未恢复前不重复刷屏。'),
+                        ]),
+                        h(NSwitch, { value: form.notify_enabled, 'onUpdate:value': v => form.notify_enabled = v }),
+                    ])),
+                    h(NGi, null, () => h('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid rgba(128,128,128,.18);border-radius:6px;padding:10px 12px' }, [
+                        h('div', null, [
+                            h(NText, null, () => '恢复通知'),
+                            h(NText, { depth: 3, style: 'display:block;font-size:12px;line-height:1.35;margin-top:2px' }, () => '告警恢复正常后发送恢复消息。'),
+                        ]),
+                        h(NSwitch, { value: form.recovery_notify, disabled: !form.notify_enabled, 'onUpdate:value': v => form.recovery_notify = v }),
                     ])),
                 ])),
                 h(NButton, { type: 'primary', block: true, loading: saving.value, onClick: save, style: 'margin-top:8px' }, () => editingId.value ? '保存' : '创建'),

@@ -179,7 +179,12 @@ func New(dataDir string) (*Store, error) {
 
 func configureSQLite(db *sql.DB) error {
 	pragmas := []string{
-		"PRAGMA journal_mode=WAL",
+		// Docker Desktop bind mounts on macOS are less reliable with WAL sidecar
+		// files when the host also inspects the database. Rollback journal keeps
+		// all writes in one file path and avoids recurring settings/log index
+		// corruption seen with monitor.db-wal/monitor.db-shm.
+		"PRAGMA journal_mode=DELETE",
+		"PRAGMA synchronous=FULL",
 		"PRAGMA busy_timeout=5000",
 		"PRAGMA foreign_keys=ON",
 	}

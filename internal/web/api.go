@@ -2199,6 +2199,9 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if req.NotifyEnabled != nil && *req.NotifyEnabled {
+		s.store.SetSetting(fmt.Sprintf("custom_sql_alert_%d", id), "")
+	}
 	s.customSQLMgr.Stop(id)
 	if existing.Enabled {
 		if err := s.customSQLMgr.Start(id); err != nil {

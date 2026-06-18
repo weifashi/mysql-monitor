@@ -99,3 +99,25 @@ func TestCustomSQLAlertRuleAcceptsFrontendFieldNames(t *testing.T) {
 		t.Fatalf("expected delta threshold in reason, got %q", reason)
 	}
 }
+
+func TestCustomSQLIncreaseSkipsEmptyValue(t *testing.T) {
+	cfg := &store.CustomSQLCheck{
+		ResultField:     "com_select",
+		AlertStrategy:   "increase",
+		Condition:       "gt",
+		ExpectedValue:   "0",
+		AlertDeltaValue: "100",
+	}
+	state := &healthMetricState{Field: "com_select", HasLast: true, LastValue: 12}
+
+	matched, reason := EvaluateCustomSQLRule("", cfg, state)
+	if matched {
+		t.Fatalf("empty value should not alert: %s", reason)
+	}
+	if !strings.Contains(reason, "等待有效数值") {
+		t.Fatalf("expected empty value reason, got %q", reason)
+	}
+	if state.LastValue != 12 {
+		t.Fatalf("empty value should not overwrite last value, got %.4f", state.LastValue)
+	}
+}
