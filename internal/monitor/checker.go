@@ -91,8 +91,8 @@ func FormatErrorNotificationText(name, host string, port int, err error) string 
 
 // NotifierDB is the persistence interface for notified PIDs and ignored SQL.
 type NotifierDB interface {
-	IsProcessNotified(dbID int64, processID uint64) bool
-	MarkProcessNotified(dbID int64, processID uint64)
+	IsProcessNotified(dbID int64, processID uint64, fingerprint string) bool
+	MarkProcessNotified(dbID int64, processID uint64, fingerprint string)
 	ClearNotifiedPIDs(dbID int64, activeProcessIDs []uint64)
 	IsSQLIgnored(databaseID int64, fingerprint string) bool
 }
@@ -121,7 +121,7 @@ func (n *Notifier) SyncAndShouldNotify(queries []notify.LongQuery) bool {
 
 	// Check if any query has not been notified yet
 	for _, q := range queries {
-		if !n.db.IsProcessNotified(n.dbID, q.ProcessID) {
+		if !n.db.IsProcessNotified(n.dbID, q.ProcessID, store.NormalizeSQLForNotification(q.SQLText)) {
 			return true
 		}
 	}
@@ -130,7 +130,7 @@ func (n *Notifier) SyncAndShouldNotify(queries []notify.LongQuery) bool {
 
 func (n *Notifier) MarkPIDsNotified(queries []notify.LongQuery) {
 	for _, q := range queries {
-		n.db.MarkProcessNotified(n.dbID, q.ProcessID)
+		n.db.MarkProcessNotified(n.dbID, q.ProcessID, store.NormalizeSQLForNotification(q.SQLText))
 	}
 }
 

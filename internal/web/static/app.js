@@ -466,7 +466,7 @@ const NotificationsPage = defineComponent({
         const loading = ref(true);
         const showModal = ref(false);
         const editingId = ref(null);
-        const form = reactive({ type: 'dingtalk', scope_type: 'all', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '', dootask_base_url: '', dootask_token: '', dootask_dialog_id: '' });
+        const form = reactive({ type: 'feishu', scope_type: 'all', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '', dootask_base_url: '', dootask_token: '', dootask_dialog_id: '' });
         const saving = ref(false);
         const message = useMessage();
 
@@ -481,8 +481,8 @@ const NotificationsPage = defineComponent({
         onMounted(load);
 
         const typeOptions = [
+            { label: 'Lark', value: 'feishu' },
             { label: '钉钉', value: 'dingtalk' },
-            { label: '飞书', value: 'feishu' },
             { label: 'DooTask', value: 'dootask' },
             { label: '邮件', value: 'email' },
         ];
@@ -490,10 +490,11 @@ const NotificationsPage = defineComponent({
             { label: '全局（所有告警）', value: 'all' },
             { label: '健康检查', value: 'health' },
             { label: 'MySQL', value: 'mysql' },
+            { label: '自定义SQL', value: 'custom_sql' },
             { label: 'RocketMQ', value: 'rocketmq' },
             { label: 'Grafana', value: 'grafana' },
         ];
-        const scopeTypeLabels = { all: '全局', health: '健康检查', mysql: 'MySQL', rocketmq: 'RocketMQ', grafana: 'Grafana' };
+        const scopeTypeLabels = { all: '全局', health: '健康检查', mysql: 'MySQL', custom_sql: '自定义SQL', rocketmq: 'RocketMQ', grafana: 'Grafana' };
         const scopeItemOptions = computed(() => {
             const items = scopes.value[form.scope_type] || [];
             return items.map(d => ({ label: d.name, value: d.id }));
@@ -501,7 +502,7 @@ const NotificationsPage = defineComponent({
 
         function openAdd() {
             editingId.value = null;
-            Object.assign(form, { type: 'dingtalk', scope_type: 'all', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '', dootask_base_url: '', dootask_token: '', dootask_dialog_id: '' });
+            Object.assign(form, { type: 'feishu', scope_type: 'all', database_id: null, webhook: '', secret: '', smtp_host: '', smtp_port: 587, smtp_username: '', smtp_password: '', email_from: '', email_to: '', dootask_base_url: '', dootask_token: '', dootask_dialog_id: '' });
             showModal.value = true;
         }
         function fillFormFromRow(row) {
@@ -563,7 +564,7 @@ const NotificationsPage = defineComponent({
         }
 
         const columns = useColumns([
-            { title: '类型', key: 'type', width: 80, render: row => h(NTag, { type: 'info', size: 'small' }, () => ({ dingtalk: '钉钉', feishu: '飞书', dootask: 'DooTask', email: '邮件' }[row.type] || row.type)) },
+            { title: '类型', key: 'type', width: 80, render: row => h(NTag, { type: 'info', size: 'small' }, () => ({ dingtalk: '钉钉', feishu: 'Lark', dootask: 'DooTask', email: '邮件' }[row.type] || row.type)) },
             { title: '关联配置', key: 'scope_name', render: row => {
                 const label = scopeTypeLabels[row.scope_type] || '全局';
                 if (row.scope_type === 'all') return h(NTag, { size: 'small' }, () => '全局');
@@ -628,6 +629,7 @@ const SlowQueriesPage = defineComponent({
         const loading = ref(true);
         const filterDB = ref(null);
         const page = ref(1);
+        const clearing = ref(false);
 
         const { connected, messages, stop } = useWebSocket('/ws/slow-queries');
         onUnmounted(stop);
@@ -661,6 +663,26 @@ const SlowQueriesPage = defineComponent({
             { label: '全部', value: null },
             ...databases.value.map(d => ({ label: d.name, value: d.id }))
         ]);
+        const selectedDBName = computed(() => {
+            const item = databases.value.find(d => d.id === filterDB.value);
+            return item ? item.name : '';
+        });
+
+        async function clearSlowLogs() {
+            clearing.value = true;
+            try {
+                let url = '/api/slow-queries';
+                if (filterDB.value) url += '?database_id=' + filterDB.value;
+                const res = await api.del(url);
+                window.$message && window.$message.success('已清空 ' + (res.deleted || 0) + ' 条慢SQL日志');
+                page.value = 1;
+                data.value = { logs: [], total: 0, page: 1, total_pages: 0 };
+                await load();
+            } catch (e) {
+                window.$message && window.$message.error('清空失败: ' + (e.message || e));
+            }
+            clearing.value = false;
+        }
 
         const columns = useColumns([
             { title: '检测时间', key: 'detected_at', width: 140, render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => formatTime(row.detected_at)) },
@@ -684,7 +706,13 @@ const SlowQueriesPage = defineComponent({
                         connected.value ? '实时' : '断开'
                     ]),
                 ]),
-                h(NSelect, { value: filterDB.value, 'onUpdate:value': v => { filterDB.value = v; page.value = 1; }, options: dbOptions.value, style: _isMobile.value ? 'width:100%' : 'width:180px', placeholder: '筛选数据库', clearable: true, size: 'small' }),
+                h('div', { style: _isMobile.value ? 'display:flex;gap:8px;width:100%' : 'display:flex;gap:8px;align-items:center' }, [
+                    h(NPopconfirm, { onPositiveClick: clearSlowLogs }, {
+                        trigger: () => h(NButton, { size: 'small', secondary: true, type: 'error', loading: clearing.value, disabled: loading.value || data.value.total === 0 }, () => '清空'),
+                        default: () => filterDB.value ? '确定清空数据库「' + selectedDBName.value + '」的慢SQL日志？' : '确定清空全部慢SQL日志？'
+                    }),
+                    h(NSelect, { value: filterDB.value, 'onUpdate:value': v => { filterDB.value = v; page.value = 1; }, options: dbOptions.value, style: _isMobile.value ? 'flex:1;min-width:0' : 'width:180px', placeholder: '筛选数据库', clearable: true, size: 'small' }),
+                ]),
             ]),
             h(NDataTable, { columns: columns.value, data: data.value.logs || [], bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 500 : undefined }),
             data.value.total_pages > 1 ? h('div', { style: 'margin-top:16px;display:flex;justify-content:center' }, [
@@ -747,6 +775,285 @@ const IgnoredSQLPage = defineComponent({
                 h(NSelect, { value: filterDB.value, 'onUpdate:value': v => { filterDB.value = v; }, options: dbOptions.value, style: _isMobile.value ? 'width:100%' : 'width:180px', placeholder: '筛选数据库', clearable: true, size: 'small' }),
             ]),
             h(NDataTable, { columns: columns.value, data: data.value || [], bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 500 : undefined }),
+        ]);
+    }
+});
+
+// --- Custom SQL Checks ---
+const CustomSQLPage = defineComponent({
+    setup() {
+        const checks = ref([]);
+        const databases = ref([]);
+        const loading = ref(true);
+        const showModal = ref(false);
+        const editingId = ref(null);
+        const saving = ref(false);
+        const form = reactive({
+            database_id: null,
+            name: '',
+            db_name: '',
+            sql_text: '',
+            interval_sec: 30,
+            timeout_sec: 10,
+            condition: 'gt',
+            expected_value: '0',
+            notify_enabled: true,
+            recovery_notify: true,
+            message_template: '',
+        });
+        const message = useMessage();
+
+        const conditionOptions = [
+            { label: '> 数值大于', value: 'gt' },
+            { label: '>= 数值大于等于', value: 'gte' },
+            { label: '< 数值小于', value: 'lt' },
+            { label: '<= 数值小于等于', value: 'lte' },
+            { label: '== 等于', value: 'eq' },
+            { label: '!= 不等于', value: 'ne' },
+            { label: '包含文本', value: 'contains' },
+            { label: '不包含文本', value: 'not_contains' },
+            { label: '为空', value: 'empty' },
+            { label: '不为空', value: 'not_empty' },
+            { label: '发生变化', value: 'changed' },
+            { label: '每次都上报', value: 'always' },
+        ];
+        const conditionLabels = Object.fromEntries(conditionOptions.map(o => [o.value, o.label]));
+        const needsExpected = computed(() => !['empty', 'not_empty', 'changed', 'always'].includes(form.condition));
+
+        async function load() {
+            loading.value = true;
+            try {
+                checks.value = await api.get('/api/custom-sql');
+                databases.value = await api.get('/api/databases-simple');
+            } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+
+        const dbOptions = computed(() => databases.value.map(d => ({ label: d.name, value: d.id })));
+        const gridCols = computed(() => _isMobile.value ? 1 : 2);
+
+        function resetForm() {
+            Object.assign(form, {
+                database_id: databases.value[0] ? databases.value[0].id : null,
+                name: '',
+                db_name: '',
+                sql_text: 'SELECT COUNT(*) FROM your_table WHERE status = 0',
+                interval_sec: 30,
+                timeout_sec: 10,
+                condition: 'gt',
+                expected_value: '0',
+                notify_enabled: true,
+                recovery_notify: true,
+                message_template: '',
+            });
+        }
+        function openAdd() {
+            editingId.value = null;
+            resetForm();
+            showModal.value = true;
+        }
+        function openEdit(row) {
+            editingId.value = row.id;
+            Object.assign(form, {
+                database_id: row.database_id,
+                name: row.name,
+                db_name: row.db_name || '',
+                sql_text: row.sql_text,
+                interval_sec: row.interval_sec,
+                timeout_sec: row.timeout_sec,
+                condition: row.condition || 'gt',
+                expected_value: row.expected_value || '',
+                notify_enabled: !!row.notify_enabled,
+                recovery_notify: !!row.recovery_notify,
+                message_template: row.message_template || '',
+            });
+            showModal.value = true;
+        }
+        function openClone(row) {
+            editingId.value = null;
+            openEdit(row);
+            editingId.value = null;
+            form.name = row.name + ' (副本)';
+        }
+        async function save() {
+            saving.value = true;
+            try {
+                const payload = { ...form };
+                if (editingId.value) {
+                    await api.put('/api/custom-sql/' + editingId.value, payload);
+                    message.success('更新成功');
+                } else {
+                    await api.post('/api/custom-sql', payload);
+                    message.success('创建成功');
+                }
+                showModal.value = false;
+                await load();
+            } catch (e) {
+                message.error(e.message);
+            }
+            saving.value = false;
+        }
+        async function toggle(row) {
+            try { await api.post('/api/custom-sql/' + row.id + '/toggle'); await load(); } catch (e) { message.error(e.message); }
+        }
+        async function del(row) {
+            try { await api.del('/api/custom-sql/' + row.id); message.success('已删除'); await load(); } catch (e) { message.error(e.message); }
+        }
+        async function test(row) {
+            try {
+                const res = await api.post('/api/custom-sql/' + row.id + '/test');
+                if (res.status === 'error') message.error(res.error || res.message);
+                else message.success('当前值: ' + (res.value || '') + '，状态: ' + res.status);
+            } catch (e) { message.error(e.message); }
+        }
+
+        const columns = useColumns([
+            { title: '名称', key: 'name', render: row => h(NText, { strong: true }, () => row.name) },
+            { title: '数据库', key: 'database_name', width: 120, _hideOnMobile: true },
+            { title: '执行库', key: 'db_name', width: 120, _hideOnMobile: true, render: row => row.db_name || 'performance_schema' },
+            { title: '条件', key: 'condition', width: 160, render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => (conditionLabels[row.condition] || row.condition) + (row.expected_value ? ' ' + row.expected_value : '')) },
+            { title: 'SQL', key: 'sql_text', ellipsis: { tooltip: true }, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.7;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px', onClick: () => showSqlDetail({ sql_text: row.sql_text, database_name: row.database_name }) }, truncate(row.sql_text, _isMobile.value ? 36 : 70)) },
+            { title: '通知', key: 'notify_enabled', width: 70, _hideOnMobile: true, render: row => row.notify_enabled ? h(NTag, { type: 'success', size: 'small' }, () => '开启') : h(NTag, { size: 'small' }, () => '关闭') },
+            { title: '状态', key: 'status', width: 90, render: row => row.running ? h(NTag, { type: 'success', size: 'small' }, () => '运行中') : row.enabled ? h(NTag, { type: 'warning', size: 'small' }, () => '已启用') : h(NTag, { size: 'small' }, () => '已禁用') },
+            { title: '操作', key: 'actions', width: _isMobile.value ? 160 : 310, render: row => h(NSpace, { size: 'small', wrap: true }, () => [
+                h(NButton, { size: 'small', secondary: true, onClick: () => toggle(row) }, () => row.enabled ? '禁用' : '启用'),
+                h(NButton, { size: 'small', secondary: true, onClick: () => openEdit(row) }, () => '编辑'),
+                !_isMobile.value ? h(NButton, { size: 'small', secondary: true, onClick: () => openClone(row) }, () => '复制') : null,
+                !_isMobile.value ? h(NButton, { size: 'small', secondary: true, onClick: () => test(row) }, () => '测试') : null,
+                h(NPopconfirm, { onPositiveClick: () => del(row) }, { trigger: () => h(NButton, { size: 'small', secondary: true, type: 'error' }, () => '删除'), default: () => '确定删除？' }),
+            ].filter(Boolean)) },
+        ]);
+
+        return () => h('div', { class: 'page-body' }, [
+            h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+                h('h3', { class: 'page-title' }, '自定义SQL监控'),
+                h(NButton, { type: 'primary', onClick: openAdd, size: _isMobile.value ? 'small' : 'medium' }, () => '+ 添加'),
+            ]),
+            h(NDataTable, { columns: columns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 620 : undefined }),
+            h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑自定义SQL' : '添加自定义SQL', style: _isMobile.value ? 'width:95vw' : 'width:760px', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 120 }, [
+                h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '名称' }, () => h(NInput, { value: form.name, 'onUpdate:value': v => form.name = v, placeholder: '如: 待处理订单数量' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '数据库连接' }, () => h(NSelect, { value: form.database_id, 'onUpdate:value': v => form.database_id = v, options: dbOptions.value, placeholder: '选择数据库' }))),
+                ]),
+                h(NFormItem, { label: '执行库' }, () => h(NInput, { value: form.db_name, 'onUpdate:value': v => form.db_name = v, placeholder: '可选，不填默认 performance_schema；也可以在SQL里写库名.表名' })),
+                h(NFormItem, { label: 'SQL' }, () => h(NInput, { value: form.sql_text, 'onUpdate:value': v => form.sql_text = v, type: 'textarea', autosize: { minRows: 4, maxRows: 10 }, placeholder: 'SELECT COUNT(*) FROM orders WHERE status = 0' })),
+                h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '检查间隔(秒)' }, () => h(NInputNumber, { value: form.interval_sec, 'onUpdate:value': v => form.interval_sec = v, min: 1 }))),
+                    h(NGi, null, () => h(NFormItem, { label: '超时(秒)' }, () => h(NInputNumber, { value: form.timeout_sec, 'onUpdate:value': v => form.timeout_sec = v, min: 1 }))),
+                ]),
+                h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '上报条件' }, () => h(NSelect, { value: form.condition, 'onUpdate:value': v => form.condition = v, options: conditionOptions }))),
+                    needsExpected.value ? h(NGi, null, () => h(NFormItem, { label: '期望值' }, () => h(NInput, { value: form.expected_value, 'onUpdate:value': v => form.expected_value = v, placeholder: '如: 0' }))) : null,
+                ]),
+                h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '命中后通知' }, () => h(NSwitch, { value: form.notify_enabled, 'onUpdate:value': v => form.notify_enabled = v }))),
+                    h(NGi, null, () => h(NFormItem, { label: '恢复通知' }, () => h(NSwitch, { value: form.recovery_notify, 'onUpdate:value': v => form.recovery_notify = v }))),
+                ]),
+                h(NFormItem, { label: '消息模板' }, () => h(NInput, { value: form.message_template, 'onUpdate:value': v => form.message_template = v, type: 'textarea', autosize: { minRows: 3, maxRows: 7 }, placeholder: '可选。支持 {{name}} {{database}} {{value}} {{expected}} {{condition}} {{message}} {{sql}} {{duration_ms}}' })),
+                h(NButton, { type: 'primary', block: true, loading: saving.value, onClick: save, style: 'margin-top:8px' }, () => editingId.value ? '保存' : '创建'),
+            ])),
+        ]);
+    }
+});
+
+// --- Custom SQL Logs ---
+const CustomSQLLogsPage = defineComponent({
+    setup() {
+        const data = ref({ data: [], total: 0, page: 1, total_pages: 0 });
+        const checks = ref([]);
+        const loading = ref(true);
+        const filterCheck = ref(null);
+        const page = ref(1);
+        const clearing = ref(false);
+        const message = useMessage();
+
+        const { connected, messages, stop } = useWebSocket('/ws/custom-sql-logs');
+        onUnmounted(stop);
+
+        watch(() => messages.value.length, () => {
+            const latest = messages.value[messages.value.length - 1];
+            if (latest && latest.type === 'custom_sql_result' && latest.data) {
+                if (!filterCheck.value || latest.database_id === filterCheck.value) {
+                    data.value.data.unshift(latest.data);
+                    if (data.value.data.length > 200) data.value.data.length = 200;
+                    data.value.total++;
+                }
+            }
+            if (messages.value.length > 500) messages.value.splice(0, messages.value.length - 500);
+        });
+
+        async function load() {
+            loading.value = true;
+            try {
+                let url = '/api/custom-sql/logs?page=' + page.value;
+                if (filterCheck.value) url += '&check_id=' + filterCheck.value;
+                data.value = await api.get(url);
+                checks.value = await api.get('/api/custom-sql');
+            } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+        watch([page, filterCheck], () => load());
+
+        const checkOptions = computed(() => [
+            { label: '全部', value: null },
+            ...checks.value.map(c => ({ label: c.name, value: c.id }))
+        ]);
+        const selectedCheckName = computed(() => {
+            const item = checks.value.find(c => c.id === filterCheck.value);
+            return item ? item.name : '';
+        });
+
+        async function clearResultLogs() {
+            clearing.value = true;
+            try {
+                let url = '/api/custom-sql/logs';
+                if (filterCheck.value) url += '?check_id=' + filterCheck.value;
+                const res = await api.del(url);
+                message.success('已清空 ' + (res.deleted || 0) + ' 条结果日志');
+                page.value = 1;
+                data.value = { data: [], total: 0, page: 1, total_pages: 0 };
+                await load();
+            } catch (e) {
+                message.error(e.message);
+            }
+            clearing.value = false;
+        }
+
+        const columns = useColumns([
+            { title: '检测时间', key: 'detected_at', width: 140, render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => formatTime(row.detected_at)) },
+            { title: '规则', key: 'check_name', width: 140 },
+            { title: '数据库', key: 'database_name', width: 110, _hideOnMobile: true },
+            { title: '状态', key: 'status', width: 80, render: row => row.status === 'alert' ? h(NTag, { type: 'error', size: 'small' }, () => '告警') : row.status === 'error' ? h(NTag, { type: 'warning', size: 'small' }, () => '错误') : h(NTag, { type: 'success', size: 'small' }, () => '正常') },
+            { title: '当前值', key: 'value', width: 120, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:12px' }, row.value || '') },
+            { title: '条件', key: 'condition', width: 130, _hideOnMobile: true, render: row => (row.condition || '') + (row.expected_value ? ' ' + row.expected_value : '') },
+            { title: '结果', key: 'message', ellipsis: { tooltip: true }, render: row => row.error || row.message },
+            { title: '耗时', key: 'duration_ms', width: 80, _hideOnMobile: true, render: row => row.duration_ms + 'ms' },
+        ]);
+
+        return () => h('div', { class: 'page-body' }, [
+            h('div', { style: _isMobile.value ? 'margin-bottom:12px' : 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+                h('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:' + (_isMobile.value ? '8px' : '0') }, [
+                    h('h3', { class: 'page-title' }, 'SQL结果日志'),
+                    h(NText, { depth: 3 }, () => '共 ' + data.value.total + ' 条'),
+                    h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
+                        h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
+                        connected.value ? '实时' : '断开'
+                    ]),
+                ]),
+                h('div', { style: _isMobile.value ? 'display:flex;gap:8px;width:100%' : 'display:flex;gap:8px;align-items:center' }, [
+                    h(NPopconfirm, { onPositiveClick: clearResultLogs }, {
+                        trigger: () => h(NButton, { size: 'small', secondary: true, type: 'error', loading: clearing.value, disabled: loading.value || data.value.total === 0 }, () => '清空'),
+                        default: () => filterCheck.value ? '确定清空规则「' + selectedCheckName.value + '」的结果日志？' : '确定清空全部 SQL 结果日志？'
+                    }),
+                    h(NSelect, { value: filterCheck.value, 'onUpdate:value': v => { filterCheck.value = v; page.value = 1; }, options: checkOptions.value, style: _isMobile.value ? 'flex:1;min-width:0' : 'width:220px', placeholder: '筛选规则', clearable: true, size: 'small' }),
+                ]),
+            ]),
+            h(NDataTable, { columns: columns.value, data: data.value.data || [], bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 620 : undefined }),
+            data.value.total_pages > 1 ? h('div', { style: 'margin-top:16px;display:flex;justify-content:center' }, [
+                h(NPagination, { page: page.value, 'onUpdate:page': v => page.value = v, pageCount: data.value.total_pages, size: 'small' }),
+            ]) : null,
         ]);
     }
 });
@@ -1222,6 +1529,9 @@ const HealthChecksPage = defineComponent({
         const form = reactive({
             name: '', url: '', method: 'GET', headers_json: '{}', body: '',
             expected_status: 200, expected_field: '', expected_value: '',
+            alert_field: '', alert_strategy: 'threshold', alert_condition: 'gt', alert_value: '',
+            alert_delta_value: '', alert_delta_percent: '', alert_consecutive: 1,
+            trigger_actions: [],
             timeout_sec: 10, interval_sec: 30
         });
 
@@ -1234,25 +1544,51 @@ const HealthChecksPage = defineComponent({
 
         function openAdd() {
             editingId.value = null;
-            Object.assign(form, { name: '', url: '', method: 'GET', headers_json: '{}', body: '', expected_status: 200, expected_field: '', expected_value: '', timeout_sec: 10, interval_sec: 30 });
+            Object.assign(form, { name: '', url: '', method: 'GET', headers_json: '{}', body: '', expected_status: 200, expected_field: '', expected_value: '', alert_field: '', alert_strategy: 'threshold', alert_condition: 'gt', alert_value: '', alert_delta_value: '', alert_delta_percent: '', alert_consecutive: 1, trigger_actions: [], timeout_sec: 10, interval_sec: 30 });
             showModal.value = true;
         }
         function openEdit(row) {
             editingId.value = row.id;
-            Object.assign(form, { name: row.name, url: row.url, method: row.method, headers_json: row.headers_json || '{}', body: row.body || '', expected_status: row.expected_status, expected_field: row.expected_field || '', expected_value: row.expected_value || '', timeout_sec: row.timeout_sec, interval_sec: row.interval_sec });
+            Object.assign(form, { name: row.name, url: row.url, method: row.method, headers_json: row.headers_json || '{}', body: row.body || '', expected_status: row.expected_status, expected_field: row.expected_field || '', expected_value: row.expected_value || '', alert_field: row.alert_field || '', alert_strategy: row.alert_strategy || 'threshold', alert_condition: row.alert_condition || 'gt', alert_value: row.alert_value || '', alert_delta_value: row.alert_delta_value || '', alert_delta_percent: row.alert_delta_percent || '', alert_consecutive: row.alert_consecutive || 1, trigger_actions: parseTriggerActions(row.trigger_actions), timeout_sec: row.timeout_sec, interval_sec: row.interval_sec });
             showModal.value = true;
         }
         function openClone(row) {
             editingId.value = null;
-            Object.assign(form, { name: row.name + ' (副本)', url: row.url, method: row.method, headers_json: row.headers_json || '{}', body: row.body || '', expected_status: row.expected_status, expected_field: row.expected_field || '', expected_value: row.expected_value || '', timeout_sec: row.timeout_sec, interval_sec: row.interval_sec });
+            Object.assign(form, { name: row.name + ' (副本)', url: row.url, method: row.method, headers_json: row.headers_json || '{}', body: row.body || '', expected_status: row.expected_status, expected_field: row.expected_field || '', expected_value: row.expected_value || '', alert_field: row.alert_field || '', alert_strategy: row.alert_strategy || 'threshold', alert_condition: row.alert_condition || 'gt', alert_value: row.alert_value || '', alert_delta_value: row.alert_delta_value || '', alert_delta_percent: row.alert_delta_percent || '', alert_consecutive: row.alert_consecutive || 1, trigger_actions: parseTriggerActions(row.trigger_actions), timeout_sec: row.timeout_sec, interval_sec: row.interval_sec });
             showModal.value = true;
+        }
+        function parseTriggerActions(raw) {
+            if (Array.isArray(raw)) return raw;
+            try {
+                const parsed = JSON.parse(raw || '[]');
+                return Array.isArray(parsed) ? parsed.map(normalizeTriggerAction) : [];
+            } catch { return []; }
+        }
+        function normalizeTriggerAction(action) {
+            return {
+                name: action.name || '',
+                type: action.type || 'command',
+                command: action.command || '',
+                url: action.url || '',
+                method: action.method || 'GET',
+                headers_json: action.headers_json || '{}',
+                body: action.body || '',
+                timeout_sec: action.timeout_sec || 30,
+                enabled: action.enabled !== false,
+            };
+        }
+        function payload() {
+            const actions = (form.trigger_actions || []).map(normalizeTriggerAction).filter(a =>
+                a.name || a.command || a.url
+            );
+            return { ...form, trigger_actions: JSON.stringify(actions) };
         }
         async function save() {
             try {
                 if (editingId.value) {
-                    await api.put('/api/health-checks/' + editingId.value, form);
+                    await api.put('/api/health-checks/' + editingId.value, payload());
                 } else {
-                    await api.post('/api/health-checks', form);
+                    await api.post('/api/health-checks', payload());
                 }
                 showModal.value = false;
                 load();
@@ -1271,11 +1607,37 @@ const HealthChecksPage = defineComponent({
         async function remove(row) {
             try { await api.del('/api/health-checks/' + row.id); load(); } catch {}
         }
+        function addTriggerAction(type = 'command') {
+            form.trigger_actions.push(normalizeTriggerAction({
+                name: type === 'http' ? '抓取诊断接口' : '执行诊断命令',
+                type,
+                timeout_sec: 30,
+            }));
+        }
+        function addPprofTemplate() {
+            const templates = [
+                ['抓取 heap', 'curl -s "http://localhost:8080/debug/pprof/heap" > /tmp/heap.pb.gz'],
+                ['pprof top', 'go tool pprof -top -sample_index=inuse_space /tmp/heap.pb.gz'],
+                ['pprof cum', 'go tool pprof -top -cum -sample_index=inuse_space /tmp/heap.pb.gz'],
+                ['pprof traces', 'go tool pprof -traces -sample_index=inuse_space -nodefraction=0 /tmp/heap.pb.gz | head -120'],
+            ];
+            templates.forEach(([name, command]) => form.trigger_actions.push(normalizeTriggerAction({
+                name, type: 'command', command, timeout_sec: 60,
+            })));
+        }
+        function removeTriggerAction(index) {
+            form.trigger_actions.splice(index, 1);
+        }
 
         const columns = useColumns([
             { title: '名称', key: 'name', width: 120 },
             { title: 'URL', key: 'url', ellipsis: { tooltip: true }, _hideOnMobile: true },
             { title: '方法', key: 'method', width: 70 },
+            { title: '异常规则', key: 'alert_rule', width: 220, _hideOnMobile: true, render: row => row.alert_field ? h(NText, { depth: 3, style: 'font-size:12px' }, () => formatAlertRule(row)) : h(NText, { depth: 3, style: 'font-size:12px' }, () => '-') },
+            { title: '触发', key: 'trigger_actions', width: 80, _hideOnMobile: true, render: row => {
+                const actions = parseTriggerActions(row.trigger_actions);
+                return actions.length ? h(NTag, { size: 'small', type: 'warning', bordered: false }, () => actions.length + ' 个') : h(NText, { depth: 3 }, () => '-');
+            }},
             { title: '间隔', key: 'interval_sec', width: 70, render: row => row.interval_sec + 's', _hideOnMobile: true },
             { title: '状态', key: 'enabled', width: 100, render: row => h('div', { style: 'display:flex;gap:4px' }, [
                 h(NTag, { type: row.enabled ? 'success' : 'default', size: 'small', bordered: false }, () => row.enabled ? '启用' : '停用'),
@@ -1296,6 +1658,122 @@ const HealthChecksPage = defineComponent({
             { label: 'PUT', value: 'PUT' },
             { label: 'HEAD', value: 'HEAD' },
         ];
+        const alertConditionOptions = [
+            { label: '> 大于', value: 'gt' },
+            { label: '>= 大于等于', value: 'gte' },
+            { label: '< 小于', value: 'lt' },
+            { label: '<= 小于等于', value: 'lte' },
+            { label: '== 等于', value: 'eq' },
+            { label: '!= 不等于', value: 'ne' },
+            { label: '包含', value: 'contains' },
+            { label: '不包含', value: 'not_contains' },
+            { label: '为空', value: 'empty' },
+            { label: '不为空', value: 'not_empty' },
+        ];
+        const alertStrategyOptions = [
+            { label: '单次阈值', value: 'threshold' },
+            { label: '连续命中阈值', value: 'sustained' },
+            { label: '突增', value: 'increase' },
+            { label: '连续上升', value: 'continuous_increase' },
+        ];
+        const alertNeedsValue = computed(() => !['empty', 'not_empty'].includes(form.alert_condition));
+        const alertUsesThreshold = computed(() => ['threshold', 'sustained', 'increase', 'continuous_increase'].includes(form.alert_strategy));
+        const alertUsesDelta = computed(() => ['increase'].includes(form.alert_strategy));
+        const alertUsesConsecutive = computed(() => ['sustained', 'continuous_increase'].includes(form.alert_strategy));
+        function formatAlertRule(row) {
+            const strategyLabels = { threshold: '单次', sustained: '连续命中', increase: '突增', continuous_increase: '连续上升' };
+            const strategy = row.alert_strategy || 'threshold';
+            let text = (strategyLabels[strategy] || strategy) + ': ' + row.alert_field;
+            if (strategy === 'increase') {
+                const parts = [];
+                if (row.alert_delta_value) parts.push('涨幅>=' + row.alert_delta_value);
+                if (row.alert_delta_percent) parts.push('涨幅率>=' + row.alert_delta_percent + '%');
+                if (row.alert_value) parts.push((row.alert_condition || 'gt') + ' ' + row.alert_value);
+                return text + ' ' + (parts.join(' 且/或 ') || '比上次上升');
+            }
+            if (strategy === 'continuous_increase') {
+                text += ' 连续上升 ' + (row.alert_consecutive || 1) + ' 次';
+                if (row.alert_value) text += ' 且 ' + (row.alert_condition || 'gt') + ' ' + row.alert_value;
+                return text;
+            }
+            if (strategy === 'sustained') {
+                return text + ' ' + (row.alert_condition || 'gt') + ' ' + (row.alert_value || '') + ' 连续 ' + (row.alert_consecutive || 1) + ' 次';
+            }
+            return text + ' ' + (row.alert_condition || 'gt') + ' ' + (row.alert_value || '');
+        }
+        const triggerActionTypeOptions = [
+            { label: '命令', value: 'command' },
+            { label: 'HTTP', value: 'http' },
+        ];
+        function baseHealthFields() {
+            return [
+                h(NFormItem, { label: '名称' }, () => h(NInput, { value: form.name, onUpdateValue: v => form.name = v, placeholder: '服务名称' })),
+                h(NFormItem, { label: 'URL' }, () => h(NInput, { value: form.url, onUpdateValue: v => form.url = v, placeholder: 'https://example.com/health' })),
+                h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '方法' }, () => h(NSelect, { value: form.method, onUpdateValue: v => form.method = v, options: methodOptions }))),
+                    h(NGi, null, () => h(NFormItem, { label: '期望状态码' }, () => h(NInputNumber, { value: form.expected_status, onUpdateValue: v => form.expected_status = v, min: 100, max: 599, style: 'width:100%' }))),
+                ]),
+                h(NFormItem, { label: '请求头' }, () => h(NInput, { type: 'textarea', value: form.headers_json, onUpdateValue: v => form.headers_json = v, placeholder: '{"Authorization": "Bearer token"}', rows: 3 })),
+                form.method !== 'GET' && form.method !== 'HEAD' ? h(NFormItem, { label: '请求体' }, () => h(NInput, { type: 'textarea', value: form.body, onUpdateValue: v => form.body = v, placeholder: '请求体内容', rows: 3 })) : null,
+                h(NDivider, { style: 'margin:16px 0' }),
+                h(NFormItem, { label: '期望字段' }, () => h(NInput, { value: form.expected_field, onUpdateValue: v => form.expected_field = v, placeholder: '如: code 或 data.status，留空则只检查状态码' })),
+                h(NFormItem, { label: '期望值' }, () => h(NInput, { value: form.expected_value, onUpdateValue: v => form.expected_value = v, placeholder: '如: 0, UP, ok' })),
+                h(NDivider, { style: 'margin:16px 0' }),
+                h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '超时(秒)' }, () => h(NInputNumber, { value: form.timeout_sec, onUpdateValue: v => form.timeout_sec = v, min: 1, max: 300, style: 'width:100%' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '间隔(秒)' }, () => h(NInputNumber, { value: form.interval_sec, onUpdateValue: v => form.interval_sec = v, min: 5, max: 3600, style: 'width:100%' }))),
+                ]),
+            ];
+        }
+        function triggerActionFields() {
+            return [
+                h(NFormItem, { label: '触发操作' }, () => h('div', { style: 'width:100%;display:flex;flex-direction:column;gap:10px' }, [
+                    h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, [
+                        h(NButton, { size: 'small', secondary: true, onClick: () => addTriggerAction('command') }, () => '+ 命令'),
+                        h(NButton, { size: 'small', secondary: true, onClick: () => addTriggerAction('http') }, () => '+ HTTP'),
+                        h(NButton, { size: 'small', secondary: true, type: 'warning', onClick: addPprofTemplate }, () => '+ pprof模板'),
+                    ]),
+                    (form.trigger_actions || []).length === 0 ? h(NText, { depth: 3, style: 'font-size:12px' }, () => '异常首次命中时执行；恢复后再次异常会重新执行。') : null,
+                    ...(form.trigger_actions || []).map((action, index) => h('div', { style: 'border:1px solid rgba(128,128,128,.22);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:8px' }, [
+                        h(NGrid, { cols: _isMobile.value ? 1 : 4, xGap: 8, yGap: 8 }, () => [
+                            h(NGi, null, () => h(NInput, { value: action.name, onUpdateValue: v => action.name = v, placeholder: '动作名称' })),
+                            h(NGi, null, () => h(NSelect, { value: action.type, onUpdateValue: v => action.type = v, options: triggerActionTypeOptions })),
+                            h(NGi, null, () => h(NInputNumber, { value: action.timeout_sec, onUpdateValue: v => action.timeout_sec = v, min: 1, max: 300, placeholder: '超时秒' })),
+                            h(NGi, null, () => h('div', { style: 'display:flex;align-items:center;justify-content:flex-end;gap:8px;height:100%' }, [
+                                h(NSwitch, { value: action.enabled !== false, onUpdateValue: v => action.enabled = v, size: 'small' }),
+                                h(NButton, { size: 'tiny', secondary: true, type: 'error', onClick: () => removeTriggerAction(index) }, () => '删除'),
+                            ])),
+                        ]),
+                        action.type === 'http' ? h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, [
+                            h(NInputGroup, null, () => [
+                                h(NSelect, { value: action.method || 'GET', onUpdateValue: v => action.method = v, options: methodOptions, style: 'width:110px' }),
+                                h(NInput, { value: action.url, onUpdateValue: v => action.url = v, placeholder: 'http://host/path' }),
+                            ]),
+                            h(NInput, { type: 'textarea', value: action.headers_json || '{}', onUpdateValue: v => action.headers_json = v, placeholder: '请求头 JSON', rows: 2 }),
+                            action.method !== 'GET' && action.method !== 'HEAD' ? h(NInput, { type: 'textarea', value: action.body || '', onUpdateValue: v => action.body = v, placeholder: '请求体', rows: 2 }) : null,
+                        ]) : h(NInput, { type: 'textarea', value: action.command, onUpdateValue: v => action.command = v, placeholder: '如: go tool pprof -top -sample_index=inuse_space /tmp/heap.pb.gz', rows: 3 }),
+                    ])),
+                ])),
+            ];
+        }
+        function alertHealthFields() {
+            return [
+                h(NFormItem, { label: '异常字段' }, () => h(NInput, { value: form.alert_field, onUpdateValue: v => form.alert_field = v, placeholder: '如: data.goroutines，留空则不做阈值告警' })),
+                h(NFormItem, { label: '异常策略' }, () => h(NSelect, { value: form.alert_strategy, onUpdateValue: v => form.alert_strategy = v, options: alertStrategyOptions })),
+                h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 12 }, () => [
+                    alertUsesThreshold.value ? h(NGi, null, () => h(NFormItem, { label: '当前值条件' }, () => h(NSelect, { value: form.alert_condition, onUpdateValue: v => form.alert_condition = v, options: alertConditionOptions }))) : null,
+                    alertUsesThreshold.value && alertNeedsValue.value ? h(NGi, null, () => h(NFormItem, { label: '当前值阈值' }, () => h(NInput, { value: form.alert_value, onUpdateValue: v => form.alert_value = v, placeholder: form.alert_strategy === 'threshold' || form.alert_strategy === 'sustained' ? '如: 2000' : '可选，如: 2000' }))) : null,
+                    alertUsesDelta.value ? h(NGi, null, () => h(NFormItem, { label: '变化量>=' }, () => h(NInput, { value: form.alert_delta_value, onUpdateValue: v => form.alert_delta_value = v, placeholder: '如: 500' }))) : null,
+                    alertUsesDelta.value ? h(NGi, null, () => h(NFormItem, { label: '变化率>=' }, () => h(NInput, { value: form.alert_delta_percent, onUpdateValue: v => form.alert_delta_percent = v, placeholder: '百分比，如: 30' }))) : null,
+                    alertUsesConsecutive.value ? h(NGi, null, () => h(NFormItem, { label: '连续次数' }, () => h(NInputNumber, { value: form.alert_consecutive, onUpdateValue: v => form.alert_consecutive = v, min: 1, max: 100, style: 'width:100%' }))) : null,
+                ]),
+                form.alert_strategy === 'increase' ? h(NText, { depth: 3, style: 'display:block;font-size:12px;margin:-6px 0 10px 100px' }, () => '突增：与上一次采样比较；变化量和变化率任一满足即可，当前值阈值填了则也必须满足。') : null,
+                form.alert_strategy === 'continuous_increase' ? h(NText, { depth: 3, style: 'display:block;font-size:12px;margin:-6px 0 10px 100px' }, () => '连续上升：连续多次比上一次采样更高；当前值阈值可选，填了则也必须满足。') : null,
+                form.alert_strategy === 'sustained' ? h(NText, { depth: 3, style: 'display:block;font-size:12px;margin:-6px 0 10px 100px' }, () => '连续命中阈值：只有连续多次满足当前值条件才告警，适合过滤短暂抖动。') : null,
+                h(NDivider, { style: 'margin:8px 0 16px' }),
+                ...triggerActionFields(),
+            ];
+        }
 
         return () => h('div', { class: 'page-body' }, [
             h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
@@ -1303,19 +1781,13 @@ const HealthChecksPage = defineComponent({
                 h(NButton, { type: 'primary', size: 'small', onClick: openAdd }, () => '+ 添加'),
             ]),
             h(NDataTable, { columns: columns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 500 : undefined }),
-            h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑健康检查' : '添加健康检查', style: 'width:560px;max-width:95vw', segmented: true }, () =>
-                h(NForm, { labelPlacement: 'left', labelWidth: 100 }, () => [
-                    h(NFormItem, { label: '名称' }, () => h(NInput, { value: form.name, onUpdateValue: v => form.name = v, placeholder: '服务名称' })),
-                    h(NFormItem, { label: 'URL' }, () => h(NInput, { value: form.url, onUpdateValue: v => form.url = v, placeholder: 'https://example.com/health' })),
-                    h(NFormItem, { label: '方法' }, () => h(NSelect, { value: form.method, onUpdateValue: v => form.method = v, options: methodOptions, style: 'width:120px' })),
-                    h(NFormItem, { label: '请求头' }, () => h(NInput, { type: 'textarea', value: form.headers_json, onUpdateValue: v => form.headers_json = v, placeholder: '{"Authorization": "Bearer token"}', rows: 2 })),
-                    form.method !== 'GET' && form.method !== 'HEAD' ? h(NFormItem, { label: '请求体' }, () => h(NInput, { type: 'textarea', value: form.body, onUpdateValue: v => form.body = v, placeholder: '请求体内容', rows: 2 })) : null,
-                    h(NFormItem, { label: '期望状态码' }, () => h(NInputNumber, { value: form.expected_status, onUpdateValue: v => form.expected_status = v, min: 100, max: 599, style: 'width:120px' })),
-                    h(NFormItem, { label: '期望字段' }, () => h(NInput, { value: form.expected_field, onUpdateValue: v => form.expected_field = v, placeholder: '如: status (留空则只检查状态码)' })),
-                    h(NFormItem, { label: '期望值' }, () => h(NInput, { value: form.expected_value, onUpdateValue: v => form.expected_value = v, placeholder: '如: UP, ok' })),
-                    h(NFormItem, { label: '超时(秒)' }, () => h(NInputNumber, { value: form.timeout_sec, onUpdateValue: v => form.timeout_sec = v, min: 1, max: 300, style: 'width:120px' })),
-                    h(NFormItem, { label: '间隔(秒)' }, () => h(NInputNumber, { value: form.interval_sec, onUpdateValue: v => form.interval_sec = v, min: 5, max: 3600, style: 'width:120px' })),
-                    h('div', { style: 'display:flex;justify-content:flex-end;gap:8px;margin-top:8px' }, [
+            h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑健康检查' : '添加健康检查', style: _isMobile.value ? 'width:95vw' : 'width:1040px;max-width:96vw', segmented: true }, () =>
+                h(NForm, { labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 100 }, () => [
+                    h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 24, yGap: 0 }, () => [
+                        h(NGi, null, () => h('div', { style: 'min-width:0' }, baseHealthFields())),
+                        h(NGi, null, () => h('div', { style: 'min-width:0' }, alertHealthFields())),
+                    ]),
+                    h('div', { style: 'display:flex;justify-content:flex-end;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(128,128,128,.2)' }, [
                         h(NButton, { onClick: () => showModal.value = false }, () => '取消'),
                         h(NButton, { type: 'primary', onClick: save }, () => '保存'),
                     ]),
@@ -1624,6 +2096,8 @@ const AppLayout = defineComponent({
                 { label: '数据库', key: 'databases' },
                 { label: '慢SQL', key: 'slow-queries' },
                 { label: '已忽略SQL', key: 'ignored-sql' },
+                { label: '自定义SQL', key: 'custom-sql' },
+                { label: 'SQL结果', key: 'custom-sql-logs' },
             ],
             'g-rocketmq': [
                 { label: 'MQ 配置', key: 'rocketmq' },
@@ -1763,6 +2237,8 @@ const routes = [
     { path: '/notifications', component: NotificationsPage },
     { path: '/slow-queries', component: SlowQueriesPage },
     { path: '/ignored-sql', component: IgnoredSQLPage },
+    { path: '/custom-sql', component: CustomSQLPage },
+    { path: '/custom-sql-logs', component: CustomSQLLogsPage },
     { path: '/monitor-logs', component: MonitorLogsPage },
     { path: '/rocketmq', component: RocketMQPage },
     { path: '/rocketmq-alerts', component: RocketMQAlertsPage },

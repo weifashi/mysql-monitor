@@ -111,6 +111,14 @@ CREATE TABLE IF NOT EXISTS health_checks (
     expected_status INTEGER NOT NULL DEFAULT 200,
     expected_field  TEXT    NOT NULL DEFAULT '',
     expected_value  TEXT    NOT NULL DEFAULT '',
+    alert_field     TEXT    NOT NULL DEFAULT '',
+    alert_strategy  TEXT    NOT NULL DEFAULT 'threshold',
+    alert_condition TEXT    NOT NULL DEFAULT 'gt',
+    alert_value     TEXT    NOT NULL DEFAULT '',
+    alert_delta_value TEXT  NOT NULL DEFAULT '',
+    alert_delta_percent TEXT NOT NULL DEFAULT '',
+    alert_consecutive INTEGER NOT NULL DEFAULT 1,
+    trigger_actions TEXT    NOT NULL DEFAULT '[]',
     timeout_sec     INTEGER NOT NULL DEFAULT 10,
     interval_sec    INTEGER NOT NULL DEFAULT 30,
     enabled         INTEGER NOT NULL DEFAULT 1,
@@ -145,9 +153,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
 CREATE TABLE IF NOT EXISTS notified_pids (
-    database_id INTEGER NOT NULL,
-    process_id  INTEGER NOT NULL,
-    notified_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    database_id     INTEGER NOT NULL,
+    process_id      INTEGER NOT NULL,
+    sql_fingerprint TEXT    NOT NULL DEFAULT '',
+    notified_at     DATETIME NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (database_id, process_id)
 );
 
@@ -199,3 +208,43 @@ CREATE TABLE IF NOT EXISTS grafana_alert_logs (
 CREATE INDEX IF NOT EXISTS idx_grafana_alert_detected ON grafana_alert_logs(detected_at);
 CREATE INDEX IF NOT EXISTS idx_grafana_alert_config ON grafana_alert_logs(config_id, detected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_grafana_alert_fingerprint ON grafana_alert_logs(fingerprint);
+
+CREATE TABLE IF NOT EXISTS custom_sql_checks (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    database_id      INTEGER NOT NULL,
+    name             TEXT    NOT NULL,
+    db_name          TEXT    NOT NULL DEFAULT '',
+    sql_text         TEXT    NOT NULL,
+    interval_sec     INTEGER NOT NULL DEFAULT 30,
+    timeout_sec      INTEGER NOT NULL DEFAULT 10,
+    condition        TEXT    NOT NULL DEFAULT 'gt',
+    expected_value   TEXT    NOT NULL DEFAULT '0',
+    notify_enabled   INTEGER NOT NULL DEFAULT 1,
+    recovery_notify  INTEGER NOT NULL DEFAULT 1,
+    message_template TEXT    NOT NULL DEFAULT '',
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    created_at       DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at       DATETIME NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (database_id) REFERENCES databases(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS custom_sql_logs (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_id       INTEGER NOT NULL,
+    check_name     TEXT    NOT NULL DEFAULT '',
+    database_id    INTEGER NOT NULL,
+    database_name  TEXT    NOT NULL DEFAULT '',
+    status         TEXT    NOT NULL DEFAULT '',
+    value          TEXT    NOT NULL DEFAULT '',
+    expected_value TEXT    NOT NULL DEFAULT '',
+    condition      TEXT    NOT NULL DEFAULT '',
+    message        TEXT    NOT NULL DEFAULT '',
+    error          TEXT    NOT NULL DEFAULT '',
+    duration_ms    INTEGER NOT NULL DEFAULT 0,
+    detected_at    DATETIME NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (check_id) REFERENCES custom_sql_checks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_custom_sql_logs_detected ON custom_sql_logs(detected_at);
+CREATE INDEX IF NOT EXISTS idx_custom_sql_logs_check ON custom_sql_logs(check_id, detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_custom_sql_checks_db ON custom_sql_checks(database_id);

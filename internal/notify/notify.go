@@ -128,7 +128,7 @@ func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, messa
 
 // SendTestNotification sends a test message to a specific notification config.
 func SendTestNotification(nc *store.NotificationConfig) error {
-	message := "MySQL Monitor 测试通知\n\n这是一条测试消息，说明通知配置正确。"
+	message := "Ops Sentinel 测试通知\n\n这是一条测试消息，说明通知配置正确。"
 
 	switch nc.Type {
 	case "dingtalk":

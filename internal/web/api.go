@@ -770,6 +770,13 @@ func (s *Server) apiNotificationScopes(w http.ResponseWriter, r *http.Request) {
 	}
 	result["grafana"] = gfItems
 
+	customList, _ := s.store.ListCustomSQLChecks()
+	var customItems []scopeItem
+	for _, c := range customList {
+		customItems = append(customItems, scopeItem{ID: c.ID, Name: c.Name})
+	}
+	result["custom_sql"] = customItems
+
 	jsonOK(w, result)
 }
 
@@ -806,6 +813,29 @@ func (s *Server) apiSlowQueries(w http.ResponseWriter, r *http.Request) {
 		"page":        page,
 		"total_pages": totalPages,
 	})
+}
+
+func (s *Server) apiSlowQueriesClear(w http.ResponseWriter, r *http.Request) {
+	var dbID *int64
+	if dbIDStr := r.URL.Query().Get("database_id"); dbIDStr != "" {
+		id, _ := strconv.ParseInt(dbIDStr, 10, 64)
+		if id > 0 {
+			dbID = &id
+		}
+	}
+	deleted, err := s.store.ClearSlowQueryLogs(dbID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	detail := fmt.Sprintf("清空慢SQL日志 %d 条", deleted)
+	targetID := int64(0)
+	if dbID != nil {
+		targetID = *dbID
+		detail = fmt.Sprintf("清空数据库 ID=%d 的慢SQL日志 %d 条", *dbID, deleted)
+	}
+	s.audit(r, "clear", "slow_query_logs", targetID, detail)
+	jsonOK(w, map[string]any{"deleted": deleted})
 }
 
 // --- Users ---
@@ -1278,16 +1308,24 @@ func (s *Server) apiHealthCheckList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiHealthCheckCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name           string `json:"name"`
-		URL            string `json:"url"`
-		Method         string `json:"method"`
-		HeadersJSON    string `json:"headers_json"`
-		Body           string `json:"body"`
-		ExpectedStatus int    `json:"expected_status"`
-		ExpectedField  string `json:"expected_field"`
-		ExpectedValue  string `json:"expected_value"`
-		TimeoutSec     int    `json:"timeout_sec"`
-		IntervalSec    int    `json:"interval_sec"`
+		Name              string `json:"name"`
+		URL               string `json:"url"`
+		Method            string `json:"method"`
+		HeadersJSON       string `json:"headers_json"`
+		Body              string `json:"body"`
+		ExpectedStatus    int    `json:"expected_status"`
+		ExpectedField     string `json:"expected_field"`
+		ExpectedValue     string `json:"expected_value"`
+		AlertField        string `json:"alert_field"`
+		AlertStrategy     string `json:"alert_strategy"`
+		AlertCondition    string `json:"alert_condition"`
+		AlertValue        string `json:"alert_value"`
+		AlertDeltaValue   string `json:"alert_delta_value"`
+		AlertDeltaPercent string `json:"alert_delta_percent"`
+		AlertConsecutive  int    `json:"alert_consecutive"`
+		TriggerActions    string `json:"trigger_actions"`
+		TimeoutSec        int    `json:"timeout_sec"`
+		IntervalSec       int    `json:"interval_sec"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json")
@@ -1312,12 +1350,27 @@ func (s *Server) apiHealthCheckCreate(w http.ResponseWriter, r *http.Request) {
 	if req.HeadersJSON == "" {
 		req.HeadersJSON = "{}"
 	}
+	if req.AlertCondition == "" {
+		req.AlertCondition = "gt"
+	}
+	if req.AlertStrategy == "" {
+		req.AlertStrategy = "threshold"
+	}
+	if req.AlertConsecutive <= 0 {
+		req.AlertConsecutive = 1
+	}
+	if req.TriggerActions == "" {
+		req.TriggerActions = "[]"
+	}
 
 	cfg := &store.HealthCheck{
 		Name: req.Name, URL: req.URL, Method: req.Method,
 		HeadersJSON: req.HeadersJSON, Body: req.Body,
 		ExpectedStatus: req.ExpectedStatus, ExpectedField: req.ExpectedField, ExpectedValue: req.ExpectedValue,
-		TimeoutSec: req.TimeoutSec, IntervalSec: req.IntervalSec,
+		AlertField: req.AlertField, AlertStrategy: req.AlertStrategy, AlertCondition: req.AlertCondition, AlertValue: req.AlertValue,
+		AlertDeltaValue: req.AlertDeltaValue, AlertDeltaPercent: req.AlertDeltaPercent, AlertConsecutive: req.AlertConsecutive,
+		TriggerActions: req.TriggerActions,
+		TimeoutSec:     req.TimeoutSec, IntervalSec: req.IntervalSec,
 		Enabled: true,
 	}
 	id, err := s.store.CreateHealthCheck(cfg)
@@ -1343,17 +1396,25 @@ func (s *Server) apiHealthCheckUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name           string  `json:"name"`
-		URL            string  `json:"url"`
-		Method         string  `json:"method"`
-		HeadersJSON    string  `json:"headers_json"`
-		Body           *string `json:"body"`
-		ExpectedStatus int     `json:"expected_status"`
-		ExpectedField  *string `json:"expected_field"`
-		ExpectedValue  *string `json:"expected_value"`
-		TimeoutSec     int     `json:"timeout_sec"`
-		IntervalSec    int     `json:"interval_sec"`
-		Enabled        *bool   `json:"enabled"`
+		Name              string  `json:"name"`
+		URL               string  `json:"url"`
+		Method            string  `json:"method"`
+		HeadersJSON       string  `json:"headers_json"`
+		Body              *string `json:"body"`
+		ExpectedStatus    int     `json:"expected_status"`
+		ExpectedField     *string `json:"expected_field"`
+		ExpectedValue     *string `json:"expected_value"`
+		AlertField        *string `json:"alert_field"`
+		AlertStrategy     *string `json:"alert_strategy"`
+		AlertCondition    *string `json:"alert_condition"`
+		AlertValue        *string `json:"alert_value"`
+		AlertDeltaValue   *string `json:"alert_delta_value"`
+		AlertDeltaPercent *string `json:"alert_delta_percent"`
+		AlertConsecutive  int     `json:"alert_consecutive"`
+		TriggerActions    *string `json:"trigger_actions"`
+		TimeoutSec        int     `json:"timeout_sec"`
+		IntervalSec       int     `json:"interval_sec"`
+		Enabled           *bool   `json:"enabled"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json")
@@ -1382,6 +1443,42 @@ func (s *Server) apiHealthCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ExpectedValue != nil {
 		existing.ExpectedValue = *req.ExpectedValue
+	}
+	if req.AlertField != nil {
+		existing.AlertField = *req.AlertField
+	}
+	if req.AlertStrategy != nil {
+		existing.AlertStrategy = *req.AlertStrategy
+	}
+	if req.AlertCondition != nil {
+		existing.AlertCondition = *req.AlertCondition
+	}
+	if req.AlertValue != nil {
+		existing.AlertValue = *req.AlertValue
+	}
+	if req.AlertDeltaValue != nil {
+		existing.AlertDeltaValue = *req.AlertDeltaValue
+	}
+	if req.AlertDeltaPercent != nil {
+		existing.AlertDeltaPercent = *req.AlertDeltaPercent
+	}
+	if req.AlertConsecutive > 0 {
+		existing.AlertConsecutive = req.AlertConsecutive
+	}
+	if req.TriggerActions != nil {
+		existing.TriggerActions = *req.TriggerActions
+	}
+	if existing.AlertStrategy == "" {
+		existing.AlertStrategy = "threshold"
+	}
+	if existing.AlertCondition == "" {
+		existing.AlertCondition = "gt"
+	}
+	if existing.AlertConsecutive <= 0 {
+		existing.AlertConsecutive = 1
+	}
+	if existing.TriggerActions == "" {
+		existing.TriggerActions = "[]"
 	}
 	if req.TimeoutSec > 0 {
 		existing.TimeoutSec = req.TimeoutSec
@@ -1922,4 +2019,323 @@ func (s *Server) apiIgnoredSQLDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+// --- Custom SQL Checks ---
+
+type customSQLWithStatus struct {
+	store.CustomSQLCheck
+	Running bool `json:"running"`
+}
+
+func (s *Server) apiCustomSQLList(w http.ResponseWriter, r *http.Request) {
+	checks, err := s.store.ListCustomSQLChecks()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var list []customSQLWithStatus
+	for _, c := range checks {
+		list = append(list, customSQLWithStatus{CustomSQLCheck: c, Running: s.customSQLMgr.IsRunning(c.ID)})
+	}
+	if list == nil {
+		list = []customSQLWithStatus{}
+	}
+	jsonOK(w, list)
+}
+
+func (s *Server) apiCustomSQLCreate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseID      int64  `json:"database_id"`
+		Name            string `json:"name"`
+		DBName          string `json:"db_name"`
+		SQLText         string `json:"sql_text"`
+		IntervalSec     int    `json:"interval_sec"`
+		TimeoutSec      int    `json:"timeout_sec"`
+		Condition       string `json:"condition"`
+		ExpectedValue   string `json:"expected_value"`
+		NotifyEnabled   *bool  `json:"notify_enabled"`
+		RecoveryNotify  *bool  `json:"recovery_notify"`
+		MessageTemplate string `json:"message_template"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	cfg, ok := s.customSQLFromRequest(w, req.DatabaseID, req.Name, req.DBName, req.SQLText, req.IntervalSec, req.TimeoutSec, req.Condition, req.ExpectedValue, req.NotifyEnabled, req.RecoveryNotify, req.MessageTemplate)
+	if !ok {
+		return
+	}
+	cfg.Enabled = true
+	id, err := s.store.CreateCustomSQLCheck(cfg)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.customSQLMgr.Start(id); err != nil {
+		log.Printf("start custom sql %d: %v", id, err)
+	}
+	s.audit(r, "create", "custom_sql", id, "创建自定义SQL监控 "+cfg.Name)
+	jsonOK(w, map[string]int64{"id": id})
+}
+
+func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	existing, err := s.store.GetCustomSQLCheck(id)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var req struct {
+		DatabaseID      int64   `json:"database_id"`
+		Name            string  `json:"name"`
+		DBName          *string `json:"db_name"`
+		SQLText         string  `json:"sql_text"`
+		IntervalSec     int     `json:"interval_sec"`
+		TimeoutSec      int     `json:"timeout_sec"`
+		Condition       string  `json:"condition"`
+		ExpectedValue   *string `json:"expected_value"`
+		NotifyEnabled   *bool   `json:"notify_enabled"`
+		RecoveryNotify  *bool   `json:"recovery_notify"`
+		MessageTemplate *string `json:"message_template"`
+		Enabled         *bool   `json:"enabled"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.DatabaseID > 0 {
+		existing.DatabaseID = req.DatabaseID
+	}
+	if strings.TrimSpace(req.Name) != "" {
+		existing.Name = strings.TrimSpace(req.Name)
+	}
+	if req.DBName != nil {
+		existing.DBName = strings.TrimSpace(*req.DBName)
+	}
+	if strings.TrimSpace(req.SQLText) != "" {
+		existing.SQLText = strings.TrimSpace(req.SQLText)
+	}
+	if req.IntervalSec > 0 {
+		existing.IntervalSec = req.IntervalSec
+	}
+	if req.TimeoutSec > 0 {
+		existing.TimeoutSec = req.TimeoutSec
+	}
+	if strings.TrimSpace(req.Condition) != "" {
+		existing.Condition = strings.TrimSpace(req.Condition)
+	}
+	if req.ExpectedValue != nil {
+		existing.ExpectedValue = strings.TrimSpace(*req.ExpectedValue)
+	}
+	if req.NotifyEnabled != nil {
+		existing.NotifyEnabled = *req.NotifyEnabled
+	}
+	if req.RecoveryNotify != nil {
+		existing.RecoveryNotify = *req.RecoveryNotify
+	}
+	if req.MessageTemplate != nil {
+		existing.MessageTemplate = *req.MessageTemplate
+	}
+	if req.Enabled != nil {
+		existing.Enabled = *req.Enabled
+	}
+	if _, err := s.store.GetDatabase(existing.DatabaseID); err != nil {
+		jsonError(w, http.StatusBadRequest, "database not found")
+		return
+	}
+	if err := monitor.ValidateCustomSQL(existing.SQLText); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	normalizeCustomSQLDefaults(existing)
+
+	if err := s.store.UpdateCustomSQLCheck(existing); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.customSQLMgr.Stop(id)
+	if existing.Enabled {
+		if err := s.customSQLMgr.Start(id); err != nil {
+			log.Printf("restart custom sql %d: %v", id, err)
+		}
+	}
+	s.audit(r, "update", "custom_sql", id, "更新自定义SQL监控 "+existing.Name)
+	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) customSQLFromRequest(w http.ResponseWriter, databaseID int64, name, dbName, sqlText string, intervalSec, timeoutSec int, condition, expectedValue string, notifyEnabled, recoveryNotify *bool, messageTemplate string) (*store.CustomSQLCheck, bool) {
+	name = strings.TrimSpace(name)
+	sqlText = strings.TrimSpace(sqlText)
+	if databaseID <= 0 || name == "" || sqlText == "" {
+		jsonError(w, http.StatusBadRequest, "数据库、名称和 SQL 不能为空")
+		return nil, false
+	}
+	if _, err := s.store.GetDatabase(databaseID); err != nil {
+		jsonError(w, http.StatusBadRequest, "database not found")
+		return nil, false
+	}
+	if err := monitor.ValidateCustomSQL(sqlText); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return nil, false
+	}
+	cfg := &store.CustomSQLCheck{
+		DatabaseID:      databaseID,
+		Name:            name,
+		DBName:          strings.TrimSpace(dbName),
+		SQLText:         sqlText,
+		IntervalSec:     intervalSec,
+		TimeoutSec:      timeoutSec,
+		Condition:       strings.TrimSpace(condition),
+		ExpectedValue:   strings.TrimSpace(expectedValue),
+		NotifyEnabled:   true,
+		RecoveryNotify:  true,
+		MessageTemplate: messageTemplate,
+	}
+	if notifyEnabled != nil {
+		cfg.NotifyEnabled = *notifyEnabled
+	}
+	if recoveryNotify != nil {
+		cfg.RecoveryNotify = *recoveryNotify
+	}
+	normalizeCustomSQLDefaults(cfg)
+	return cfg, true
+}
+
+func normalizeCustomSQLDefaults(cfg *store.CustomSQLCheck) {
+	if cfg.IntervalSec <= 0 {
+		cfg.IntervalSec = 30
+	}
+	if cfg.TimeoutSec <= 0 {
+		cfg.TimeoutSec = 10
+	}
+	if cfg.Condition == "" {
+		cfg.Condition = "gt"
+	}
+}
+
+func (s *Server) apiCustomSQLDelete(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	s.customSQLMgr.Stop(id)
+	if err := s.store.DeleteCustomSQLCheck(id); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.store.SetSetting(fmt.Sprintf("custom_sql_alert_%d", id), "")
+	s.store.SetSetting(fmt.Sprintf("custom_sql_last_value_%d", id), "")
+	s.audit(r, "delete", "custom_sql", id, "删除自定义SQL监控")
+	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) apiCustomSQLToggle(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.ToggleCustomSQLCheck(id); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cfg, err := s.store.GetCustomSQLCheck(id)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if cfg.Enabled {
+		s.customSQLMgr.Start(id)
+	} else {
+		s.customSQLMgr.Stop(id)
+	}
+	action := "启用"
+	if !cfg.Enabled {
+		action = "禁用"
+	}
+	s.audit(r, "toggle", "custom_sql", id, action+"自定义SQL监控 "+cfg.Name)
+	jsonOK(w, map[string]bool{"enabled": cfg.Enabled})
+}
+
+func (s *Server) apiCustomSQLTest(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := s.store.GetCustomSQLCheck(id)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "not found")
+		return
+	}
+	result := monitor.TestCustomSQLCheck(s.store, cfg)
+	jsonOK(w, map[string]any{
+		"ok":             result.Status != "error",
+		"status":         result.Status,
+		"value":          result.Value,
+		"condition":      result.Condition,
+		"expected_value": result.ExpectedValue,
+		"message":        result.Message,
+		"error":          result.Error,
+		"duration_ms":    result.DurationMs,
+	})
+}
+
+func (s *Server) apiCustomSQLLogs(w http.ResponseWriter, r *http.Request) {
+	page := 1
+	pageSize := 20
+	if p := r.URL.Query().Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if ps := r.URL.Query().Get("page_size"); ps != "" {
+		if v, err := strconv.Atoi(ps); err == nil && v > 0 && v <= 100 {
+			pageSize = v
+		}
+	}
+	var checkID *int64
+	if cid := r.URL.Query().Get("check_id"); cid != "" {
+		if v, err := strconv.ParseInt(cid, 10, 64); err == nil && v > 0 {
+			checkID = &v
+		}
+	}
+
+	logs, total, err := s.store.ListCustomSQLLogs(checkID, page, pageSize)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if logs == nil {
+		logs = []store.CustomSQLLog{}
+	}
+	totalPages := 0
+	if pageSize > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+	jsonOK(w, map[string]any{"data": logs, "total": total, "page": page, "page_size": pageSize, "total_pages": totalPages})
+}
+
+func (s *Server) apiCustomSQLLogsClear(w http.ResponseWriter, r *http.Request) {
+	var checkID *int64
+	if cid := r.URL.Query().Get("check_id"); cid != "" {
+		if v, err := strconv.ParseInt(cid, 10, 64); err == nil && v > 0 {
+			checkID = &v
+		}
+	}
+	deleted, err := s.store.ClearCustomSQLLogs(checkID)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	detail := fmt.Sprintf("清空自定义SQL结果日志 %d 条", deleted)
+	targetID := int64(0)
+	if checkID != nil {
+		targetID = *checkID
+		detail = fmt.Sprintf("清空自定义SQL规则 ID=%d 的结果日志 %d 条", *checkID, deleted)
+	}
+	s.audit(r, "clear", "custom_sql_logs", targetID, detail)
+	jsonOK(w, map[string]any{"deleted": deleted})
 }

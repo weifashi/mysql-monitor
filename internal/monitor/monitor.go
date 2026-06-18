@@ -236,6 +236,6 @@ func (m *Manager) doCheck(dbID int64, dbCfg *store.Database, mysqlDB *sql.DB, no
 		m.emit("error", dbID, dbCfg.Name, fmt.Sprintf("通知发送失败: %v", err), nil)
 	} else {
 		m.emit("notified", dbID, dbCfg.Name, "已发送通知", nil)
+		notifier.MarkPIDsNotified(notifyQueries)
 	}
-	notifier.MarkPIDsNotified(notifyQueries)
 }

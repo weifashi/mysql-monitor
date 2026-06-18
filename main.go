@@ -128,8 +128,14 @@ func main() {
 		log.Printf("start grafana monitors: %v", err)
 	}
 
+	// Custom SQL monitors
+	customSQLMgr := monitor.NewCustomSQLManager(s, dispatcher, eventBus)
+	if err := customSQLMgr.StartAll(); err != nil {
+		log.Printf("start custom sql monitors: %v", err)
+	}
+
 	// Web server
-	srv := web.NewServer(s, authStore, mgr, rocketMQMgr, healthCheckMgr, grafanaMgr, dispatcher, eventBus, publicBaseURL)
+	srv := web.NewServer(s, authStore, mgr, rocketMQMgr, healthCheckMgr, grafanaMgr, customSQLMgr, dispatcher, eventBus, publicBaseURL)
 	httpSrv := &http.Server{
 		Addr:    listenAddr,
 		Handler: srv.Routes(),
@@ -146,13 +152,14 @@ func main() {
 		rocketMQMgr.StopAll()
 		healthCheckMgr.StopAll()
 		grafanaMgr.StopAll()
+		customSQLMgr.StopAll()
 		cancel()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
 		httpSrv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("MySQL Monitor started on %s (user: %s)", listenAddr, adminUser)
+	log.Printf("Ops Sentinel started on %s (user: %s)", listenAddr, adminUser)
 	if err := httpSrv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("http server: %v", err)
 	}

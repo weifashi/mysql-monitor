@@ -122,6 +122,15 @@ func New(dataDir string) (*Store, error) {
 		"ALTER TABLE rocketmq_configs ADD COLUMN notify_new_msg INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE rocketmq_alert_logs ADD COLUMN message_body TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE notification_configs ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'all'",
+		"ALTER TABLE notified_pids ADD COLUMN sql_fingerprint TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE health_checks ADD COLUMN alert_field TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE health_checks ADD COLUMN alert_strategy TEXT NOT NULL DEFAULT 'threshold'",
+		"ALTER TABLE health_checks ADD COLUMN alert_condition TEXT NOT NULL DEFAULT 'gt'",
+		"ALTER TABLE health_checks ADD COLUMN alert_value TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE health_checks ADD COLUMN alert_delta_value TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE health_checks ADD COLUMN alert_delta_percent TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE health_checks ADD COLUMN alert_consecutive INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE health_checks ADD COLUMN trigger_actions TEXT NOT NULL DEFAULT '[]'",
 	}
 	// Migrate existing data: database_id not null → scope_type='mysql'
 	db.Exec(`UPDATE notification_configs SET scope_type='mysql' WHERE database_id IS NOT NULL AND scope_type='all'`)
@@ -344,10 +353,16 @@ func (s *Store) GetScopedNotifications(scopeType string, scopeID int64) ([]Notif
 // --- Slow Query Log ---
 
 func (s *Store) InsertSlowQueryLog(l *SlowQueryLog) (bool, error) {
-	var exists int
-	err := s.db.QueryRow(`SELECT 1 FROM slow_query_logs WHERE database_id=? AND process_id=? AND detected_at > datetime('now', '-1 hour') LIMIT 1`, l.DatabaseID, l.ProcessID).Scan(&exists)
-	if err == nil {
-		return false, nil // duplicate, skip
+	var lastID int64
+	var lastSQL string
+	err := s.db.QueryRow(`SELECT id, sql_text FROM slow_query_logs WHERE database_id=? AND process_id=? AND detected_at > datetime('now', '-1 hour') ORDER BY detected_at DESC LIMIT 1`, l.DatabaseID, l.ProcessID).Scan(&lastID, &lastSQL)
+	if err == nil && lastSQL == l.SQLText {
+		_, err = s.db.Exec(`UPDATE slow_query_logs SET thread_id=?, user=?, host=?, db_name=?, exec_sec=?, lock_sec=?, rows_examined=?, rows_sent=?, state=?, detected_at=datetime('now') WHERE id=?`,
+			l.ThreadID, l.User, l.Host, l.DBName, l.ExecSec, l.LockSec, l.RowsExamined, l.RowsSent, l.State, lastID)
+		return false, err
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return false, err
 	}
 	_, err = s.db.Exec(`INSERT INTO slow_query_logs (database_id, thread_id, process_id, user, host, db_name, sql_text, exec_sec, lock_sec, rows_examined, rows_sent, state) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		l.DatabaseID, l.ThreadID, l.ProcessID, l.User, l.Host, l.DBName, l.SQLText, l.ExecSec, l.LockSec, l.RowsExamined, l.RowsSent, l.State)
@@ -396,6 +411,21 @@ func (s *Store) ListSlowQueryLogs(databaseID *int64, page, pageSize int) ([]Slow
 	return list, total, nil
 }
 
+func (s *Store) ClearSlowQueryLogs(databaseID *int64) (int64, error) {
+	if databaseID != nil {
+		res, err := s.db.Exec(`DELETE FROM slow_query_logs WHERE database_id=?`, *databaseID)
+		if err != nil {
+			return 0, err
+		}
+		return res.RowsAffected()
+	}
+	res, err := s.db.Exec(`DELETE FROM slow_query_logs`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (s *Store) PurgeOldLogs() (int64, error) {
 	res, err := s.db.Exec(`DELETE FROM slow_query_logs WHERE detected_at < datetime('now', '-30 days')`)
 	if err != nil {
@@ -429,6 +459,9 @@ func (s *Store) runPurge() {
 	}
 	if n, err := s.PurgeOldHealthCheckLogs(); err == nil && n > 0 {
 		log.Printf("purged %d old health check logs", n)
+	}
+	if n, err := s.PurgeOldCustomSQLLogs(); err == nil && n > 0 {
+		log.Printf("purged %d old custom sql logs", n)
 	}
 	s.CleanupOldNotifiedPIDs()
 }
@@ -771,20 +804,28 @@ func (s *Store) PurgeOldAuditLogs() (int64, error) {
 // --- Health Checks ---
 
 type HealthCheck struct {
-	ID             int64     `json:"id"`
-	Name           string    `json:"name"`
-	URL            string    `json:"url"`
-	Method         string    `json:"method"`
-	HeadersJSON    string    `json:"headers_json"`
-	Body           string    `json:"body"`
-	ExpectedStatus int       `json:"expected_status"`
-	ExpectedField  string    `json:"expected_field"`
-	ExpectedValue  string    `json:"expected_value"`
-	TimeoutSec     int       `json:"timeout_sec"`
-	IntervalSec    int       `json:"interval_sec"`
-	Enabled        bool      `json:"enabled"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID                int64     `json:"id"`
+	Name              string    `json:"name"`
+	URL               string    `json:"url"`
+	Method            string    `json:"method"`
+	HeadersJSON       string    `json:"headers_json"`
+	Body              string    `json:"body"`
+	ExpectedStatus    int       `json:"expected_status"`
+	ExpectedField     string    `json:"expected_field"`
+	ExpectedValue     string    `json:"expected_value"`
+	AlertField        string    `json:"alert_field"`
+	AlertStrategy     string    `json:"alert_strategy"`
+	AlertCondition    string    `json:"alert_condition"`
+	AlertValue        string    `json:"alert_value"`
+	AlertDeltaValue   string    `json:"alert_delta_value"`
+	AlertDeltaPercent string    `json:"alert_delta_percent"`
+	AlertConsecutive  int       `json:"alert_consecutive"`
+	TriggerActions    string    `json:"trigger_actions"`
+	TimeoutSec        int       `json:"timeout_sec"`
+	IntervalSec       int       `json:"interval_sec"`
+	Enabled           bool      `json:"enabled"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type HealthCheckLog struct {
@@ -800,7 +841,7 @@ type HealthCheckLog struct {
 }
 
 func (s *Store) ListHealthChecks() ([]HealthCheck, error) {
-	rows, err := s.db.Query(`SELECT id, name, url, method, headers_json, body, expected_status, expected_field, expected_value, timeout_sec, interval_sec, enabled, created_at, updated_at FROM health_checks ORDER BY id`)
+	rows, err := s.db.Query(`SELECT id, name, url, method, headers_json, body, expected_status, expected_field, expected_value, alert_field, alert_strategy, alert_condition, alert_value, alert_delta_value, alert_delta_percent, alert_consecutive, trigger_actions, timeout_sec, interval_sec, enabled, created_at, updated_at FROM health_checks ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -809,9 +850,10 @@ func (s *Store) ListHealthChecks() ([]HealthCheck, error) {
 	for rows.Next() {
 		var h HealthCheck
 		var enabled int
-		if err := rows.Scan(&h.ID, &h.Name, &h.URL, &h.Method, &h.HeadersJSON, &h.Body, &h.ExpectedStatus, &h.ExpectedField, &h.ExpectedValue, &h.TimeoutSec, &h.IntervalSec, &enabled, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.URL, &h.Method, &h.HeadersJSON, &h.Body, &h.ExpectedStatus, &h.ExpectedField, &h.ExpectedValue, &h.AlertField, &h.AlertStrategy, &h.AlertCondition, &h.AlertValue, &h.AlertDeltaValue, &h.AlertDeltaPercent, &h.AlertConsecutive, &h.TriggerActions, &h.TimeoutSec, &h.IntervalSec, &enabled, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
+		normalizeHealthCheckDefaults(&h)
 		h.Enabled = enabled == 1
 		list = append(list, h)
 	}
@@ -821,18 +863,20 @@ func (s *Store) ListHealthChecks() ([]HealthCheck, error) {
 func (s *Store) GetHealthCheck(id int64) (*HealthCheck, error) {
 	var h HealthCheck
 	var enabled int
-	err := s.db.QueryRow(`SELECT id, name, url, method, headers_json, body, expected_status, expected_field, expected_value, timeout_sec, interval_sec, enabled, created_at, updated_at FROM health_checks WHERE id=?`, id).
-		Scan(&h.ID, &h.Name, &h.URL, &h.Method, &h.HeadersJSON, &h.Body, &h.ExpectedStatus, &h.ExpectedField, &h.ExpectedValue, &h.TimeoutSec, &h.IntervalSec, &enabled, &h.CreatedAt, &h.UpdatedAt)
+	err := s.db.QueryRow(`SELECT id, name, url, method, headers_json, body, expected_status, expected_field, expected_value, alert_field, alert_strategy, alert_condition, alert_value, alert_delta_value, alert_delta_percent, alert_consecutive, trigger_actions, timeout_sec, interval_sec, enabled, created_at, updated_at FROM health_checks WHERE id=?`, id).
+		Scan(&h.ID, &h.Name, &h.URL, &h.Method, &h.HeadersJSON, &h.Body, &h.ExpectedStatus, &h.ExpectedField, &h.ExpectedValue, &h.AlertField, &h.AlertStrategy, &h.AlertCondition, &h.AlertValue, &h.AlertDeltaValue, &h.AlertDeltaPercent, &h.AlertConsecutive, &h.TriggerActions, &h.TimeoutSec, &h.IntervalSec, &enabled, &h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	normalizeHealthCheckDefaults(&h)
 	h.Enabled = enabled == 1
 	return &h, nil
 }
 
 func (s *Store) CreateHealthCheck(h *HealthCheck) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO health_checks (name, url, method, headers_json, body, expected_status, expected_field, expected_value, timeout_sec, interval_sec, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		h.Name, h.URL, h.Method, h.HeadersJSON, h.Body, h.ExpectedStatus, h.ExpectedField, h.ExpectedValue, h.TimeoutSec, h.IntervalSec, boolToInt(h.Enabled))
+	normalizeHealthCheckDefaults(h)
+	res, err := s.db.Exec(`INSERT INTO health_checks (name, url, method, headers_json, body, expected_status, expected_field, expected_value, alert_field, alert_strategy, alert_condition, alert_value, alert_delta_value, alert_delta_percent, alert_consecutive, trigger_actions, timeout_sec, interval_sec, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		h.Name, h.URL, h.Method, h.HeadersJSON, h.Body, h.ExpectedStatus, h.ExpectedField, h.ExpectedValue, h.AlertField, h.AlertStrategy, h.AlertCondition, h.AlertValue, h.AlertDeltaValue, h.AlertDeltaPercent, h.AlertConsecutive, h.TriggerActions, h.TimeoutSec, h.IntervalSec, boolToInt(h.Enabled))
 	if err != nil {
 		return 0, err
 	}
@@ -840,9 +884,25 @@ func (s *Store) CreateHealthCheck(h *HealthCheck) (int64, error) {
 }
 
 func (s *Store) UpdateHealthCheck(h *HealthCheck) error {
-	_, err := s.db.Exec(`UPDATE health_checks SET name=?, url=?, method=?, headers_json=?, body=?, expected_status=?, expected_field=?, expected_value=?, timeout_sec=?, interval_sec=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
-		h.Name, h.URL, h.Method, h.HeadersJSON, h.Body, h.ExpectedStatus, h.ExpectedField, h.ExpectedValue, h.TimeoutSec, h.IntervalSec, boolToInt(h.Enabled), h.ID)
+	normalizeHealthCheckDefaults(h)
+	_, err := s.db.Exec(`UPDATE health_checks SET name=?, url=?, method=?, headers_json=?, body=?, expected_status=?, expected_field=?, expected_value=?, alert_field=?, alert_strategy=?, alert_condition=?, alert_value=?, alert_delta_value=?, alert_delta_percent=?, alert_consecutive=?, trigger_actions=?, timeout_sec=?, interval_sec=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
+		h.Name, h.URL, h.Method, h.HeadersJSON, h.Body, h.ExpectedStatus, h.ExpectedField, h.ExpectedValue, h.AlertField, h.AlertStrategy, h.AlertCondition, h.AlertValue, h.AlertDeltaValue, h.AlertDeltaPercent, h.AlertConsecutive, h.TriggerActions, h.TimeoutSec, h.IntervalSec, boolToInt(h.Enabled), h.ID)
 	return err
+}
+
+func normalizeHealthCheckDefaults(h *HealthCheck) {
+	if h.AlertStrategy == "" {
+		h.AlertStrategy = "threshold"
+	}
+	if h.AlertCondition == "" {
+		h.AlertCondition = "gt"
+	}
+	if h.AlertConsecutive <= 0 {
+		h.AlertConsecutive = 1
+	}
+	if h.TriggerActions == "" {
+		h.TriggerActions = "[]"
+	}
 }
 
 func (s *Store) DeleteHealthCheck(id int64) error {
@@ -1078,6 +1138,176 @@ func (s *Store) CountGrafanaRunning() (int, error) {
 	return count, err
 }
 
+// --- Custom SQL Checks ---
+
+type CustomSQLCheck struct {
+	ID              int64     `json:"id"`
+	DatabaseID      int64     `json:"database_id"`
+	DatabaseName    string    `json:"database_name"`
+	Name            string    `json:"name"`
+	DBName          string    `json:"db_name"`
+	SQLText         string    `json:"sql_text"`
+	IntervalSec     int       `json:"interval_sec"`
+	TimeoutSec      int       `json:"timeout_sec"`
+	Condition       string    `json:"condition"`
+	ExpectedValue   string    `json:"expected_value"`
+	NotifyEnabled   bool      `json:"notify_enabled"`
+	RecoveryNotify  bool      `json:"recovery_notify"`
+	MessageTemplate string    `json:"message_template"`
+	Enabled         bool      `json:"enabled"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type CustomSQLLog struct {
+	ID            int64     `json:"id"`
+	CheckID       int64     `json:"check_id"`
+	CheckName     string    `json:"check_name"`
+	DatabaseID    int64     `json:"database_id"`
+	DatabaseName  string    `json:"database_name"`
+	Status        string    `json:"status"`
+	Value         string    `json:"value"`
+	ExpectedValue string    `json:"expected_value"`
+	Condition     string    `json:"condition"`
+	Message       string    `json:"message"`
+	Error         string    `json:"error"`
+	DurationMs    int64     `json:"duration_ms"`
+	DetectedAt    time.Time `json:"detected_at"`
+}
+
+func (s *Store) ListCustomSQLChecks() ([]CustomSQLCheck, error) {
+	rows, err := s.db.Query(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.interval_sec, c.timeout_sec, c.condition, c.expected_value, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id ORDER BY c.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []CustomSQLCheck
+	for rows.Next() {
+		var c CustomSQLCheck
+		var notifyEnabled, recoveryNotify, enabled int
+		if err := rows.Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.IntervalSec, &c.TimeoutSec, &c.Condition, &c.ExpectedValue, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		c.NotifyEnabled = notifyEnabled == 1
+		c.RecoveryNotify = recoveryNotify == 1
+		c.Enabled = enabled == 1
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) GetCustomSQLCheck(id int64) (*CustomSQLCheck, error) {
+	var c CustomSQLCheck
+	var notifyEnabled, recoveryNotify, enabled int
+	err := s.db.QueryRow(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.interval_sec, c.timeout_sec, c.condition, c.expected_value, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id WHERE c.id=?`, id).
+		Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.IntervalSec, &c.TimeoutSec, &c.Condition, &c.ExpectedValue, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	c.NotifyEnabled = notifyEnabled == 1
+	c.RecoveryNotify = recoveryNotify == 1
+	c.Enabled = enabled == 1
+	return &c, nil
+}
+
+func (s *Store) CreateCustomSQLCheck(c *CustomSQLCheck) (int64, error) {
+	res, err := s.db.Exec(`INSERT INTO custom_sql_checks (database_id, name, db_name, sql_text, interval_sec, timeout_sec, condition, expected_value, notify_enabled, recovery_notify, message_template, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.IntervalSec, c.TimeoutSec, c.Condition, c.ExpectedValue, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled))
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) UpdateCustomSQLCheck(c *CustomSQLCheck) error {
+	_, err := s.db.Exec(`UPDATE custom_sql_checks SET database_id=?, name=?, db_name=?, sql_text=?, interval_sec=?, timeout_sec=?, condition=?, expected_value=?, notify_enabled=?, recovery_notify=?, message_template=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
+		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.IntervalSec, c.TimeoutSec, c.Condition, c.ExpectedValue, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled), c.ID)
+	return err
+}
+
+func (s *Store) DeleteCustomSQLCheck(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM custom_sql_checks WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) ToggleCustomSQLCheck(id int64) error {
+	_, err := s.db.Exec(`UPDATE custom_sql_checks SET enabled = 1 - enabled, updated_at=datetime('now') WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) InsertCustomSQLLog(l *CustomSQLLog) (int64, error) {
+	res, err := s.db.Exec(`INSERT INTO custom_sql_logs (check_id, check_name, database_id, database_name, status, value, expected_value, condition, message, error, duration_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		l.CheckID, l.CheckName, l.DatabaseID, l.DatabaseName, l.Status, l.Value, l.ExpectedValue, l.Condition, l.Message, l.Error, l.DurationMs)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) ListCustomSQLLogs(checkID *int64, page, pageSize int) ([]CustomSQLLog, int, error) {
+	var total int
+	where := ""
+	var args []any
+	if checkID != nil {
+		where = " WHERE check_id=?"
+		args = append(args, *checkID)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM custom_sql_logs`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	offset := (page - 1) * pageSize
+	queryArgs := append(args, pageSize, offset)
+	rows, err := s.db.Query(`SELECT id, check_id, check_name, database_id, database_name, status, value, expected_value, condition, message, error, duration_ms, detected_at FROM custom_sql_logs`+where+` ORDER BY detected_at DESC LIMIT ? OFFSET ?`, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var list []CustomSQLLog
+	for rows.Next() {
+		var l CustomSQLLog
+		if err := rows.Scan(&l.ID, &l.CheckID, &l.CheckName, &l.DatabaseID, &l.DatabaseName, &l.Status, &l.Value, &l.ExpectedValue, &l.Condition, &l.Message, &l.Error, &l.DurationMs, &l.DetectedAt); err != nil {
+			return nil, 0, err
+		}
+		list = append(list, l)
+	}
+	return list, total, rows.Err()
+}
+
+func (s *Store) ClearCustomSQLLogs(checkID *int64) (int64, error) {
+	if checkID != nil {
+		res, err := s.db.Exec(`DELETE FROM custom_sql_logs WHERE check_id=?`, *checkID)
+		if err != nil {
+			return 0, err
+		}
+		return res.RowsAffected()
+	}
+	res, err := s.db.Exec(`DELETE FROM custom_sql_logs`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func (s *Store) PurgeOldCustomSQLLogs() (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM custom_sql_logs WHERE detected_at < datetime('now', '-30 days')`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func (s *Store) CountCustomSQLChecks() (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM custom_sql_checks`).Scan(&count)
+	return count, err
+}
+
+func (s *Store) CountCustomSQLAlertsToday() (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM custom_sql_logs WHERE status='alert' AND datetime(detected_at, 'localtime') >= date('now', 'localtime')`).Scan(&count)
+	return count, err
+}
+
 // --- Sessions ---
 
 func (s *Store) SaveSession(sess *auth.SessionRow) error {
@@ -1113,14 +1343,16 @@ func (s *Store) UpdateSessionExpiry(token string, expiresAt time.Time) error {
 
 // --- Notified PIDs ---
 
-func (s *Store) IsProcessNotified(dbID int64, processID uint64) bool {
-	var n int
-	err := s.db.QueryRow(`SELECT 1 FROM notified_pids WHERE database_id=? AND process_id=?`, dbID, processID).Scan(&n)
-	return err == nil
+func (s *Store) IsProcessNotified(dbID int64, processID uint64, fingerprint string) bool {
+	var storedFingerprint string
+	err := s.db.QueryRow(`SELECT sql_fingerprint FROM notified_pids WHERE database_id=? AND process_id=?`, dbID, processID).Scan(&storedFingerprint)
+	return err == nil && storedFingerprint == fingerprint
 }
 
-func (s *Store) MarkProcessNotified(dbID int64, processID uint64) {
-	s.db.Exec(`INSERT OR IGNORE INTO notified_pids (database_id, process_id) VALUES (?, ?)`, dbID, processID)
+func (s *Store) MarkProcessNotified(dbID int64, processID uint64, fingerprint string) {
+	s.db.Exec(`INSERT INTO notified_pids (database_id, process_id, sql_fingerprint, notified_at) VALUES (?, ?, ?, datetime('now'))
+		ON CONFLICT(database_id, process_id) DO UPDATE SET sql_fingerprint=excluded.sql_fingerprint, notified_at=datetime('now')`,
+		dbID, processID, fingerprint)
 }
 
 func (s *Store) ClearNotifiedPIDs(dbID int64, activeProcessIDs []uint64) {
@@ -1199,6 +1431,12 @@ func NormalizeSQL(sql string) string {
 	// Collapse whitespace
 	result := strings.Join(strings.Fields(string(out)), " ")
 	return result
+}
+
+// NormalizeSQLForNotification keeps literal values so a reused process id with a
+// different SQL text can notify again. It only trims and collapses whitespace.
+func NormalizeSQLForNotification(sql string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(sql)), " ")
 }
 
 func (s *Store) AddIgnoredSQL(databaseID int64, fingerprint, sampleSQL string) (int64, error) {

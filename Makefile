@@ -7,7 +7,7 @@ COMPOSE_EXAMPLE := docker-compose.example.yml
 
 help: ## 显示帮助信息
 	@echo "════════════════════════════════════════════════════════"
-	@echo "  MySQL Monitor - Web 管理界面"
+	@echo "  Ops Sentinel - Web 管理界面"
 	@echo "════════════════════════════════════════════════════════"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'

@@ -22,6 +22,7 @@ type Server struct {
 	rocketMQMgr    *monitor.RocketMQManager
 	healthCheckMgr *monitor.HealthCheckManager
 	grafanaMgr     *monitor.GrafanaManager
+	customSQLMgr   *monitor.CustomSQLManager
 	dispatcher     *notify.Dispatcher
 	hub            *Hub
 	staticHandler  http.Handler
@@ -29,12 +30,12 @@ type Server struct {
 	publicBaseURL string
 }
 
-func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *monitor.RocketMQManager, hc *monitor.HealthCheckManager, gm *monitor.GrafanaManager, d *notify.Dispatcher, eb *monitor.EventBus, publicBaseURL string) *Server {
+func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *monitor.RocketMQManager, hc *monitor.HealthCheckManager, gm *monitor.GrafanaManager, csql *monitor.CustomSQLManager, d *notify.Dispatcher, eb *monitor.EventBus, publicBaseURL string) *Server {
 	hub := NewHub(eb)
 	go hub.Run()
 	staticSub, _ := fs.Sub(staticFS, "static")
 	return &Server{
-		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, grafanaMgr: gm, dispatcher: d, hub: hub,
+		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, grafanaMgr: gm, customSQLMgr: csql, dispatcher: d, hub: hub,
 		staticHandler: http.StripPrefix("/", http.FileServer(http.FS(staticSub))),
 		publicBaseURL: strings.TrimSpace(strings.TrimSuffix(publicBaseURL, "/")),
 	}
@@ -63,6 +64,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /ws/rocketmq-logs", s.wsHandler("rocketmq-logs"))
 	mux.HandleFunc("GET /ws/healthcheck-logs", s.wsHandler("healthcheck-logs"))
 	mux.HandleFunc("GET /ws/grafana-logs", s.wsHandler("grafana-logs"))
+	mux.HandleFunc("GET /ws/custom-sql-logs", s.wsHandler("custom-sql-logs"))
 
 	// --- Protected API routes ---
 	api := http.NewServeMux()
@@ -89,11 +91,22 @@ func (s *Server) Routes() http.Handler {
 
 	// Slow queries
 	api.HandleFunc("GET /api/slow-queries", s.apiSlowQueries)
+	api.HandleFunc("DELETE /api/slow-queries", s.apiSlowQueriesClear)
 
 	// Ignored SQL patterns
 	api.HandleFunc("GET /api/ignored-sql", s.apiIgnoredSQLList)
 	api.HandleFunc("POST /api/ignored-sql", s.apiIgnoredSQLCreate)
 	api.HandleFunc("DELETE /api/ignored-sql/{id}", s.apiIgnoredSQLDelete)
+
+	// Custom SQL checks
+	api.HandleFunc("GET /api/custom-sql", s.apiCustomSQLList)
+	api.HandleFunc("POST /api/custom-sql", s.apiCustomSQLCreate)
+	api.HandleFunc("PUT /api/custom-sql/{id}", s.apiCustomSQLUpdate)
+	api.HandleFunc("DELETE /api/custom-sql/{id}", s.apiCustomSQLDelete)
+	api.HandleFunc("POST /api/custom-sql/{id}/toggle", s.apiCustomSQLToggle)
+	api.HandleFunc("POST /api/custom-sql/{id}/test", s.apiCustomSQLTest)
+	api.HandleFunc("GET /api/custom-sql/logs", s.apiCustomSQLLogs)
+	api.HandleFunc("DELETE /api/custom-sql/logs", s.apiCustomSQLLogsClear)
 
 	// Users
 	api.HandleFunc("GET /api/users", s.apiUsersList)
