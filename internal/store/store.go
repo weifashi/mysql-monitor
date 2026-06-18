@@ -130,7 +130,14 @@ func New(dataDir string) (*Store, error) {
 		"ALTER TABLE health_checks ADD COLUMN alert_delta_value TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE health_checks ADD COLUMN alert_delta_percent TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE health_checks ADD COLUMN alert_consecutive INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE health_checks ADD COLUMN alert_rules TEXT NOT NULL DEFAULT '[]'",
 		"ALTER TABLE health_checks ADD COLUMN trigger_actions TEXT NOT NULL DEFAULT '[]'",
+		"ALTER TABLE health_check_logs ADD COLUMN diagnostic_output TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE custom_sql_checks ADD COLUMN result_field TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE custom_sql_checks ADD COLUMN alert_strategy TEXT NOT NULL DEFAULT 'threshold'",
+		"ALTER TABLE custom_sql_checks ADD COLUMN alert_delta_value TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE custom_sql_checks ADD COLUMN alert_delta_percent TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE custom_sql_checks ADD COLUMN alert_consecutive INTEGER NOT NULL DEFAULT 1",
 	}
 	// Migrate existing data: database_id not null → scope_type='mysql'
 	db.Exec(`UPDATE notification_configs SET scope_type='mysql' WHERE database_id IS NOT NULL AND scope_type='all'`)
@@ -820,6 +827,7 @@ type HealthCheck struct {
 	AlertDeltaValue   string    `json:"alert_delta_value"`
 	AlertDeltaPercent string    `json:"alert_delta_percent"`
 	AlertConsecutive  int       `json:"alert_consecutive"`
+	AlertRules        string    `json:"alert_rules"`
 	TriggerActions    string    `json:"trigger_actions"`
 	TimeoutSec        int       `json:"timeout_sec"`
 	IntervalSec       int       `json:"interval_sec"`
@@ -829,19 +837,20 @@ type HealthCheck struct {
 }
 
 type HealthCheckLog struct {
-	ID         int64     `json:"id"`
-	CheckID    int64     `json:"check_id"`
-	CheckName  string    `json:"check_name"`
-	Status     string    `json:"status"`
-	HTTPStatus int       `json:"http_status"`
-	Response   string    `json:"response"`
-	Error      string    `json:"error"`
-	LatencyMs  int64     `json:"latency_ms"`
-	DetectedAt time.Time `json:"detected_at"`
+	ID               int64     `json:"id"`
+	CheckID          int64     `json:"check_id"`
+	CheckName        string    `json:"check_name"`
+	Status           string    `json:"status"`
+	HTTPStatus       int       `json:"http_status"`
+	Response         string    `json:"response"`
+	Error            string    `json:"error"`
+	DiagnosticOutput string    `json:"diagnostic_output"`
+	LatencyMs        int64     `json:"latency_ms"`
+	DetectedAt       time.Time `json:"detected_at"`
 }
 
 func (s *Store) ListHealthChecks() ([]HealthCheck, error) {
-	rows, err := s.db.Query(`SELECT id, name, url, method, headers_json, body, expected_status, expected_field, expected_value, alert_field, alert_strategy, alert_condition, alert_value, alert_delta_value, alert_delta_percent, alert_consecutive, trigger_actions, timeout_sec, interval_sec, enabled, created_at, updated_at FROM health_checks ORDER BY id`)
+	rows, err := s.db.Query(`SELECT id, name, url, method, headers_json, body, expected_status, expected_field, expected_value, alert_field, alert_strategy, alert_condition, alert_value, alert_delta_value, alert_delta_percent, alert_consecutive, alert_rules, trigger_actions, timeout_sec, interval_sec, enabled, created_at, updated_at FROM health_checks ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -850,7 +859,7 @@ func (s *Store) ListHealthChecks() ([]HealthCheck, error) {
 	for rows.Next() {
 		var h HealthCheck
 		var enabled int
-		if err := rows.Scan(&h.ID, &h.Name, &h.URL, &h.Method, &h.HeadersJSON, &h.Body, &h.ExpectedStatus, &h.ExpectedField, &h.ExpectedValue, &h.AlertField, &h.AlertStrategy, &h.AlertCondition, &h.AlertValue, &h.AlertDeltaValue, &h.AlertDeltaPercent, &h.AlertConsecutive, &h.TriggerActions, &h.TimeoutSec, &h.IntervalSec, &enabled, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.Name, &h.URL, &h.Method, &h.HeadersJSON, &h.Body, &h.ExpectedStatus, &h.ExpectedField, &h.ExpectedValue, &h.AlertField, &h.AlertStrategy, &h.AlertCondition, &h.AlertValue, &h.AlertDeltaValue, &h.AlertDeltaPercent, &h.AlertConsecutive, &h.AlertRules, &h.TriggerActions, &h.TimeoutSec, &h.IntervalSec, &enabled, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		normalizeHealthCheckDefaults(&h)
@@ -863,8 +872,8 @@ func (s *Store) ListHealthChecks() ([]HealthCheck, error) {
 func (s *Store) GetHealthCheck(id int64) (*HealthCheck, error) {
 	var h HealthCheck
 	var enabled int
-	err := s.db.QueryRow(`SELECT id, name, url, method, headers_json, body, expected_status, expected_field, expected_value, alert_field, alert_strategy, alert_condition, alert_value, alert_delta_value, alert_delta_percent, alert_consecutive, trigger_actions, timeout_sec, interval_sec, enabled, created_at, updated_at FROM health_checks WHERE id=?`, id).
-		Scan(&h.ID, &h.Name, &h.URL, &h.Method, &h.HeadersJSON, &h.Body, &h.ExpectedStatus, &h.ExpectedField, &h.ExpectedValue, &h.AlertField, &h.AlertStrategy, &h.AlertCondition, &h.AlertValue, &h.AlertDeltaValue, &h.AlertDeltaPercent, &h.AlertConsecutive, &h.TriggerActions, &h.TimeoutSec, &h.IntervalSec, &enabled, &h.CreatedAt, &h.UpdatedAt)
+	err := s.db.QueryRow(`SELECT id, name, url, method, headers_json, body, expected_status, expected_field, expected_value, alert_field, alert_strategy, alert_condition, alert_value, alert_delta_value, alert_delta_percent, alert_consecutive, alert_rules, trigger_actions, timeout_sec, interval_sec, enabled, created_at, updated_at FROM health_checks WHERE id=?`, id).
+		Scan(&h.ID, &h.Name, &h.URL, &h.Method, &h.HeadersJSON, &h.Body, &h.ExpectedStatus, &h.ExpectedField, &h.ExpectedValue, &h.AlertField, &h.AlertStrategy, &h.AlertCondition, &h.AlertValue, &h.AlertDeltaValue, &h.AlertDeltaPercent, &h.AlertConsecutive, &h.AlertRules, &h.TriggerActions, &h.TimeoutSec, &h.IntervalSec, &enabled, &h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -875,8 +884,8 @@ func (s *Store) GetHealthCheck(id int64) (*HealthCheck, error) {
 
 func (s *Store) CreateHealthCheck(h *HealthCheck) (int64, error) {
 	normalizeHealthCheckDefaults(h)
-	res, err := s.db.Exec(`INSERT INTO health_checks (name, url, method, headers_json, body, expected_status, expected_field, expected_value, alert_field, alert_strategy, alert_condition, alert_value, alert_delta_value, alert_delta_percent, alert_consecutive, trigger_actions, timeout_sec, interval_sec, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		h.Name, h.URL, h.Method, h.HeadersJSON, h.Body, h.ExpectedStatus, h.ExpectedField, h.ExpectedValue, h.AlertField, h.AlertStrategy, h.AlertCondition, h.AlertValue, h.AlertDeltaValue, h.AlertDeltaPercent, h.AlertConsecutive, h.TriggerActions, h.TimeoutSec, h.IntervalSec, boolToInt(h.Enabled))
+	res, err := s.db.Exec(`INSERT INTO health_checks (name, url, method, headers_json, body, expected_status, expected_field, expected_value, alert_field, alert_strategy, alert_condition, alert_value, alert_delta_value, alert_delta_percent, alert_consecutive, alert_rules, trigger_actions, timeout_sec, interval_sec, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		h.Name, h.URL, h.Method, h.HeadersJSON, h.Body, h.ExpectedStatus, h.ExpectedField, h.ExpectedValue, h.AlertField, h.AlertStrategy, h.AlertCondition, h.AlertValue, h.AlertDeltaValue, h.AlertDeltaPercent, h.AlertConsecutive, h.AlertRules, h.TriggerActions, h.TimeoutSec, h.IntervalSec, boolToInt(h.Enabled))
 	if err != nil {
 		return 0, err
 	}
@@ -885,8 +894,8 @@ func (s *Store) CreateHealthCheck(h *HealthCheck) (int64, error) {
 
 func (s *Store) UpdateHealthCheck(h *HealthCheck) error {
 	normalizeHealthCheckDefaults(h)
-	_, err := s.db.Exec(`UPDATE health_checks SET name=?, url=?, method=?, headers_json=?, body=?, expected_status=?, expected_field=?, expected_value=?, alert_field=?, alert_strategy=?, alert_condition=?, alert_value=?, alert_delta_value=?, alert_delta_percent=?, alert_consecutive=?, trigger_actions=?, timeout_sec=?, interval_sec=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
-		h.Name, h.URL, h.Method, h.HeadersJSON, h.Body, h.ExpectedStatus, h.ExpectedField, h.ExpectedValue, h.AlertField, h.AlertStrategy, h.AlertCondition, h.AlertValue, h.AlertDeltaValue, h.AlertDeltaPercent, h.AlertConsecutive, h.TriggerActions, h.TimeoutSec, h.IntervalSec, boolToInt(h.Enabled), h.ID)
+	_, err := s.db.Exec(`UPDATE health_checks SET name=?, url=?, method=?, headers_json=?, body=?, expected_status=?, expected_field=?, expected_value=?, alert_field=?, alert_strategy=?, alert_condition=?, alert_value=?, alert_delta_value=?, alert_delta_percent=?, alert_consecutive=?, alert_rules=?, trigger_actions=?, timeout_sec=?, interval_sec=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
+		h.Name, h.URL, h.Method, h.HeadersJSON, h.Body, h.ExpectedStatus, h.ExpectedField, h.ExpectedValue, h.AlertField, h.AlertStrategy, h.AlertCondition, h.AlertValue, h.AlertDeltaValue, h.AlertDeltaPercent, h.AlertConsecutive, h.AlertRules, h.TriggerActions, h.TimeoutSec, h.IntervalSec, boolToInt(h.Enabled), h.ID)
 	return err
 }
 
@@ -899,6 +908,9 @@ func normalizeHealthCheckDefaults(h *HealthCheck) {
 	}
 	if h.AlertConsecutive <= 0 {
 		h.AlertConsecutive = 1
+	}
+	if h.AlertRules == "" {
+		h.AlertRules = "[]"
 	}
 	if h.TriggerActions == "" {
 		h.TriggerActions = "[]"
@@ -921,12 +933,12 @@ func (s *Store) InsertHealthCheckLog(l *HealthCheckLog) {
 	var lastID int64
 	err := s.db.QueryRow(`SELECT id, status FROM health_check_logs WHERE check_id=? ORDER BY detected_at DESC LIMIT 1`, l.CheckID).Scan(&lastID, &lastStatus)
 	if err == nil && lastStatus == l.Status {
-		s.db.Exec(`UPDATE health_check_logs SET http_status=?, response=?, error=?, latency_ms=?, detected_at=datetime('now') WHERE id=?`,
-			l.HTTPStatus, l.Response, l.Error, l.LatencyMs, lastID)
+		s.db.Exec(`UPDATE health_check_logs SET http_status=?, response=?, error=?, diagnostic_output=CASE WHEN ? != '' THEN ? ELSE diagnostic_output END, latency_ms=?, detected_at=datetime('now') WHERE id=?`,
+			l.HTTPStatus, l.Response, l.Error, l.DiagnosticOutput, l.DiagnosticOutput, l.LatencyMs, lastID)
 		return
 	}
-	s.db.Exec(`INSERT INTO health_check_logs (check_id, check_name, status, http_status, response, error, latency_ms) VALUES (?,?,?,?,?,?,?)`,
-		l.CheckID, l.CheckName, l.Status, l.HTTPStatus, l.Response, l.Error, l.LatencyMs)
+	s.db.Exec(`INSERT INTO health_check_logs (check_id, check_name, status, http_status, response, error, diagnostic_output, latency_ms) VALUES (?,?,?,?,?,?,?,?)`,
+		l.CheckID, l.CheckName, l.Status, l.HTTPStatus, l.Response, l.Error, l.DiagnosticOutput, l.LatencyMs)
 }
 
 func (s *Store) ListHealthCheckLogs(checkID *int64, page, pageSize int) ([]HealthCheckLog, int, error) {
@@ -942,7 +954,7 @@ func (s *Store) ListHealthCheckLogs(checkID *int64, page, pageSize int) ([]Healt
 	}
 	offset := (page - 1) * pageSize
 	queryArgs := append(args, pageSize, offset)
-	rows, err := s.db.Query(`SELECT id, check_id, check_name, status, http_status, response, error, latency_ms, detected_at FROM health_check_logs`+where+` ORDER BY detected_at DESC LIMIT ? OFFSET ?`, queryArgs...)
+	rows, err := s.db.Query(`SELECT id, check_id, check_name, status, http_status, response, error, diagnostic_output, latency_ms, detected_at FROM health_check_logs`+where+` ORDER BY detected_at DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -950,7 +962,7 @@ func (s *Store) ListHealthCheckLogs(checkID *int64, page, pageSize int) ([]Healt
 	var list []HealthCheckLog
 	for rows.Next() {
 		var l HealthCheckLog
-		if err := rows.Scan(&l.ID, &l.CheckID, &l.CheckName, &l.Status, &l.HTTPStatus, &l.Response, &l.Error, &l.LatencyMs, &l.DetectedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.CheckID, &l.CheckName, &l.Status, &l.HTTPStatus, &l.Response, &l.Error, &l.DiagnosticOutput, &l.LatencyMs, &l.DetectedAt); err != nil {
 			return nil, 0, err
 		}
 		list = append(list, l)
@@ -1141,22 +1153,27 @@ func (s *Store) CountGrafanaRunning() (int, error) {
 // --- Custom SQL Checks ---
 
 type CustomSQLCheck struct {
-	ID              int64     `json:"id"`
-	DatabaseID      int64     `json:"database_id"`
-	DatabaseName    string    `json:"database_name"`
-	Name            string    `json:"name"`
-	DBName          string    `json:"db_name"`
-	SQLText         string    `json:"sql_text"`
-	IntervalSec     int       `json:"interval_sec"`
-	TimeoutSec      int       `json:"timeout_sec"`
-	Condition       string    `json:"condition"`
-	ExpectedValue   string    `json:"expected_value"`
-	NotifyEnabled   bool      `json:"notify_enabled"`
-	RecoveryNotify  bool      `json:"recovery_notify"`
-	MessageTemplate string    `json:"message_template"`
-	Enabled         bool      `json:"enabled"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID                int64     `json:"id"`
+	DatabaseID        int64     `json:"database_id"`
+	DatabaseName      string    `json:"database_name"`
+	Name              string    `json:"name"`
+	DBName            string    `json:"db_name"`
+	SQLText           string    `json:"sql_text"`
+	ResultField       string    `json:"result_field"`
+	IntervalSec       int       `json:"interval_sec"`
+	TimeoutSec        int       `json:"timeout_sec"`
+	AlertStrategy     string    `json:"alert_strategy"`
+	Condition         string    `json:"condition"`
+	ExpectedValue     string    `json:"expected_value"`
+	AlertDeltaValue   string    `json:"alert_delta_value"`
+	AlertDeltaPercent string    `json:"alert_delta_percent"`
+	AlertConsecutive  int       `json:"alert_consecutive"`
+	NotifyEnabled     bool      `json:"notify_enabled"`
+	RecoveryNotify    bool      `json:"recovery_notify"`
+	MessageTemplate   string    `json:"message_template"`
+	Enabled           bool      `json:"enabled"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type CustomSQLLog struct {
@@ -1176,7 +1193,7 @@ type CustomSQLLog struct {
 }
 
 func (s *Store) ListCustomSQLChecks() ([]CustomSQLCheck, error) {
-	rows, err := s.db.Query(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.interval_sec, c.timeout_sec, c.condition, c.expected_value, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id ORDER BY c.id`)
+	rows, err := s.db.Query(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.result_field, c.interval_sec, c.timeout_sec, c.alert_strategy, c.condition, c.expected_value, c.alert_delta_value, c.alert_delta_percent, c.alert_consecutive, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id ORDER BY c.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1185,7 +1202,7 @@ func (s *Store) ListCustomSQLChecks() ([]CustomSQLCheck, error) {
 	for rows.Next() {
 		var c CustomSQLCheck
 		var notifyEnabled, recoveryNotify, enabled int
-		if err := rows.Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.IntervalSec, &c.TimeoutSec, &c.Condition, &c.ExpectedValue, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.ResultField, &c.IntervalSec, &c.TimeoutSec, &c.AlertStrategy, &c.Condition, &c.ExpectedValue, &c.AlertDeltaValue, &c.AlertDeltaPercent, &c.AlertConsecutive, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.NotifyEnabled = notifyEnabled == 1
@@ -1199,8 +1216,8 @@ func (s *Store) ListCustomSQLChecks() ([]CustomSQLCheck, error) {
 func (s *Store) GetCustomSQLCheck(id int64) (*CustomSQLCheck, error) {
 	var c CustomSQLCheck
 	var notifyEnabled, recoveryNotify, enabled int
-	err := s.db.QueryRow(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.interval_sec, c.timeout_sec, c.condition, c.expected_value, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id WHERE c.id=?`, id).
-		Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.IntervalSec, &c.TimeoutSec, &c.Condition, &c.ExpectedValue, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt)
+	err := s.db.QueryRow(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.result_field, c.interval_sec, c.timeout_sec, c.alert_strategy, c.condition, c.expected_value, c.alert_delta_value, c.alert_delta_percent, c.alert_consecutive, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id WHERE c.id=?`, id).
+		Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.ResultField, &c.IntervalSec, &c.TimeoutSec, &c.AlertStrategy, &c.Condition, &c.ExpectedValue, &c.AlertDeltaValue, &c.AlertDeltaPercent, &c.AlertConsecutive, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -1211,8 +1228,8 @@ func (s *Store) GetCustomSQLCheck(id int64) (*CustomSQLCheck, error) {
 }
 
 func (s *Store) CreateCustomSQLCheck(c *CustomSQLCheck) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO custom_sql_checks (database_id, name, db_name, sql_text, interval_sec, timeout_sec, condition, expected_value, notify_enabled, recovery_notify, message_template, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.IntervalSec, c.TimeoutSec, c.Condition, c.ExpectedValue, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled))
+	res, err := s.db.Exec(`INSERT INTO custom_sql_checks (database_id, name, db_name, sql_text, result_field, interval_sec, timeout_sec, alert_strategy, condition, expected_value, alert_delta_value, alert_delta_percent, alert_consecutive, notify_enabled, recovery_notify, message_template, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.ResultField, c.IntervalSec, c.TimeoutSec, c.AlertStrategy, c.Condition, c.ExpectedValue, c.AlertDeltaValue, c.AlertDeltaPercent, c.AlertConsecutive, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled))
 	if err != nil {
 		return 0, err
 	}
@@ -1220,8 +1237,8 @@ func (s *Store) CreateCustomSQLCheck(c *CustomSQLCheck) (int64, error) {
 }
 
 func (s *Store) UpdateCustomSQLCheck(c *CustomSQLCheck) error {
-	_, err := s.db.Exec(`UPDATE custom_sql_checks SET database_id=?, name=?, db_name=?, sql_text=?, interval_sec=?, timeout_sec=?, condition=?, expected_value=?, notify_enabled=?, recovery_notify=?, message_template=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
-		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.IntervalSec, c.TimeoutSec, c.Condition, c.ExpectedValue, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled), c.ID)
+	_, err := s.db.Exec(`UPDATE custom_sql_checks SET database_id=?, name=?, db_name=?, sql_text=?, result_field=?, interval_sec=?, timeout_sec=?, alert_strategy=?, condition=?, expected_value=?, alert_delta_value=?, alert_delta_percent=?, alert_consecutive=?, notify_enabled=?, recovery_notify=?, message_template=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
+		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.ResultField, c.IntervalSec, c.TimeoutSec, c.AlertStrategy, c.Condition, c.ExpectedValue, c.AlertDeltaValue, c.AlertDeltaPercent, c.AlertConsecutive, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled), c.ID)
 	return err
 }
 

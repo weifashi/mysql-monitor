@@ -1323,6 +1323,7 @@ func (s *Server) apiHealthCheckCreate(w http.ResponseWriter, r *http.Request) {
 		AlertDeltaValue   string `json:"alert_delta_value"`
 		AlertDeltaPercent string `json:"alert_delta_percent"`
 		AlertConsecutive  int    `json:"alert_consecutive"`
+		AlertRules        string `json:"alert_rules"`
 		TriggerActions    string `json:"trigger_actions"`
 		TimeoutSec        int    `json:"timeout_sec"`
 		IntervalSec       int    `json:"interval_sec"`
@@ -1362,6 +1363,9 @@ func (s *Server) apiHealthCheckCreate(w http.ResponseWriter, r *http.Request) {
 	if req.TriggerActions == "" {
 		req.TriggerActions = "[]"
 	}
+	if req.AlertRules == "" {
+		req.AlertRules = "[]"
+	}
 
 	cfg := &store.HealthCheck{
 		Name: req.Name, URL: req.URL, Method: req.Method,
@@ -1369,6 +1373,7 @@ func (s *Server) apiHealthCheckCreate(w http.ResponseWriter, r *http.Request) {
 		ExpectedStatus: req.ExpectedStatus, ExpectedField: req.ExpectedField, ExpectedValue: req.ExpectedValue,
 		AlertField: req.AlertField, AlertStrategy: req.AlertStrategy, AlertCondition: req.AlertCondition, AlertValue: req.AlertValue,
 		AlertDeltaValue: req.AlertDeltaValue, AlertDeltaPercent: req.AlertDeltaPercent, AlertConsecutive: req.AlertConsecutive,
+		AlertRules:     req.AlertRules,
 		TriggerActions: req.TriggerActions,
 		TimeoutSec:     req.TimeoutSec, IntervalSec: req.IntervalSec,
 		Enabled: true,
@@ -1411,6 +1416,7 @@ func (s *Server) apiHealthCheckUpdate(w http.ResponseWriter, r *http.Request) {
 		AlertDeltaValue   *string `json:"alert_delta_value"`
 		AlertDeltaPercent *string `json:"alert_delta_percent"`
 		AlertConsecutive  int     `json:"alert_consecutive"`
+		AlertRules        *string `json:"alert_rules"`
 		TriggerActions    *string `json:"trigger_actions"`
 		TimeoutSec        int     `json:"timeout_sec"`
 		IntervalSec       int     `json:"interval_sec"`
@@ -1465,6 +1471,9 @@ func (s *Server) apiHealthCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.AlertConsecutive > 0 {
 		existing.AlertConsecutive = req.AlertConsecutive
 	}
+	if req.AlertRules != nil {
+		existing.AlertRules = *req.AlertRules
+	}
 	if req.TriggerActions != nil {
 		existing.TriggerActions = *req.TriggerActions
 	}
@@ -1479,6 +1488,9 @@ func (s *Server) apiHealthCheckUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if existing.TriggerActions == "" {
 		existing.TriggerActions = "[]"
+	}
+	if existing.AlertRules == "" {
+		existing.AlertRules = "[]"
 	}
 	if req.TimeoutSec > 0 {
 		existing.TimeoutSec = req.TimeoutSec
@@ -2046,23 +2058,28 @@ func (s *Server) apiCustomSQLList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiCustomSQLCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		DatabaseID      int64  `json:"database_id"`
-		Name            string `json:"name"`
-		DBName          string `json:"db_name"`
-		SQLText         string `json:"sql_text"`
-		IntervalSec     int    `json:"interval_sec"`
-		TimeoutSec      int    `json:"timeout_sec"`
-		Condition       string `json:"condition"`
-		ExpectedValue   string `json:"expected_value"`
-		NotifyEnabled   *bool  `json:"notify_enabled"`
-		RecoveryNotify  *bool  `json:"recovery_notify"`
-		MessageTemplate string `json:"message_template"`
+		DatabaseID        int64  `json:"database_id"`
+		Name              string `json:"name"`
+		DBName            string `json:"db_name"`
+		SQLText           string `json:"sql_text"`
+		ResultField       string `json:"result_field"`
+		IntervalSec       int    `json:"interval_sec"`
+		TimeoutSec        int    `json:"timeout_sec"`
+		AlertStrategy     string `json:"alert_strategy"`
+		Condition         string `json:"condition"`
+		ExpectedValue     string `json:"expected_value"`
+		AlertDeltaValue   string `json:"alert_delta_value"`
+		AlertDeltaPercent string `json:"alert_delta_percent"`
+		AlertConsecutive  int    `json:"alert_consecutive"`
+		NotifyEnabled     *bool  `json:"notify_enabled"`
+		RecoveryNotify    *bool  `json:"recovery_notify"`
+		MessageTemplate   string `json:"message_template"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	cfg, ok := s.customSQLFromRequest(w, req.DatabaseID, req.Name, req.DBName, req.SQLText, req.IntervalSec, req.TimeoutSec, req.Condition, req.ExpectedValue, req.NotifyEnabled, req.RecoveryNotify, req.MessageTemplate)
+	cfg, ok := s.customSQLFromRequest(w, req.DatabaseID, req.Name, req.DBName, req.SQLText, req.ResultField, req.IntervalSec, req.TimeoutSec, req.AlertStrategy, req.Condition, req.ExpectedValue, req.AlertDeltaValue, req.AlertDeltaPercent, req.AlertConsecutive, req.NotifyEnabled, req.RecoveryNotify, req.MessageTemplate)
 	if !ok {
 		return
 	}
@@ -2090,18 +2107,23 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		DatabaseID      int64   `json:"database_id"`
-		Name            string  `json:"name"`
-		DBName          *string `json:"db_name"`
-		SQLText         string  `json:"sql_text"`
-		IntervalSec     int     `json:"interval_sec"`
-		TimeoutSec      int     `json:"timeout_sec"`
-		Condition       string  `json:"condition"`
-		ExpectedValue   *string `json:"expected_value"`
-		NotifyEnabled   *bool   `json:"notify_enabled"`
-		RecoveryNotify  *bool   `json:"recovery_notify"`
-		MessageTemplate *string `json:"message_template"`
-		Enabled         *bool   `json:"enabled"`
+		DatabaseID        int64   `json:"database_id"`
+		Name              string  `json:"name"`
+		DBName            *string `json:"db_name"`
+		SQLText           string  `json:"sql_text"`
+		ResultField       *string `json:"result_field"`
+		IntervalSec       int     `json:"interval_sec"`
+		TimeoutSec        int     `json:"timeout_sec"`
+		AlertStrategy     *string `json:"alert_strategy"`
+		Condition         string  `json:"condition"`
+		ExpectedValue     *string `json:"expected_value"`
+		AlertDeltaValue   *string `json:"alert_delta_value"`
+		AlertDeltaPercent *string `json:"alert_delta_percent"`
+		AlertConsecutive  int     `json:"alert_consecutive"`
+		NotifyEnabled     *bool   `json:"notify_enabled"`
+		RecoveryNotify    *bool   `json:"recovery_notify"`
+		MessageTemplate   *string `json:"message_template"`
+		Enabled           *bool   `json:"enabled"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json")
@@ -2119,17 +2141,32 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.SQLText) != "" {
 		existing.SQLText = strings.TrimSpace(req.SQLText)
 	}
+	if req.ResultField != nil {
+		existing.ResultField = strings.TrimSpace(*req.ResultField)
+	}
 	if req.IntervalSec > 0 {
 		existing.IntervalSec = req.IntervalSec
 	}
 	if req.TimeoutSec > 0 {
 		existing.TimeoutSec = req.TimeoutSec
 	}
+	if req.AlertStrategy != nil {
+		existing.AlertStrategy = strings.TrimSpace(*req.AlertStrategy)
+	}
 	if strings.TrimSpace(req.Condition) != "" {
 		existing.Condition = strings.TrimSpace(req.Condition)
 	}
 	if req.ExpectedValue != nil {
 		existing.ExpectedValue = strings.TrimSpace(*req.ExpectedValue)
+	}
+	if req.AlertDeltaValue != nil {
+		existing.AlertDeltaValue = strings.TrimSpace(*req.AlertDeltaValue)
+	}
+	if req.AlertDeltaPercent != nil {
+		existing.AlertDeltaPercent = strings.TrimSpace(*req.AlertDeltaPercent)
+	}
+	if req.AlertConsecutive > 0 {
+		existing.AlertConsecutive = req.AlertConsecutive
 	}
 	if req.NotifyEnabled != nil {
 		existing.NotifyEnabled = *req.NotifyEnabled
@@ -2167,7 +2204,7 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
-func (s *Server) customSQLFromRequest(w http.ResponseWriter, databaseID int64, name, dbName, sqlText string, intervalSec, timeoutSec int, condition, expectedValue string, notifyEnabled, recoveryNotify *bool, messageTemplate string) (*store.CustomSQLCheck, bool) {
+func (s *Server) customSQLFromRequest(w http.ResponseWriter, databaseID int64, name, dbName, sqlText, resultField string, intervalSec, timeoutSec int, alertStrategy, condition, expectedValue, alertDeltaValue, alertDeltaPercent string, alertConsecutive int, notifyEnabled, recoveryNotify *bool, messageTemplate string) (*store.CustomSQLCheck, bool) {
 	name = strings.TrimSpace(name)
 	sqlText = strings.TrimSpace(sqlText)
 	if databaseID <= 0 || name == "" || sqlText == "" {
@@ -2183,17 +2220,22 @@ func (s *Server) customSQLFromRequest(w http.ResponseWriter, databaseID int64, n
 		return nil, false
 	}
 	cfg := &store.CustomSQLCheck{
-		DatabaseID:      databaseID,
-		Name:            name,
-		DBName:          strings.TrimSpace(dbName),
-		SQLText:         sqlText,
-		IntervalSec:     intervalSec,
-		TimeoutSec:      timeoutSec,
-		Condition:       strings.TrimSpace(condition),
-		ExpectedValue:   strings.TrimSpace(expectedValue),
-		NotifyEnabled:   true,
-		RecoveryNotify:  true,
-		MessageTemplate: messageTemplate,
+		DatabaseID:        databaseID,
+		Name:              name,
+		DBName:            strings.TrimSpace(dbName),
+		SQLText:           sqlText,
+		ResultField:       strings.TrimSpace(resultField),
+		IntervalSec:       intervalSec,
+		TimeoutSec:        timeoutSec,
+		AlertStrategy:     strings.TrimSpace(alertStrategy),
+		Condition:         strings.TrimSpace(condition),
+		ExpectedValue:     strings.TrimSpace(expectedValue),
+		AlertDeltaValue:   strings.TrimSpace(alertDeltaValue),
+		AlertDeltaPercent: strings.TrimSpace(alertDeltaPercent),
+		AlertConsecutive:  alertConsecutive,
+		NotifyEnabled:     true,
+		RecoveryNotify:    true,
+		MessageTemplate:   messageTemplate,
 	}
 	if notifyEnabled != nil {
 		cfg.NotifyEnabled = *notifyEnabled
@@ -2214,6 +2256,12 @@ func normalizeCustomSQLDefaults(cfg *store.CustomSQLCheck) {
 	}
 	if cfg.Condition == "" {
 		cfg.Condition = "gt"
+	}
+	if cfg.AlertStrategy == "" {
+		cfg.AlertStrategy = "threshold"
+	}
+	if cfg.AlertConsecutive <= 0 {
+		cfg.AlertConsecutive = 1
 	}
 }
 
@@ -2275,6 +2323,8 @@ func (s *Server) apiCustomSQLTest(w http.ResponseWriter, r *http.Request) {
 		"ok":             result.Status != "error",
 		"status":         result.Status,
 		"value":          result.Value,
+		"result_field":   cfg.ResultField,
+		"alert_strategy": cfg.AlertStrategy,
 		"condition":      result.Condition,
 		"expected_value": result.ExpectedValue,
 		"message":        result.Message,

@@ -793,10 +793,15 @@ const CustomSQLPage = defineComponent({
             name: '',
             db_name: '',
             sql_text: '',
+            result_field: '',
             interval_sec: 30,
             timeout_sec: 10,
+            alert_strategy: 'threshold',
             condition: 'gt',
             expected_value: '0',
+            alert_delta_value: '',
+            alert_delta_percent: '',
+            alert_consecutive: 1,
             notify_enabled: true,
             recovery_notify: true,
             message_template: '',
@@ -818,7 +823,16 @@ const CustomSQLPage = defineComponent({
             { label: '每次都上报', value: 'always' },
         ];
         const conditionLabels = Object.fromEntries(conditionOptions.map(o => [o.value, o.label]));
+        const strategyOptions = [
+            { label: '单次阈值', value: 'threshold' },
+            { label: '连续命中阈值', value: 'sustained' },
+            { label: '突增', value: 'increase' },
+            { label: '连续上升', value: 'continuous_increase' },
+        ];
+        const strategyLabels = Object.fromEntries(strategyOptions.map(o => [o.value, o.label]));
         const needsExpected = computed(() => !['empty', 'not_empty', 'changed', 'always'].includes(form.condition));
+        const usesDelta = computed(() => form.alert_strategy === 'increase');
+        const usesConsecutive = computed(() => ['sustained', 'continuous_increase'].includes(form.alert_strategy));
 
         async function load() {
             loading.value = true;
@@ -839,10 +853,15 @@ const CustomSQLPage = defineComponent({
                 name: '',
                 db_name: '',
                 sql_text: 'SELECT COUNT(*) FROM your_table WHERE status = 0',
+                result_field: '',
                 interval_sec: 30,
                 timeout_sec: 10,
+                alert_strategy: 'threshold',
                 condition: 'gt',
                 expected_value: '0',
+                alert_delta_value: '',
+                alert_delta_percent: '',
+                alert_consecutive: 1,
                 notify_enabled: true,
                 recovery_notify: true,
                 message_template: '',
@@ -860,10 +879,15 @@ const CustomSQLPage = defineComponent({
                 name: row.name,
                 db_name: row.db_name || '',
                 sql_text: row.sql_text,
+                result_field: row.result_field || '',
                 interval_sec: row.interval_sec,
                 timeout_sec: row.timeout_sec,
+                alert_strategy: row.alert_strategy || 'threshold',
                 condition: row.condition || 'gt',
                 expected_value: row.expected_value || '',
+                alert_delta_value: row.alert_delta_value || '',
+                alert_delta_percent: row.alert_delta_percent || '',
+                alert_consecutive: row.alert_consecutive || 1,
                 notify_enabled: !!row.notify_enabled,
                 recovery_notify: !!row.recovery_notify,
                 message_template: row.message_template || '',
@@ -909,14 +933,16 @@ const CustomSQLPage = defineComponent({
         }
 
         const columns = useColumns([
-            { title: '名称', key: 'name', render: row => h(NText, { strong: true }, () => row.name) },
+            { title: '名称', key: 'name', width: 180, ellipsis: { tooltip: true }, render: row => h(NText, { strong: true, style: 'white-space:nowrap' }, () => row.name) },
             { title: '数据库', key: 'database_name', width: 120, _hideOnMobile: true },
-            { title: '执行库', key: 'db_name', width: 120, _hideOnMobile: true, render: row => row.db_name || 'performance_schema' },
-            { title: '条件', key: 'condition', width: 160, render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => (conditionLabels[row.condition] || row.condition) + (row.expected_value ? ' ' + row.expected_value : '')) },
-            { title: 'SQL', key: 'sql_text', ellipsis: { tooltip: true }, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.7;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px', onClick: () => showSqlDetail({ sql_text: row.sql_text, database_name: row.database_name }) }, truncate(row.sql_text, _isMobile.value ? 36 : 70)) },
+            { title: '执行库', key: 'db_name', width: 150, _hideOnMobile: true, ellipsis: { tooltip: true }, render: row => row.db_name || 'performance_schema' },
+            { title: '取值', key: 'result_field', width: 90, _hideOnMobile: true, render: row => row.result_field || '第一列' },
+            { title: '策略', key: 'alert_strategy', width: 120, _hideOnMobile: true, render: row => strategyLabels[row.alert_strategy || 'threshold'] || row.alert_strategy },
+            { title: '条件', key: 'condition', width: 180, render: row => h(NText, { depth: 3, style: 'font-size:12px;white-space:nowrap' }, () => (conditionLabels[row.condition] || row.condition) + (row.expected_value ? ' ' + row.expected_value : '')) },
+            { title: 'SQL', key: 'sql_text', width: 360, ellipsis: { tooltip: true }, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.7;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;white-space:nowrap', onClick: () => showSqlDetail({ sql_text: row.sql_text, database_name: row.database_name }) }, truncate(row.sql_text, _isMobile.value ? 36 : 90)) },
             { title: '通知', key: 'notify_enabled', width: 70, _hideOnMobile: true, render: row => row.notify_enabled ? h(NTag, { type: 'success', size: 'small' }, () => '开启') : h(NTag, { size: 'small' }, () => '关闭') },
             { title: '状态', key: 'status', width: 90, render: row => row.running ? h(NTag, { type: 'success', size: 'small' }, () => '运行中') : row.enabled ? h(NTag, { type: 'warning', size: 'small' }, () => '已启用') : h(NTag, { size: 'small' }, () => '已禁用') },
-            { title: '操作', key: 'actions', width: _isMobile.value ? 160 : 310, render: row => h(NSpace, { size: 'small', wrap: true }, () => [
+            { title: '操作', key: 'actions', width: _isMobile.value ? 160 : 330, fixed: _isMobile.value ? undefined : 'right', render: row => h(NSpace, { size: 'small', wrap: false }, () => [
                 h(NButton, { size: 'small', secondary: true, onClick: () => toggle(row) }, () => row.enabled ? '禁用' : '启用'),
                 h(NButton, { size: 'small', secondary: true, onClick: () => openEdit(row) }, () => '编辑'),
                 !_isMobile.value ? h(NButton, { size: 'small', secondary: true, onClick: () => openClone(row) }, () => '复制') : null,
@@ -930,7 +956,7 @@ const CustomSQLPage = defineComponent({
                 h('h3', { class: 'page-title' }, '自定义SQL监控'),
                 h(NButton, { type: 'primary', onClick: openAdd, size: _isMobile.value ? 'small' : 'medium' }, () => '+ 添加'),
             ]),
-            h(NDataTable, { columns: columns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 620 : undefined }),
+            h(NDataTable, { columns: columns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 620 : 1590 }),
             h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑自定义SQL' : '添加自定义SQL', style: _isMobile.value ? 'width:95vw' : 'width:760px', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 120 }, [
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '名称' }, () => h(NInput, { value: form.name, 'onUpdate:value': v => form.name = v, placeholder: '如: 待处理订单数量' }))),
@@ -943,14 +969,26 @@ const CustomSQLPage = defineComponent({
                     h(NGi, null, () => h(NFormItem, { label: '超时(秒)' }, () => h(NInputNumber, { value: form.timeout_sec, 'onUpdate:value': v => form.timeout_sec = v, min: 1 }))),
                 ]),
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
-                    h(NGi, null, () => h(NFormItem, { label: '上报条件' }, () => h(NSelect, { value: form.condition, 'onUpdate:value': v => form.condition = v, options: conditionOptions }))),
+                    h(NGi, null, () => h(NFormItem, { label: '结果字段' }, () => h(NInput, { value: form.result_field, 'onUpdate:value': v => form.result_field = v, placeholder: '列名或序号；不填取第一列' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '异常策略' }, () => h(NSelect, { value: form.alert_strategy, 'onUpdate:value': v => form.alert_strategy = v, options: strategyOptions }))),
+                ]),
+                h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '当前值条件' }, () => h(NSelect, { value: form.condition, 'onUpdate:value': v => form.condition = v, options: conditionOptions }))),
                     needsExpected.value ? h(NGi, null, () => h(NFormItem, { label: '期望值' }, () => h(NInput, { value: form.expected_value, 'onUpdate:value': v => form.expected_value = v, placeholder: '如: 0' }))) : null,
                 ]),
+                usesDelta.value ? h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '变化量>=' }, () => h(NInput, { value: form.alert_delta_value, 'onUpdate:value': v => form.alert_delta_value = v, placeholder: '如: 500' }))),
+                    h(NGi, null, () => h(NFormItem, { label: '变化率>=' }, () => h(NInput, { value: form.alert_delta_percent, 'onUpdate:value': v => form.alert_delta_percent = v, placeholder: '百分比，如: 30' }))),
+                ]) : null,
+                usesConsecutive.value ? h(NFormItem, { label: '连续次数' }, () => h(NInputNumber, { value: form.alert_consecutive, 'onUpdate:value': v => form.alert_consecutive = v, min: 1, max: 100, style: _isMobile.value ? 'width:100%' : 'width:180px' })) : null,
+                form.alert_strategy === 'increase' ? h(NText, { depth: 3, style: 'display:block;font-size:12px;margin:-4px 0 10px ' + (_isMobile.value ? '0' : '120px') }, () => '突增：与上一次采样比较；变化量和变化率任一满足即可，当前值阈值填了则也必须满足。') : null,
+                form.alert_strategy === 'continuous_increase' ? h(NText, { depth: 3, style: 'display:block;font-size:12px;margin:-4px 0 10px ' + (_isMobile.value ? '0' : '120px') }, () => '连续上升：连续多次比上一次采样更高；当前值阈值可选，填了则也必须满足。') : null,
+                form.alert_strategy === 'sustained' ? h(NText, { depth: 3, style: 'display:block;font-size:12px;margin:-4px 0 10px ' + (_isMobile.value ? '0' : '120px') }, () => '连续命中阈值：只有连续多次满足当前值条件才告警，适合过滤短暂抖动。') : null,
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '命中后通知' }, () => h(NSwitch, { value: form.notify_enabled, 'onUpdate:value': v => form.notify_enabled = v }))),
                     h(NGi, null, () => h(NFormItem, { label: '恢复通知' }, () => h(NSwitch, { value: form.recovery_notify, 'onUpdate:value': v => form.recovery_notify = v }))),
                 ]),
-                h(NFormItem, { label: '消息模板' }, () => h(NInput, { value: form.message_template, 'onUpdate:value': v => form.message_template = v, type: 'textarea', autosize: { minRows: 3, maxRows: 7 }, placeholder: '可选。支持 {{name}} {{database}} {{value}} {{expected}} {{condition}} {{message}} {{sql}} {{duration_ms}}' })),
+                h(NFormItem, { label: '消息模板' }, () => h(NInput, { value: form.message_template, 'onUpdate:value': v => form.message_template = v, type: 'textarea', autosize: { minRows: 3, maxRows: 7 }, placeholder: '可选。支持 {{name}} {{database}} {{db_name}} {{result_field}} {{alert_strategy}} {{value}} {{expected}} {{condition}} {{message}} {{sql}} {{duration_ms}}' })),
                 h(NButton, { type: 'primary', block: true, loading: saving.value, onClick: save, style: 'margin-top:8px' }, () => editingId.value ? '保存' : '创建'),
             ])),
         ]);
@@ -1531,6 +1569,7 @@ const HealthChecksPage = defineComponent({
             expected_status: 200, expected_field: '', expected_value: '',
             alert_field: '', alert_strategy: 'threshold', alert_condition: 'gt', alert_value: '',
             alert_delta_value: '', alert_delta_percent: '', alert_consecutive: 1,
+            alert_rules: [],
             trigger_actions: [],
             timeout_sec: 10, interval_sec: 30
         });
@@ -1544,18 +1583,56 @@ const HealthChecksPage = defineComponent({
 
         function openAdd() {
             editingId.value = null;
-            Object.assign(form, { name: '', url: '', method: 'GET', headers_json: '{}', body: '', expected_status: 200, expected_field: '', expected_value: '', alert_field: '', alert_strategy: 'threshold', alert_condition: 'gt', alert_value: '', alert_delta_value: '', alert_delta_percent: '', alert_consecutive: 1, trigger_actions: [], timeout_sec: 10, interval_sec: 30 });
+            Object.assign(form, { name: '', url: '', method: 'GET', headers_json: '{}', body: '', expected_status: 200, expected_field: '', expected_value: '', alert_field: '', alert_strategy: 'threshold', alert_condition: 'gt', alert_value: '', alert_delta_value: '', alert_delta_percent: '', alert_consecutive: 1, alert_rules: [], trigger_actions: [], timeout_sec: 10, interval_sec: 30 });
             showModal.value = true;
         }
         function openEdit(row) {
             editingId.value = row.id;
-            Object.assign(form, { name: row.name, url: row.url, method: row.method, headers_json: row.headers_json || '{}', body: row.body || '', expected_status: row.expected_status, expected_field: row.expected_field || '', expected_value: row.expected_value || '', alert_field: row.alert_field || '', alert_strategy: row.alert_strategy || 'threshold', alert_condition: row.alert_condition || 'gt', alert_value: row.alert_value || '', alert_delta_value: row.alert_delta_value || '', alert_delta_percent: row.alert_delta_percent || '', alert_consecutive: row.alert_consecutive || 1, trigger_actions: parseTriggerActions(row.trigger_actions), timeout_sec: row.timeout_sec, interval_sec: row.interval_sec });
+            const rules = parseAlertRules(row.alert_rules, row);
+            Object.assign(form, { name: row.name, url: row.url, method: row.method, headers_json: row.headers_json || '{}', body: row.body || '', expected_status: row.expected_status, expected_field: row.expected_field || '', expected_value: row.expected_value || '', alert_field: row.alert_field || '', alert_strategy: row.alert_strategy || 'threshold', alert_condition: row.alert_condition || 'gt', alert_value: row.alert_value || '', alert_delta_value: row.alert_delta_value || '', alert_delta_percent: row.alert_delta_percent || '', alert_consecutive: row.alert_consecutive || 1, alert_rules: rules, trigger_actions: parseTriggerActions(row.trigger_actions), timeout_sec: row.timeout_sec, interval_sec: row.interval_sec });
             showModal.value = true;
         }
         function openClone(row) {
             editingId.value = null;
-            Object.assign(form, { name: row.name + ' (副本)', url: row.url, method: row.method, headers_json: row.headers_json || '{}', body: row.body || '', expected_status: row.expected_status, expected_field: row.expected_field || '', expected_value: row.expected_value || '', alert_field: row.alert_field || '', alert_strategy: row.alert_strategy || 'threshold', alert_condition: row.alert_condition || 'gt', alert_value: row.alert_value || '', alert_delta_value: row.alert_delta_value || '', alert_delta_percent: row.alert_delta_percent || '', alert_consecutive: row.alert_consecutive || 1, trigger_actions: parseTriggerActions(row.trigger_actions), timeout_sec: row.timeout_sec, interval_sec: row.interval_sec });
+            const rules = parseAlertRules(row.alert_rules, row);
+            Object.assign(form, { name: row.name + ' (副本)', url: row.url, method: row.method, headers_json: row.headers_json || '{}', body: row.body || '', expected_status: row.expected_status, expected_field: row.expected_field || '', expected_value: row.expected_value || '', alert_field: row.alert_field || '', alert_strategy: row.alert_strategy || 'threshold', alert_condition: row.alert_condition || 'gt', alert_value: row.alert_value || '', alert_delta_value: row.alert_delta_value || '', alert_delta_percent: row.alert_delta_percent || '', alert_consecutive: row.alert_consecutive || 1, alert_rules: rules, trigger_actions: parseTriggerActions(row.trigger_actions), timeout_sec: row.timeout_sec, interval_sec: row.interval_sec });
             showModal.value = true;
+        }
+        function normalizeAlertRule(rule) {
+            return {
+                name: rule.name || '',
+                field: rule.field || rule.alert_field || '',
+                strategy: rule.strategy || rule.alert_strategy || 'threshold',
+                condition: rule.condition || rule.alert_condition || 'gt',
+                value: rule.value || rule.alert_value || '',
+                delta_value: rule.delta_value || rule.alert_delta_value || '',
+                delta_percent: rule.delta_percent || rule.alert_delta_percent || '',
+                consecutive: rule.consecutive || rule.alert_consecutive || 1,
+            };
+        }
+        function parseAlertRules(raw, row) {
+            let parsed = [];
+            if (Array.isArray(raw)) parsed = raw;
+            else {
+                try {
+                    const value = JSON.parse(raw || '[]');
+                    parsed = Array.isArray(value) ? value : [];
+                } catch { parsed = []; }
+            }
+            parsed = parsed.map(normalizeAlertRule).filter(r => r.field);
+            if (parsed.length === 0 && row && row.alert_field) {
+                parsed.push(normalizeAlertRule({
+                    name: row.alert_field,
+                    field: row.alert_field,
+                    strategy: row.alert_strategy,
+                    condition: row.alert_condition,
+                    value: row.alert_value,
+                    delta_value: row.alert_delta_value,
+                    delta_percent: row.alert_delta_percent,
+                    consecutive: row.alert_consecutive,
+                }));
+            }
+            return parsed;
         }
         function parseTriggerActions(raw) {
             if (Array.isArray(raw)) return raw;
@@ -1574,6 +1651,7 @@ const HealthChecksPage = defineComponent({
                 headers_json: action.headers_json || '{}',
                 body: action.body || '',
                 timeout_sec: action.timeout_sec || 30,
+                notify_max_chars: action.notify_max_chars || 2000,
                 enabled: action.enabled !== false,
             };
         }
@@ -1581,7 +1659,28 @@ const HealthChecksPage = defineComponent({
             const actions = (form.trigger_actions || []).map(normalizeTriggerAction).filter(a =>
                 a.name || a.command || a.url
             );
-            return { ...form, trigger_actions: JSON.stringify(actions) };
+            const rules = (form.alert_rules || []).map(normalizeAlertRule).filter(r => r.field);
+            const firstRule = rules[0] || normalizeAlertRule({
+                field: form.alert_field,
+                strategy: form.alert_strategy,
+                condition: form.alert_condition,
+                value: form.alert_value,
+                delta_value: form.alert_delta_value,
+                delta_percent: form.alert_delta_percent,
+                consecutive: form.alert_consecutive,
+            });
+            return {
+                ...form,
+                alert_rules: JSON.stringify(rules),
+                alert_field: firstRule.field || '',
+                alert_strategy: firstRule.strategy || 'threshold',
+                alert_condition: firstRule.condition || 'gt',
+                alert_value: firstRule.value || '',
+                alert_delta_value: firstRule.delta_value || '',
+                alert_delta_percent: firstRule.delta_percent || '',
+                alert_consecutive: firstRule.consecutive || 1,
+                trigger_actions: JSON.stringify(actions),
+            };
         }
         async function save() {
             try {
@@ -1622,18 +1721,38 @@ const HealthChecksPage = defineComponent({
                 ['pprof traces', 'go tool pprof -traces -sample_index=inuse_space -nodefraction=0 /tmp/heap.pb.gz | head -120'],
             ];
             templates.forEach(([name, command]) => form.trigger_actions.push(normalizeTriggerAction({
-                name, type: 'command', command, timeout_sec: 60,
+                name, type: 'command', command, timeout_sec: 60, notify_max_chars: 2000,
             })));
         }
         function removeTriggerAction(index) {
             form.trigger_actions.splice(index, 1);
+        }
+        function addAlertRule(rule = {}) {
+            form.alert_rules.push(normalizeAlertRule(rule));
+        }
+        function removeAlertRule(index) {
+            form.alert_rules.splice(index, 1);
+        }
+        function addTTPOSMetricRules() {
+            form.alert_rules.push(
+                normalizeAlertRule({ name: 'heap 当前占用过高', field: 'data.heap_alloc_kb', strategy: 'sustained', condition: 'gt', value: '1500000', consecutive: 3 }),
+                normalizeAlertRule({ name: 'heap 对象数过高', field: 'data.heap_objects', strategy: 'sustained', condition: 'gt', value: '15000000', consecutive: 3 }),
+                normalizeAlertRule({ name: 'goroutine 数过高', field: 'data.goroutines', strategy: 'sustained', condition: 'gt', value: '2000', consecutive: 3 }),
+                normalizeAlertRule({ name: 'heap 持续上升', field: 'data.heap_alloc_kb', strategy: 'continuous_increase', condition: 'gt', value: '1200000', consecutive: 5 }),
+                normalizeAlertRule({ name: '字体处理排队', field: 'data.imgFontSemaphore.semaphore_length', strategy: 'sustained', condition: 'gt', value: '0', consecutive: 2 }),
+            );
         }
 
         const columns = useColumns([
             { title: '名称', key: 'name', width: 120 },
             { title: 'URL', key: 'url', ellipsis: { tooltip: true }, _hideOnMobile: true },
             { title: '方法', key: 'method', width: 70 },
-            { title: '异常规则', key: 'alert_rule', width: 220, _hideOnMobile: true, render: row => row.alert_field ? h(NText, { depth: 3, style: 'font-size:12px' }, () => formatAlertRule(row)) : h(NText, { depth: 3, style: 'font-size:12px' }, () => '-') },
+            { title: '异常规则', key: 'alert_rule', width: 260, _hideOnMobile: true, render: row => {
+                const rules = parseAlertRules(row.alert_rules, row);
+                if (!rules.length) return h(NText, { depth: 3, style: 'font-size:12px' }, () => '-');
+                if (rules.length > 1) return h(NText, { depth: 3, style: 'font-size:12px' }, () => rules.length + ' 条: ' + rules.map(r => r.name || r.field).join(' / '));
+                return h(NText, { depth: 3, style: 'font-size:12px' }, () => formatAlertRule({ ...row, alert_field: rules[0].field, alert_strategy: rules[0].strategy, alert_condition: rules[0].condition, alert_value: rules[0].value, alert_delta_value: rules[0].delta_value, alert_delta_percent: rules[0].delta_percent, alert_consecutive: rules[0].consecutive }));
+            } },
             { title: '触发', key: 'trigger_actions', width: 80, _hideOnMobile: true, render: row => {
                 const actions = parseTriggerActions(row.trigger_actions);
                 return actions.length ? h(NTag, { size: 'small', type: 'warning', bordered: false }, () => actions.length + ' 个') : h(NText, { depth: 3 }, () => '-');
@@ -1676,10 +1795,10 @@ const HealthChecksPage = defineComponent({
             { label: '突增', value: 'increase' },
             { label: '连续上升', value: 'continuous_increase' },
         ];
-        const alertNeedsValue = computed(() => !['empty', 'not_empty'].includes(form.alert_condition));
-        const alertUsesThreshold = computed(() => ['threshold', 'sustained', 'increase', 'continuous_increase'].includes(form.alert_strategy));
-        const alertUsesDelta = computed(() => ['increase'].includes(form.alert_strategy));
-        const alertUsesConsecutive = computed(() => ['sustained', 'continuous_increase'].includes(form.alert_strategy));
+        const ruleNeedsValue = rule => !['empty', 'not_empty'].includes(rule.condition);
+        const ruleUsesThreshold = rule => ['threshold', 'sustained', 'increase', 'continuous_increase'].includes(rule.strategy);
+        const ruleUsesDelta = rule => rule.strategy === 'increase';
+        const ruleUsesConsecutive = rule => ['sustained', 'continuous_increase'].includes(rule.strategy);
         function formatAlertRule(row) {
             const strategyLabels = { threshold: '单次', sustained: '连续命中', increase: '突增', continuous_increase: '连续上升' };
             const strategy = row.alert_strategy || 'threshold';
@@ -1735,14 +1854,23 @@ const HealthChecksPage = defineComponent({
                     ]),
                     (form.trigger_actions || []).length === 0 ? h(NText, { depth: 3, style: 'font-size:12px' }, () => '异常首次命中时执行；恢复后再次异常会重新执行。') : null,
                     ...(form.trigger_actions || []).map((action, index) => h('div', { style: 'border:1px solid rgba(128,128,128,.22);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:8px' }, [
-                        h(NGrid, { cols: _isMobile.value ? 1 : 4, xGap: 8, yGap: 8 }, () => [
-                            h(NGi, null, () => h(NInput, { value: action.name, onUpdateValue: v => action.name = v, placeholder: '动作名称' })),
-                            h(NGi, null, () => h(NSelect, { value: action.type, onUpdateValue: v => action.type = v, options: triggerActionTypeOptions })),
-                            h(NGi, null, () => h(NInputNumber, { value: action.timeout_sec, onUpdateValue: v => action.timeout_sec = v, min: 1, max: 300, placeholder: '超时秒' })),
-                            h(NGi, null, () => h('div', { style: 'display:flex;align-items:center;justify-content:flex-end;gap:8px;height:100%' }, [
+                        h('div', { style: 'display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap' }, [
+                            h('div', { style: _isMobile.value ? 'display:flex;flex-direction:column;gap:8px;flex:1 1 100%;min-width:0' : 'display:grid;grid-template-columns:minmax(150px,1fr) 132px 118px 150px;gap:8px;align-items:end;flex:1 1 auto;min-width:0' }, [
+                                h(NInput, { value: action.name, onUpdateValue: v => action.name = v, placeholder: '动作名称' }),
+                                h(NSelect, { value: action.type, onUpdateValue: v => action.type = v, options: triggerActionTypeOptions }),
+                                h('div', { style: 'display:flex;flex-direction:column;gap:4px;min-width:0' }, [
+                                    h(NText, { depth: 3, style: 'font-size:12px;line-height:1' }, () => '超时(秒)'),
+                                    h(NInputNumber, { value: action.timeout_sec, onUpdateValue: v => action.timeout_sec = v, min: 1, max: 300, style: 'width:100%' }),
+                                ]),
+                                h('div', { style: 'display:flex;flex-direction:column;gap:4px;min-width:0' }, [
+                                    h(NText, { depth: 3, style: 'font-size:12px;line-height:1' }, () => '飞书截断字数'),
+                                    h(NInputNumber, { value: action.notify_max_chars, onUpdateValue: v => action.notify_max_chars = v, min: 100, max: 50000, step: 100, style: 'width:100%' }),
+                                ]),
+                            ]),
+                            h('div', { style: 'display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto;padding-bottom:2px' }, [
                                 h(NSwitch, { value: action.enabled !== false, onUpdateValue: v => action.enabled = v, size: 'small' }),
                                 h(NButton, { size: 'tiny', secondary: true, type: 'error', onClick: () => removeTriggerAction(index) }, () => '删除'),
-                            ])),
+                            ]),
                         ]),
                         action.type === 'http' ? h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, [
                             h(NInputGroup, null, () => [
@@ -1758,18 +1886,34 @@ const HealthChecksPage = defineComponent({
         }
         function alertHealthFields() {
             return [
-                h(NFormItem, { label: '异常字段' }, () => h(NInput, { value: form.alert_field, onUpdateValue: v => form.alert_field = v, placeholder: '如: data.goroutines，留空则不做阈值告警' })),
-                h(NFormItem, { label: '异常策略' }, () => h(NSelect, { value: form.alert_strategy, onUpdateValue: v => form.alert_strategy = v, options: alertStrategyOptions })),
-                h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 12 }, () => [
-                    alertUsesThreshold.value ? h(NGi, null, () => h(NFormItem, { label: '当前值条件' }, () => h(NSelect, { value: form.alert_condition, onUpdateValue: v => form.alert_condition = v, options: alertConditionOptions }))) : null,
-                    alertUsesThreshold.value && alertNeedsValue.value ? h(NGi, null, () => h(NFormItem, { label: '当前值阈值' }, () => h(NInput, { value: form.alert_value, onUpdateValue: v => form.alert_value = v, placeholder: form.alert_strategy === 'threshold' || form.alert_strategy === 'sustained' ? '如: 2000' : '可选，如: 2000' }))) : null,
-                    alertUsesDelta.value ? h(NGi, null, () => h(NFormItem, { label: '变化量>=' }, () => h(NInput, { value: form.alert_delta_value, onUpdateValue: v => form.alert_delta_value = v, placeholder: '如: 500' }))) : null,
-                    alertUsesDelta.value ? h(NGi, null, () => h(NFormItem, { label: '变化率>=' }, () => h(NInput, { value: form.alert_delta_percent, onUpdateValue: v => form.alert_delta_percent = v, placeholder: '百分比，如: 30' }))) : null,
-                    alertUsesConsecutive.value ? h(NGi, null, () => h(NFormItem, { label: '连续次数' }, () => h(NInputNumber, { value: form.alert_consecutive, onUpdateValue: v => form.alert_consecutive = v, min: 1, max: 100, style: 'width:100%' }))) : null,
-                ]),
-                form.alert_strategy === 'increase' ? h(NText, { depth: 3, style: 'display:block;font-size:12px;margin:-6px 0 10px 100px' }, () => '突增：与上一次采样比较；变化量和变化率任一满足即可，当前值阈值填了则也必须满足。') : null,
-                form.alert_strategy === 'continuous_increase' ? h(NText, { depth: 3, style: 'display:block;font-size:12px;margin:-6px 0 10px 100px' }, () => '连续上升：连续多次比上一次采样更高；当前值阈值可选，填了则也必须满足。') : null,
-                form.alert_strategy === 'sustained' ? h(NText, { depth: 3, style: 'display:block;font-size:12px;margin:-6px 0 10px 100px' }, () => '连续命中阈值：只有连续多次满足当前值条件才告警，适合过滤短暂抖动。') : null,
+                h(NFormItem, { label: '异常规则' }, () => h('div', { style: 'width:100%;display:flex;flex-direction:column;gap:10px' }, [
+                    h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, [
+                        h(NButton, { size: 'small', secondary: true, onClick: () => addAlertRule({ name: '新规则', strategy: 'sustained', condition: 'gt', consecutive: 3 }) }, () => '+ 规则'),
+                        h(NButton, { size: 'small', secondary: true, type: 'info', onClick: addTTPOSMetricRules }, () => '+ ttpos模板'),
+                    ]),
+                    (form.alert_rules || []).length === 0 ? h(NText, { depth: 3, style: 'font-size:12px' }, () => '可添加多条规则；任意一条命中都会告警。') : null,
+                    ...(form.alert_rules || []).map((rule, index) => h('div', { style: 'border:1px solid rgba(128,128,128,.22);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:8px' }, [
+                        h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 8, yGap: 8 }, () => [
+                            h(NGi, null, () => h(NInput, { value: rule.name, onUpdateValue: v => rule.name = v, placeholder: '规则名称，如 heap 当前占用过高' })),
+                            h(NGi, null, () => h(NInput, { value: rule.field, onUpdateValue: v => rule.field = v, placeholder: '字段，如 data.heap_alloc_kb' })),
+                            h(NGi, null, () => h(NSelect, { value: rule.strategy, onUpdateValue: v => rule.strategy = v, options: alertStrategyOptions })),
+                            ruleUsesThreshold(rule) ? h(NGi, null, () => h(NSelect, { value: rule.condition, onUpdateValue: v => rule.condition = v, options: alertConditionOptions })) : null,
+                            ruleUsesThreshold(rule) && ruleNeedsValue(rule) ? h(NGi, null, () => h(NInput, { value: rule.value, onUpdateValue: v => rule.value = v, placeholder: rule.strategy === 'threshold' || rule.strategy === 'sustained' ? '当前值阈值，如 2000' : '当前值阈值，可选' })) : null,
+                            ruleUsesDelta(rule) ? h(NGi, null, () => h(NInput, { value: rule.delta_value, onUpdateValue: v => rule.delta_value = v, placeholder: '变化量>=，如 500' })) : null,
+                            ruleUsesDelta(rule) ? h(NGi, null, () => h(NInput, { value: rule.delta_percent, onUpdateValue: v => rule.delta_percent = v, placeholder: '变化率>=，如 30' })) : null,
+                            ruleUsesConsecutive(rule) ? h(NGi, null, () => h(NInputNumber, { value: rule.consecutive, onUpdateValue: v => rule.consecutive = v, min: 1, max: 100, style: 'width:100%', placeholder: '连续次数' })) : null,
+                        ]),
+                        h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px' }, [
+                            h(NText, { depth: 3, style: 'font-size:12px' }, () => {
+                                if (rule.strategy === 'increase') return '突增：与上一次采样比较；变化量和变化率任一满足即可。';
+                                if (rule.strategy === 'continuous_increase') return '连续上升：连续多次比上一次采样更高，可叠加当前值阈值。';
+                                if (rule.strategy === 'sustained') return '连续命中阈值：连续多次满足条件才告警。';
+                                return '单次阈值：本次满足条件即告警。';
+                            }),
+                            h(NButton, { size: 'tiny', secondary: true, type: 'error', onClick: () => removeAlertRule(index) }, () => '删除'),
+                        ]),
+                    ])),
+                ])),
                 h(NDivider, { style: 'margin:8px 0 16px' }),
                 ...triggerActionFields(),
             ];
@@ -1781,7 +1925,7 @@ const HealthChecksPage = defineComponent({
                 h(NButton, { type: 'primary', size: 'small', onClick: openAdd }, () => '+ 添加'),
             ]),
             h(NDataTable, { columns: columns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 500 : undefined }),
-            h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑健康检查' : '添加健康检查', style: _isMobile.value ? 'width:95vw' : 'width:1040px;max-width:96vw', segmented: true }, () =>
+            h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑健康检查' : '添加健康检查', style: _isMobile.value ? 'width:95vw' : 'width:1520px;max-width:98vw', segmented: true }, () =>
                 h(NForm, { labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 100 }, () => [
                     h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 24, yGap: 0 }, () => [
                         h(NGi, null, () => h('div', { style: 'min-width:0' }, baseHealthFields())),
@@ -1805,6 +1949,8 @@ const HealthCheckLogsPage = defineComponent({
         const page = ref(1);
         const pageSize = 20;
         const loading = ref(true);
+        const showDetail = ref(false);
+        const detailRow = ref(null);
         const { connected, messages, stop } = useWebSocket('/ws/healthcheck-logs');
         onUnmounted(stop);
 
@@ -1828,13 +1974,193 @@ const HealthCheckLogsPage = defineComponent({
             }
         });
 
+        function openDetail(row) {
+            detailRow.value = row;
+            showDetail.value = true;
+        }
+        const rowProps = row => ({
+            style: 'cursor:pointer',
+            onClick: () => openDetail(row),
+        });
+        const responseFieldDescriptions = {
+            code: '业务状态码，通常 0 表示接口调用成功。',
+            message: '接口返回消息，用来快速判断接口层是否成功。',
+            'data.alloc_kb': '当前已分配且仍在使用的堆内存，按 MB 展示，通常等同 heap_alloc_kb。',
+            'data.heap_alloc_kb': 'Go 堆上当前仍被对象占用的内存，按 MB 展示，是观察进程内存压力的核心指标。',
+            'data.heap_inuse_kb': '已经从系统拿到并正在被堆使用的内存页，按 MB 展示。',
+            'data.heap_idle_kb': '堆中空闲但尚未全部归还系统的内存，按 MB 展示。',
+            'data.heap_released_kb': '已经归还给操作系统的堆内存，按 MB 展示。',
+            'data.heap_sys_kb': 'Go 堆从操作系统申请到的总内存，按 MB 展示。',
+            'data.heap_objects': '当前堆上存活对象数量。持续上涨通常说明对象未释放或缓存增长。',
+            'data.goroutines': '当前 goroutine 数量。异常上涨可能说明协程泄漏、请求阻塞或后台任务堆积。',
+            'data.gc_cpu_fraction': 'GC 消耗 CPU 的比例。持续偏高说明 GC 压力较大。',
+            'data.gc_cycles': 'GC 周期数。',
+            'data.num_gc': 'GC 执行次数。',
+            'data.next_gc_kb': '下次触发 GC 的堆目标值，按 MB 展示。',
+            'data.total_alloc_kb': '进程启动以来累计分配的内存，按 MB 展示，只增不减。',
+            'data.sys_kb': 'Go runtime 从系统申请的总内存，按 MB 展示。',
+            'data.stack_inuse_kb': 'goroutine 栈当前使用内存，按 MB 展示。',
+            'data.stack_sys_kb': 'goroutine 栈从系统申请的内存，按 MB 展示。',
+            'data.mspan_inuse_kb': 'runtime mspan 元数据当前使用内存，按 MB 展示。',
+            'data.mspan_sys_kb': 'runtime mspan 元数据系统内存，按 MB 展示。',
+            'data.mcache_inuse_kb': 'runtime mcache 当前使用内存，按 MB 展示。',
+            'data.mcache_sys_kb': 'runtime mcache 系统内存，按 MB 展示。',
+            'data.gcsys_kb': 'GC 元数据占用的系统内存，按 MB 展示。',
+            'data.other_sys_kb': '其他 runtime 系统内存，按 MB 展示。',
+            'data.pause_total_ns': 'GC 累计暂停时间，单位纳秒。',
+            'data.num_forced_gc': '手动触发 GC 的次数。',
+            'data.enable_gc': 'GC 是否启用。',
+            'data.debug_gc': '是否开启 GC 调试。',
+            'data.imgFontSemaphore.active_count': '图片/字体处理当前活跃任务数。',
+            'data.imgFontSemaphore.available': '图片/字体处理可用并发额度。',
+            'data.imgFontSemaphore.max_concurrent': '图片/字体处理最大并发数。',
+            'data.imgFontSemaphore.semaphore_length': '图片/字体处理等待队列长度，大于 0 表示有排队堵塞。',
+            'data.imgFontSemaphore.memory_usage': '图片/字体相关缓存或处理占用内存，按 MB 展示。',
+            'data.imgFontSemaphore.font_count': '已加载字体数量。',
+            'data.imgFontSemaphore.access_cache_count': '访问缓存条目数量。',
+            'data.imgFontSemaphore.width_cache_count': '宽度缓存条目数量。',
+        };
+        function parseLogJSON(text) {
+            const raw = String(text || '').trim();
+            if (!raw) return { text: '', json: null };
+            if (!(raw.startsWith('{') || raw.startsWith('['))) return { text: raw, json: null };
+            try {
+                const json = JSON.parse(raw);
+                return { text: JSON.stringify(json, null, 2), json };
+            } catch {
+                return { text: raw, json: null };
+            }
+        }
+        function flattenJSONFields(value, prefix = '', out = []) {
+            if (value == null || typeof value !== 'object') {
+                if (prefix) out.push({ path: prefix, value });
+                return out;
+            }
+            if (Array.isArray(value)) {
+                out.push({ path: prefix || '[]', value: '[' + value.length + ' items]' });
+                return out;
+            }
+            Object.keys(value).forEach(key => {
+                const path = prefix ? prefix + '.' + key : key;
+                flattenJSONFields(value[key], path, out);
+            });
+            return out;
+        }
+        function formatNumberWithUnit(value, divisor, unit) {
+            const n = Number(value);
+            if (!Number.isFinite(n)) return String(value);
+            return (n / divisor).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' ' + unit;
+        }
+        function formatFieldValue(path, value) {
+            if (value == null) return '-';
+            if (typeof value === 'number' && /_kb$/.test(path)) return formatNumberWithUnit(value, 1024, 'MB');
+            if (typeof value === 'number' && path === 'data.imgFontSemaphore.memory_usage') return formatNumberWithUnit(value, 1024 * 1024, 'MB');
+            if (typeof value === 'number') return Number.isInteger(value) ? value.toLocaleString() : String(value);
+            if (typeof value === 'boolean') return value ? 'true' : 'false';
+            return String(value);
+        }
+        const defaultResponseDescriptionPaths = [
+            'data.heap_alloc_kb',
+            'data.heap_objects',
+            'data.goroutines',
+            'data.heap_inuse_kb',
+            'data.heap_idle_kb',
+            'data.heap_released_kb',
+            'data.gc_cpu_fraction',
+            'data.total_alloc_kb',
+            'data.imgFontSemaphore.semaphore_length',
+            'data.imgFontSemaphore.active_count',
+            'data.imgFontSemaphore.available',
+            'data.imgFontSemaphore.memory_usage',
+        ];
+        function fieldDescriptionBlock(json, responseText) {
+            if (!json && !String(responseText || '').trim()) return null;
+            let rows = json ? flattenJSONFields(json)
+                .filter(item => responseFieldDescriptions[item.path])
+                .slice(0, 80) : [];
+            if (!rows.length) {
+                rows = defaultResponseDescriptionPaths.map(path => ({ path, value: '-' }));
+            }
+            return h('div', { style: 'display:flex;flex-direction:column;gap:6px;min-width:0' }, [
+                h('div', { style: 'font-weight:600' }, '字段说明'),
+                h('div', { style: 'max-height:260px;overflow:auto;border:1px solid rgba(128,128,128,.18);border-radius:6px;background:rgba(128,128,128,.05)' }, [
+                    h('table', { style: 'width:100%;border-collapse:collapse;font-size:12px;line-height:1.45' }, [
+                        h('tbody', null, rows.map(item => h('tr', { style: 'border-bottom:1px solid rgba(128,128,128,.12)' }, [
+                            h('td', { style: 'width:34%;vertical-align:top;padding:7px 8px;font-family:var(--font-mono);color:#63e2b7;word-break:break-word' }, item.path),
+                            h('td', { style: 'width:18%;vertical-align:top;padding:7px 8px;font-family:var(--font-mono);opacity:.85;word-break:break-word' }, formatFieldValue(item.path, item.value)),
+                            h('td', { style: 'vertical-align:top;padding:7px 8px;opacity:.82;word-break:break-word' }, responseFieldDescriptions[item.path]),
+                        ]))),
+                    ]),
+                ]),
+            ]);
+        }
+        function detailSections(row) {
+            let error = String(row?.error || '');
+            let diagnostic = String(row?.diagnostic_output || '');
+            const response = parseLogJSON(row?.response);
+            const markers = ['\n\n诊断输出:\n', '\n诊断输出:\n', '诊断输出:\n'];
+            if (!diagnostic) {
+                for (const marker of markers) {
+                    const index = error.indexOf(marker);
+                    if (index >= 0) {
+                        diagnostic = error.slice(index + marker.length);
+                        error = error.slice(0, index);
+                        break;
+                    }
+                }
+            }
+            return {
+                error: error.trim(),
+                diagnostic: diagnostic.trim(),
+                response: response.text,
+                responseJSON: response.json,
+            };
+        }
+        function logBlock(text, maxHeight = 360) {
+            return h('pre', { style: `white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:12px;line-height:1.55;margin:0;max-height:${maxHeight}px;overflow:auto;background:rgba(128,128,128,.08);border:1px solid rgba(128,128,128,.18);border-radius:6px;padding:10px` }, text || '-');
+        }
+        function sectionBlock(title, text, maxHeight = 360, emptyText = '-') {
+            return h('div', { style: 'display:flex;flex-direction:column;gap:6px;min-width:0' }, [
+                h('div', { style: 'font-weight:600' }, title),
+                logBlock(text || emptyText, maxHeight),
+            ]);
+        }
+        function renderDetail() {
+            if (!detailRow.value) return null;
+            const sections = detailSections(detailRow.value);
+            const shellStyle = _isMobile.value
+                ? 'display:flex;flex-direction:column;gap:14px;max-height:calc(100vh - 180px);overflow:auto'
+                : 'display:grid;grid-template-columns:minmax(0,0.9fr) minmax(0,1.1fr);gap:16px;align-items:start;max-height:calc(100vh - 190px);overflow:hidden';
+            const panelStyle = _isMobile.value
+                ? 'display:flex;flex-direction:column;gap:14px;min-width:0'
+                : 'display:flex;flex-direction:column;gap:14px;min-width:0;max-height:calc(100vh - 210px);overflow:auto';
+            return h('div', { style: shellStyle }, [
+                h('div', { style: panelStyle }, [
+                    h(NDescriptions, { bordered: true, column: 2, labelPlacement: 'top', size: 'small' }, () => [
+                        h(NDescriptionsItem, { label: '时间' }, () => formatTime(detailRow.value.detected_at)),
+                        h(NDescriptionsItem, { label: '服务' }, () => detailRow.value.check_name || '-'),
+                        h(NDescriptionsItem, { label: '状态' }, () => h(NTag, { type: detailRow.value.status === 'up' ? 'success' : 'error', size: 'small', bordered: false }, () => (detailRow.value.status || '').toUpperCase())),
+                        h(NDescriptionsItem, { label: 'HTTP' }, () => String(detailRow.value.http_status || 0)),
+                        h(NDescriptionsItem, { label: '延迟' }, () => (detailRow.value.latency_ms || 0) + 'ms'),
+                        h(NDescriptionsItem, { label: '日志ID' }, () => String(detailRow.value.id || '-')),
+                    ]),
+                    sectionBlock('错误', sections.error, 260),
+                    sectionBlock('响应 / 规则跟踪', sections.response, 320),
+                    fieldDescriptionBlock(sections.responseJSON, sections.response),
+                ]),
+                h('div', { style: panelStyle }, [
+                    sectionBlock('诊断输出', sections.diagnostic, 620, '本条日志没有保存诊断输出。只有配置了触发操作并命中首次异常时，才会写入这里。'),
+                ]),
+            ]);
+        }
+
         const columns = useColumns([
             { title: '时间', key: 'detected_at', width: 150, render: row => h('span', { style: 'font-size:12px;opacity:0.65' }, formatTime(row.detected_at)) },
             { title: '服务', key: 'check_name', width: 120 },
             { title: '状态', key: 'status', width: 80, render: row => h(NTag, { type: row.status === 'up' ? 'success' : 'error', size: 'small', bordered: false }, () => row.status.toUpperCase()) },
             { title: 'HTTP', key: 'http_status', width: 70, _hideOnMobile: true },
             { title: '延迟', key: 'latency_ms', width: 80, render: row => row.latency_ms + 'ms' },
-            { title: '错误', key: 'error', ellipsis: { tooltip: true }, _hideOnMobile: true },
+            { title: '错误', key: 'error', ellipsis: { tooltip: true }, _hideOnMobile: true, render: row => row.error ? h('span', { style: 'cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px', onClick: e => { e.stopPropagation(); openDetail(row); } }, truncate(row.error.replace(/\n/g, ' / '), 120)) : h(NText, { depth: 3 }, () => '-') },
         ]);
 
         return () => h('div', { class: 'page-body' }, [
@@ -1847,10 +2173,11 @@ const HealthCheckLogsPage = defineComponent({
                     ]),
                 ]),
             ]),
-            h(NDataTable, { columns: columns.value, data: logs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 400 : undefined }),
+            h(NDataTable, { columns: columns.value, data: logs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 400 : undefined, rowProps }),
             total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
                 h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
             ) : null,
+            h(NModal, { show: showDetail.value, 'onUpdate:show': v => showDetail.value = v, preset: 'card', title: '检查日志详情', style: _isMobile.value ? 'width:95vw' : 'width:1280px;max-width:94vw', segmented: true }, () => renderDetail()),
         ]);
     }
 });

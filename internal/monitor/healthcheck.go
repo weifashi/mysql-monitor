@@ -23,7 +23,7 @@ type HealthCheckManager struct {
 	eventBus     *EventBus
 	mu           sync.Mutex
 	monitors     map[int64]*hcMon
-	metricStates map[int64]*healthMetricState
+	metricStates map[string]*healthMetricState
 }
 
 type hcMon struct {
@@ -38,16 +38,31 @@ type healthMetricState struct {
 	ConsecutiveMatched int
 }
 
+type healthAlertRule struct {
+	Name              string `json:"name"`
+	Field             string `json:"field"`
+	Strategy          string `json:"strategy"`
+	Condition         string `json:"condition"`
+	Value             string `json:"value"`
+	DeltaValue        string `json:"delta_value"`
+	DeltaPercent      string `json:"delta_percent"`
+	Consecutive       int    `json:"consecutive"`
+	AlertDeltaValue   string `json:"alert_delta_value,omitempty"`
+	AlertDeltaPercent string `json:"alert_delta_percent,omitempty"`
+	AlertConsecutive  int    `json:"alert_consecutive,omitempty"`
+}
+
 type healthTriggerAction struct {
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Command     string `json:"command"`
-	URL         string `json:"url"`
-	Method      string `json:"method"`
-	HeadersJSON string `json:"headers_json"`
-	Body        string `json:"body"`
-	TimeoutSec  int    `json:"timeout_sec"`
-	Enabled     *bool  `json:"enabled"`
+	Name           string `json:"name"`
+	Type           string `json:"type"`
+	Command        string `json:"command"`
+	URL            string `json:"url"`
+	Method         string `json:"method"`
+	HeadersJSON    string `json:"headers_json"`
+	Body           string `json:"body"`
+	TimeoutSec     int    `json:"timeout_sec"`
+	NotifyMaxChars int    `json:"notify_max_chars"`
+	Enabled        *bool  `json:"enabled"`
 }
 
 func NewHealthCheckManager(s *store.Store, d *notify.Dispatcher, eb *EventBus) *HealthCheckManager {
@@ -56,7 +71,7 @@ func NewHealthCheckManager(s *store.Store, d *notify.Dispatcher, eb *EventBus) *
 		dispatcher:   d,
 		eventBus:     eb,
 		monitors:     make(map[int64]*hcMon),
-		metricStates: make(map[int64]*healthMetricState),
+		metricStates: make(map[string]*healthMetricState),
 	}
 }
 
@@ -102,7 +117,7 @@ func (m *HealthCheckManager) Stop(id int64) {
 	if mon, ok := m.monitors[id]; ok {
 		mon.cancel()
 		delete(m.monitors, id)
-		delete(m.metricStates, id)
+		m.deleteMetricStates(id)
 		log.Printf("stopped health check id=%d", id)
 	}
 }
@@ -119,7 +134,7 @@ func (m *HealthCheckManager) StopAll() {
 	for id, mon := range m.monitors {
 		mon.cancel()
 		delete(m.monitors, id)
-		delete(m.metricStates, id)
+		m.deleteMetricStates(id)
 	}
 	log.Println("all health check monitors stopped")
 }
@@ -209,15 +224,20 @@ func (m *HealthCheckManager) doCheck(cfg *store.HealthCheck) {
 		m.emit("healthcheck_error", cfg.ID, cfg.Name, fmt.Sprintf("服务异常: %s", errMsg), nil)
 
 		if !m.isDownNotified(cfg.ID) {
-			actionSummary := runHealthTriggerActions(cfg)
+			actionSummary, notifyActionSummary := runHealthTriggerActions(cfg)
+			diagnosticsSection := ""
+			if notifyActionSummary != "" {
+				diagnosticsSection = "\n\n诊断输出:\n" + notifyActionSummary
+			}
 			if actionSummary != "" {
-				result.Error = truncateForLog(result.Error, "\n\n触发操作:\n"+actionSummary, 4000)
+				result.DiagnosticOutput = actionSummary
+				result.Error = truncateForLog(result.Error, "\n\n触发操作: 已执行诊断动作", 4000)
 				errMsg = result.Error
 				m.emit("healthcheck_action", cfg.ID, cfg.Name, "已执行异常触发操作", map[string]string{"summary": actionSummary})
 			}
 			m.store.InsertHealthCheckLog(&result)
-			alertMsg := fmt.Sprintf("服务异常告警\n\n服务: %s\nURL: %s\n状态: %s\n错误: %s\n\n该告警仅发送一次，恢复后如再次异常将重新通知。",
-				cfg.Name, cfg.URL, result.Status, errMsg)
+			alertMsg := fmt.Sprintf("服务异常告警\n\n服务: %s\nURL: %s\n状态: %s\n错误: %s\n\n该告警仅发送一次，恢复后如再次异常将重新通知。%s",
+				cfg.Name, cfg.URL, result.Status, errMsg, diagnosticsSection)
 			if sendErr := m.dispatcher.SendScopedNotifications("health", cfg.ID, alertMsg); sendErr != nil {
 				log.Printf("[HealthCheck %s] alert notification failed: %v", cfg.Name, sendErr)
 			} else {
@@ -230,26 +250,43 @@ func (m *HealthCheckManager) doCheck(cfg *store.HealthCheck) {
 	}
 }
 
-func (m *HealthCheckManager) metricState(id int64, field string) *healthMetricState {
+func (m *HealthCheckManager) deleteMetricStates(id int64) {
+	prefix := fmt.Sprintf("%d:", id)
+	for key := range m.metricStates {
+		if strings.HasPrefix(key, prefix) {
+			delete(m.metricStates, key)
+		}
+	}
+}
+
+func (m *HealthCheckManager) metricState(id int64, ruleKey, field string) *healthMetricState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	st := m.metricStates[id]
+	if ruleKey == "" {
+		ruleKey = field
+	}
+	key := fmt.Sprintf("%d:%s", id, ruleKey)
+	st := m.metricStates[key]
 	if st == nil || st.Field != field {
 		st = &healthMetricState{Field: field}
-		m.metricStates[id] = st
+		m.metricStates[key] = st
 	}
 	return st
 }
 
 func (m *HealthCheckManager) executeHealthCheck(cfg *store.HealthCheck) store.HealthCheckLog {
-	var st *healthMetricState
-	if cfg.AlertField != "" {
-		st = m.metricState(cfg.ID, cfg.AlertField)
-	}
-	return executeHealthCheckWithMetricState(cfg, st)
+	return executeHealthCheckWithMetricStateProvider(cfg, func(ruleKey, field string) *healthMetricState {
+		return m.metricState(cfg.ID, ruleKey, field)
+	})
 }
 
 func executeHealthCheckWithMetricState(cfg *store.HealthCheck, metricState *healthMetricState) store.HealthCheckLog {
+	return executeHealthCheckWithMetricStateProvider(cfg, func(_, _ string) *healthMetricState {
+		return metricState
+	})
+}
+
+func executeHealthCheckWithMetricStateProvider(cfg *store.HealthCheck, metricState func(ruleKey, field string) *healthMetricState) store.HealthCheckLog {
 	result := store.HealthCheckLog{
 		CheckID:   cfg.ID,
 		CheckName: cfg.Name,
@@ -292,14 +329,8 @@ func executeHealthCheckWithMetricState(cfg *store.HealthCheck, metricState *heal
 
 	result.HTTPStatus = resp.StatusCode
 
-	// Read response body (limit to 500 chars for storage)
-	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-	bodyStr := string(bodyBytes)
-	if len(bodyStr) > 500 {
-		result.Response = bodyStr[:500]
-	} else {
-		result.Response = bodyStr
-	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	result.Response = string(bodyBytes)
 
 	// Check HTTP status code
 	if resp.StatusCode != cfg.ExpectedStatus {
@@ -309,7 +340,8 @@ func executeHealthCheckWithMetricState(cfg *store.HealthCheck, metricState *heal
 	}
 
 	var respJSON map[string]interface{}
-	if (cfg.ExpectedField != "" && cfg.ExpectedValue != "") || cfg.AlertField != "" {
+	alertRules := healthAlertRulesFromConfig(cfg)
+	if (cfg.ExpectedField != "" && cfg.ExpectedValue != "") || len(alertRules) > 0 {
 		if json.Unmarshal(bodyBytes, &respJSON) != nil {
 			result.Status = "down"
 			result.Error = "响应非有效JSON，无法检查字段"
@@ -333,28 +365,121 @@ func executeHealthCheckWithMetricState(cfg *store.HealthCheck, metricState *heal
 		}
 	}
 
-	// Check alert field in JSON response. If this condition matches, service is down.
-	if cfg.AlertField != "" {
-		val, ok := getJSONPath(respJSON, cfg.AlertField)
-		if !ok {
-			result.Status = "down"
-			result.Error = fmt.Sprintf("响应中缺少异常字段 %q", cfg.AlertField)
-			return result
-		}
-		valStr := fmt.Sprintf("%v", val)
-		matched, msg := evaluateHealthAlertRule(valStr, cfg, metricState)
-		if matched {
-			result.Status = "down"
-			result.Error = fmt.Sprintf("异常条件命中: %s，当前值 %s", msg, valStr)
-			return result
-		}
-		if msg != "" {
-			result.Response = truncateForLog(result.Response, " | "+msg, 500)
+	// Check alert rules in JSON response. If any rule matches, service is down.
+	if len(alertRules) > 0 {
+		for i, rule := range alertRules {
+			val, ok := getJSONPath(respJSON, rule.Field)
+			ruleName := strings.TrimSpace(rule.Name)
+			if ruleName == "" {
+				ruleName = rule.Field
+			}
+			ruleKey := fmt.Sprintf("%d:%s:%s", i, ruleName, rule.Field)
+			if !ok {
+				result.Status = "down"
+				result.Error = fmt.Sprintf("响应中缺少异常字段 %q", rule.Field)
+				return result
+			}
+			valStr := fmt.Sprintf("%v", val)
+			ruleCfg := healthCheckForAlertRule(cfg, rule)
+			matched, msg := evaluateHealthAlertRule(valStr, ruleCfg, metricState(ruleKey, rule.Field))
+			if matched {
+				result.Status = "down"
+				result.Error = fmt.Sprintf("命中规则: %s\n%s", ruleName, msg)
+				return result
+			}
 		}
 	}
 
 	result.Status = "up"
 	return result
+}
+
+func healthAlertRulesFromConfig(cfg *store.HealthCheck) []healthAlertRule {
+	var rules []healthAlertRule
+	if strings.TrimSpace(cfg.AlertRules) != "" && strings.TrimSpace(cfg.AlertRules) != "[]" {
+		if err := json.Unmarshal([]byte(cfg.AlertRules), &rules); err != nil {
+			rules = nil
+		}
+	}
+	normalized := make([]healthAlertRule, 0, len(rules)+1)
+	for _, rule := range rules {
+		rule.Field = strings.TrimSpace(rule.Field)
+		if rule.Field == "" {
+			continue
+		}
+		if rule.Strategy == "" {
+			rule.Strategy = "threshold"
+		}
+		if rule.Condition == "" {
+			rule.Condition = "gt"
+		}
+		if rule.Consecutive <= 0 {
+			if rule.AlertConsecutive > 0 {
+				rule.Consecutive = rule.AlertConsecutive
+			} else {
+				rule.Consecutive = 1
+			}
+		}
+		if rule.DeltaValue == "" {
+			rule.DeltaValue = rule.AlertDeltaValue
+		}
+		if rule.DeltaPercent == "" {
+			rule.DeltaPercent = rule.AlertDeltaPercent
+		}
+		normalized = append(normalized, rule)
+	}
+	if len(normalized) > 0 {
+		return normalized
+	}
+	if strings.TrimSpace(cfg.AlertField) == "" {
+		return nil
+	}
+	return []healthAlertRule{{
+		Field:        cfg.AlertField,
+		Strategy:     cfg.AlertStrategy,
+		Condition:    cfg.AlertCondition,
+		Value:        cfg.AlertValue,
+		DeltaValue:   cfg.AlertDeltaValue,
+		DeltaPercent: cfg.AlertDeltaPercent,
+		Consecutive:  cfg.AlertConsecutive,
+	}}
+}
+
+func healthCheckForAlertRule(base *store.HealthCheck, rule healthAlertRule) *store.HealthCheck {
+	copied := *base
+	copied.AlertField = rule.Field
+	copied.AlertStrategy = rule.Strategy
+	copied.AlertCondition = rule.Condition
+	copied.AlertValue = rule.Value
+	copied.AlertDeltaValue = rule.DeltaValue
+	copied.AlertDeltaPercent = rule.DeltaPercent
+	copied.AlertConsecutive = rule.Consecutive
+	if copied.AlertStrategy == "" {
+		copied.AlertStrategy = "threshold"
+	}
+	if copied.AlertCondition == "" {
+		copied.AlertCondition = "gt"
+	}
+	if copied.AlertConsecutive <= 0 {
+		copied.AlertConsecutive = 1
+	}
+	return &copied
+}
+
+func evaluateSingleHealthAlertField(respJSON map[string]interface{}, cfg *store.HealthCheck, metricState *healthMetricState) (bool, string, error) {
+	if cfg.AlertField != "" {
+		val, ok := getJSONPath(respJSON, cfg.AlertField)
+		if !ok {
+			return false, "", fmt.Errorf("响应中缺少异常字段 %q", cfg.AlertField)
+		}
+		valStr := fmt.Sprintf("%v", val)
+		matched, msg := evaluateHealthAlertRule(valStr, cfg, metricState)
+		if matched {
+			return true, fmt.Sprintf("%s，当前值 %s", msg, valStr), nil
+		}
+		return false, msg, nil
+	}
+	return false, "", nil
 }
 
 func evaluateHealthAlertRule(value string, cfg *store.HealthCheck, st *healthMetricState) (bool, string) {
@@ -371,7 +496,7 @@ func evaluateHealthAlertRule(value string, cfg *store.HealthCheck, st *healthMet
 
 	switch strategy {
 	case "threshold":
-		return thresholdMatched, fmt.Sprintf("%s %s %s: %s", cfg.AlertField, cfg.AlertCondition, cfg.AlertValue, thresholdMsg)
+		return thresholdMatched, formatHealthThresholdMessage(cfg.AlertField, value, cfg.AlertCondition, cfg.AlertValue, thresholdMsg, 0, 0)
 	case "sustained":
 		if st == nil {
 			st = &healthMetricState{}
@@ -382,7 +507,7 @@ func evaluateHealthAlertRule(value string, cfg *store.HealthCheck, st *healthMet
 			st.ConsecutiveMatched = 0
 		}
 		matched := st.ConsecutiveMatched >= consecutive
-		return matched, fmt.Sprintf("%s %s %s 连续命中 %d/%d 次: %s", cfg.AlertField, cfg.AlertCondition, cfg.AlertValue, st.ConsecutiveMatched, consecutive, thresholdMsg)
+		return matched, formatHealthThresholdMessage(cfg.AlertField, value, cfg.AlertCondition, cfg.AlertValue, thresholdMsg, st.ConsecutiveMatched, consecutive)
 	case "increase", "sudden_increase":
 		current, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
 		if err != nil {
@@ -413,9 +538,12 @@ func evaluateHealthAlertRule(value string, cfg *store.HealthCheck, st *healthMet
 			gateMatched = thresholdMatched
 		}
 		matched := gateMatched && st.ConsecutiveRise >= consecutive
-		msg := fmt.Sprintf("%s 连续上升 %d/%d 次，上次 %.4f，本次 %.4f", cfg.AlertField, st.ConsecutiveRise, consecutive, st.LastValue, current)
+		msg := fmt.Sprintf("字段: %s\n当前值: %s\n上次值: %s\n策略: 连续上升\n连续: %d/%d 次", cfg.AlertField, formatHealthNumberForField(cfg.AlertField, current), formatHealthNumberForField(cfg.AlertField, st.LastValue), st.ConsecutiveRise, consecutive)
 		if thresholdConfigured {
-			msg += "，阈值条件: " + thresholdMsg
+			msg += fmt.Sprintf("\n条件: %s %s", healthConditionSymbol(cfg.AlertCondition), formatHealthMetricValueForField(cfg.AlertField, cfg.AlertValue))
+			if thresholdMsg != "" {
+				msg += "\n判断: " + thresholdMsg
+			}
 		}
 		st.HasLast = true
 		st.LastValue = current
@@ -427,7 +555,7 @@ func evaluateHealthAlertRule(value string, cfg *store.HealthCheck, st *healthMet
 
 func evaluateIncreaseRule(current float64, cfg *store.HealthCheck, st *healthMetricState, thresholdConfigured, thresholdMatched bool) (bool, string) {
 	if !st.HasLast {
-		return false, fmt.Sprintf("%s 突增等待下一次采样，当前 %.4f", cfg.AlertField, current)
+		return false, fmt.Sprintf("字段: %s\n当前值: %s\n策略: 突增\n状态: 等待下一次采样", cfg.AlertField, formatHealthNumberForField(cfg.AlertField, current))
 	}
 	delta := current - st.LastValue
 	percentText := "N/A"
@@ -451,17 +579,111 @@ func evaluateIncreaseRule(current float64, cfg *store.HealthCheck, st *healthMet
 		gateMatched = thresholdMatched
 	}
 	matched := gateMatched && (deltaMatched || percentMatched)
-	msg := fmt.Sprintf("%s 突增判断，上次 %.4f，本次 %.4f，变化 %.4f，变化率 %s", cfg.AlertField, st.LastValue, current, delta, percentText)
+	msg := fmt.Sprintf("字段: %s\n当前值: %s\n上次值: %s\n变化量: %s\n变化率: %s\n策略: 突增", cfg.AlertField, formatHealthNumberForField(cfg.AlertField, current), formatHealthNumberForField(cfg.AlertField, st.LastValue), formatHealthNumberForField(cfg.AlertField, delta), percentText)
 	if cfg.AlertDeltaValue != "" {
-		msg += "，变化量阈值 " + cfg.AlertDeltaValue
+		msg += "\n变化量阈值: >= " + formatHealthMetricValueForField(cfg.AlertField, cfg.AlertDeltaValue)
 	}
 	if cfg.AlertDeltaPercent != "" {
-		msg += "，变化率阈值 " + cfg.AlertDeltaPercent + "%"
+		msg += "\n变化率阈值: >= " + cfg.AlertDeltaPercent + "%"
 	}
 	if thresholdConfigured {
-		msg += "，当前值阈值: " + fmt.Sprintf("%s %s %s", cfg.AlertField, cfg.AlertCondition, cfg.AlertValue)
+		msg += fmt.Sprintf("\n当前值条件: %s %s", healthConditionSymbol(cfg.AlertCondition), formatHealthMetricValueForField(cfg.AlertField, cfg.AlertValue))
 	}
 	return matched, msg
+}
+
+func formatHealthThresholdMessage(field, value, condition, threshold, reason string, consecutiveMatched, consecutiveTarget int) string {
+	lines := []string{
+		"字段: " + field,
+		"当前值: " + formatHealthMetricValueForField(field, value),
+		"条件: " + healthConditionSymbol(condition) + " " + formatHealthMetricValueForField(field, threshold),
+	}
+	if consecutiveTarget > 0 {
+		lines = append(lines, fmt.Sprintf("连续: %d/%d 次", consecutiveMatched, consecutiveTarget))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func healthConditionSymbol(condition string) string {
+	switch strings.ToLower(strings.TrimSpace(condition)) {
+	case "gt", ">":
+		return ">"
+	case "gte", ">=":
+		return ">="
+	case "lt", "<":
+		return "<"
+	case "lte", "<=":
+		return "<="
+	case "eq", "==":
+		return "=="
+	case "ne", "!=":
+		return "!="
+	case "contains":
+		return "包含"
+	case "not_contains":
+		return "不包含"
+	case "empty":
+		return "为空"
+	case "not_empty":
+		return "不为空"
+	default:
+		if strings.TrimSpace(condition) == "" {
+			return ">"
+		}
+		return condition
+	}
+}
+
+func formatHealthMetricValue(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "-"
+	}
+	if v, err := strconv.ParseFloat(raw, 64); err == nil {
+		return formatHealthNumber(v)
+	}
+	return raw
+}
+
+func formatHealthMetricValueForField(field, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "-"
+	}
+	if v, err := strconv.ParseFloat(raw, 64); err == nil {
+		return formatHealthNumberForField(field, v)
+	}
+	return raw
+}
+
+func formatHealthNumberForField(field string, v float64) string {
+	field = strings.ToLower(strings.TrimSpace(field))
+	if strings.HasSuffix(field, "_kb") {
+		return formatHealthNumber(v/1024) + " MB"
+	}
+	return formatHealthNumber(v)
+}
+
+func formatHealthNumber(v float64) string {
+	if v == float64(int64(v)) {
+		return formatIntWithCommas(int64(v))
+	}
+	return strconv.FormatFloat(v, 'f', 2, 64)
+}
+
+func formatIntWithCommas(v int64) string {
+	neg := v < 0
+	if neg {
+		v = -v
+	}
+	s := strconv.FormatInt(v, 10)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	if neg {
+		return "-" + s
+	}
+	return s
 }
 
 func parseOptionalFloat(raw string) (float64, bool) {
@@ -563,15 +785,17 @@ func truncateForLog(base, suffix string, maxLen int) string {
 	return base + suffix[:remain]
 }
 
-func runHealthTriggerActions(cfg *store.HealthCheck) string {
+func runHealthTriggerActions(cfg *store.HealthCheck) (string, string) {
 	actions, err := parseHealthTriggerActions(cfg.TriggerActions)
 	if err != nil {
-		return "解析触发操作失败: " + err.Error()
+		msg := "解析触发操作失败: " + err.Error()
+		return msg, msg
 	}
 	if len(actions) == 0 {
-		return ""
+		return "", ""
 	}
 	var summaries []string
+	var notifySummaries []string
 	for i, action := range actions {
 		if action.Enabled != nil && !*action.Enabled {
 			continue
@@ -600,13 +824,47 @@ func runHealthTriggerActions(cfg *store.HealthCheck) string {
 		}
 		output = strings.TrimSpace(output)
 		if output != "" {
-			output = truncateText(output, 1200)
 			summaries = append(summaries, fmt.Sprintf("[%s] %s (%dms)\n%s", label, status, durationMs, output))
+			notifyOutput := truncateHealthNotifyOutput(output, action.NotifyMaxChars)
+			notifySummaries = append(notifySummaries, fmt.Sprintf("[%s] %s (%dms)\n%s", label, status, durationMs, notifyOutput))
 		} else {
 			summaries = append(summaries, fmt.Sprintf("[%s] %s (%dms)", label, status, durationMs))
+			notifySummaries = append(notifySummaries, fmt.Sprintf("[%s] %s (%dms)", label, status, durationMs))
 		}
 	}
-	return strings.Join(summaries, "\n\n")
+	return strings.Join(summaries, "\n\n"), strings.Join(notifySummaries, "\n\n")
+}
+
+func truncateHealthNotifyOutput(output string, maxChars int) string {
+	output = cleanHealthNotifyOutput(output)
+	if output == "" {
+		return ""
+	}
+	if maxChars <= 0 {
+		maxChars = 2000
+	}
+	if len(output) <= maxChars {
+		return output
+	}
+	return output[:maxChars] + fmt.Sprintf("\n...(已截断，飞书通知仅展示该命令前 %d 字符；完整输出请查看检查日志详情)", maxChars)
+}
+
+func cleanHealthNotifyOutput(output string) string {
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "File:"):
+			continue
+		case strings.HasPrefix(trimmed, "Build ID:"):
+			continue
+		case strings.HasPrefix(trimmed, "Type:"):
+			continue
+		default:
+			lines = append(lines, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func parseHealthTriggerActions(raw string) ([]healthTriggerAction, error) {
@@ -673,19 +931,12 @@ func runHealthHTTPAction(action healthTriggerAction, timeout time.Duration) (str
 		return "", err
 	}
 	defer resp.Body.Close()
-	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	bodyBytes, _ := io.ReadAll(resp.Body)
 	output := fmt.Sprintf("HTTP %d\n%s", resp.StatusCode, string(bodyBytes))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return output, fmt.Errorf("HTTP状态码异常")
 	}
 	return output, nil
-}
-
-func truncateText(s string, maxLen int) string {
-	if maxLen <= 0 || len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "...(已截断)"
 }
 
 // TestHealthCheck executes a single health check and returns the result.

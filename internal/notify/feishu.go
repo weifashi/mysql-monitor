@@ -16,17 +16,21 @@ import (
 )
 
 func SendFeishu(cfg store.FeishuConfig, message string) error {
+	type textContent struct {
+		Text string `json:"text"`
+	}
 	type fsBody struct {
-		Timestamp string `json:"timestamp,omitempty"`
-		Sign      string `json:"sign,omitempty"`
-		MsgType   string `json:"msg_type"`
-		Content   struct {
-			Text string `json:"text"`
-		} `json:"content"`
+		Timestamp string       `json:"timestamp,omitempty"`
+		Sign      string       `json:"sign,omitempty"`
+		MsgType   string       `json:"msg_type"`
+		Content   *textContent `json:"content,omitempty"`
+		Card      any          `json:"card,omitempty"`
 	}
 
-	body := fsBody{MsgType: "text"}
-	body.Content.Text = message
+	body := fsBody{
+		MsgType: "interactive",
+		Card:    buildFeishuCard(message),
+	}
 
 	if strings.TrimSpace(cfg.Secret) != "" {
 		sec := time.Now().Unix()
@@ -77,6 +81,150 @@ func SendFeishu(cfg store.FeishuConfig, message string) error {
 		return fmt.Errorf("feishu api code=%d: %s", apiCode, errMsg)
 	}
 	return nil
+}
+
+func buildFeishuCard(message string) map[string]any {
+	title, body, codeTitle, codeText := splitFeishuMessage(message)
+	template := feishuTemplate(title, body)
+	elements := []map[string]any{}
+
+	if strings.TrimSpace(body) != "" {
+		elements = append(elements, map[string]any{
+			"tag": "div",
+			"text": map[string]string{
+				"tag":     "lark_md",
+				"content": formatFeishuBody(body),
+			},
+		})
+	}
+	if strings.TrimSpace(codeText) != "" {
+		if codeTitle == "" {
+			codeTitle = "诊断输出"
+		}
+		elements = append(elements,
+			map[string]any{"tag": "hr"},
+			map[string]any{
+				"tag": "div",
+				"text": map[string]string{
+					"tag":     "lark_md",
+					"content": "**" + escapeLarkMarkdown(codeTitle) + "**\n```text\n" + sanitizeCodeFence(codeText) + "\n```",
+				},
+			},
+		)
+	}
+	if len(elements) == 0 {
+		elements = append(elements, map[string]any{
+			"tag": "div",
+			"text": map[string]string{
+				"tag":     "lark_md",
+				"content": escapeLarkMarkdown(message),
+			},
+		})
+	}
+
+	return map[string]any{
+		"config": map[string]any{
+			"wide_screen_mode": true,
+		},
+		"header": map[string]any{
+			"template": template,
+			"title": map[string]string{
+				"tag":     "plain_text",
+				"content": title,
+			},
+		},
+		"elements": elements,
+	}
+}
+
+func splitFeishuMessage(message string) (title, body, codeTitle, codeText string) {
+	lines := strings.Split(strings.TrimSpace(message), "\n")
+	for len(lines) > 0 && strings.TrimSpace(lines[0]) == "" {
+		lines = lines[1:]
+	}
+	if len(lines) == 0 {
+		return "Ops Sentinel 通知", "", "", ""
+	}
+	title = strings.TrimSpace(lines[0])
+	rest := strings.Join(lines[1:], "\n")
+	markers := []struct {
+		label  string
+		marker string
+	}{
+		{label: "诊断输出", marker: "\n诊断输出:\n"},
+		{label: "SQL", marker: "\nSQL:\n"},
+	}
+	for _, item := range markers {
+		if parts := strings.SplitN(rest, item.marker, 2); len(parts) == 2 {
+			body = strings.TrimSpace(parts[0])
+			codeTitle = item.label
+			codeText = truncateFeishuCodeBlock(strings.TrimSpace(parts[1]), 2600)
+			if title == "" {
+				title = "Ops Sentinel 通知"
+			}
+			return title, body, codeTitle, codeText
+		}
+	}
+	body = strings.TrimSpace(rest)
+	if title == "" {
+		title = "Ops Sentinel 通知"
+	}
+	return title, body, "", ""
+}
+
+func feishuTemplate(title, body string) string {
+	text := strings.ToLower(title + "\n" + body)
+	switch {
+	case strings.Contains(text, "告警") || strings.Contains(text, "异常") || strings.Contains(text, "error") || strings.Contains(text, "down"):
+		return "red"
+	case strings.Contains(text, "恢复"):
+		return "green"
+	case strings.Contains(text, "测试"):
+		return "blue"
+	default:
+		return "wathet"
+	}
+}
+
+func formatFeishuBody(body string) string {
+	var out []string
+	for _, raw := range strings.Split(strings.TrimSpace(body), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			out = append(out, "")
+			continue
+		}
+		if k, v, ok := strings.Cut(line, ":"); ok {
+			key := strings.TrimSpace(k)
+			value := strings.TrimSpace(v)
+			if key != "" {
+				out = append(out, fmt.Sprintf("**%s**: %s", escapeLarkMarkdown(key), escapeLarkMarkdown(value)))
+				continue
+			}
+		}
+		out = append(out, escapeLarkMarkdown(line))
+	}
+	return strings.Join(out, "\n")
+}
+
+func escapeLarkMarkdown(s string) string {
+	replacer := strings.NewReplacer(
+		"\\", "\\\\",
+		"`", "\\`",
+		"*", "\\*",
+		"_", "\\_",
+		"~", "\\~",
+	)
+	return replacer.Replace(s)
+}
+
+func sanitizeCodeFence(s string) string {
+	return strings.ReplaceAll(strings.TrimSpace(s), "```", "` ` `")
+}
+
+func truncateFeishuCodeBlock(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	return s
 }
 
 func feishuSign(timestampSec int64, secret string) string {
