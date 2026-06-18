@@ -4,7 +4,9 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
 	"ops-sentinel/internal/auth"
 	"ops-sentinel/internal/monitor"
@@ -26,6 +28,7 @@ type Server struct {
 	dispatcher     *notify.Dispatcher
 	hub            *Hub
 	staticHandler  http.Handler
+	appVersion     string
 	// publicBaseURL 若设置（如 https://app.example.com），OAuth redirect_uri 固定由此拼接，避免反向代理下 r.Host 与公网不一致。
 	publicBaseURL string
 }
@@ -34,9 +37,14 @@ func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *mo
 	hub := NewHub(eb)
 	go hub.Run()
 	staticSub, _ := fs.Sub(staticFS, "static")
+	appVersion := strings.TrimSpace(os.Getenv("APP_VERSION"))
+	if appVersion == "" {
+		appVersion = time.Now().UTC().Format("20060102150405")
+	}
 	return &Server{
 		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, grafanaMgr: gm, customSQLMgr: csql, dispatcher: d, hub: hub,
-		staticHandler: http.StripPrefix("/", http.FileServer(http.FS(staticSub))),
+		staticHandler: http.StripPrefix("/", noCacheStaticAssets(http.FileServer(http.FS(staticSub)))),
+		appVersion:    appVersion,
 		publicBaseURL: strings.TrimSpace(strings.TrimSuffix(publicBaseURL, "/")),
 	}
 }
@@ -46,7 +54,7 @@ func (s *Server) Routes() http.Handler {
 
 	// Static assets
 	staticSub, _ := fs.Sub(staticFS, "static")
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+	mux.Handle("GET /static/", noCacheStaticAssets(http.StripPrefix("/static/", http.FileServer(http.FS(staticSub)))))
 
 	// --- Public API routes (no auth) ---
 	mux.HandleFunc("POST /api/auth/login", s.apiLogin)
@@ -179,8 +187,12 @@ func (s *Server) spaFallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
 	}
+	html := strings.ReplaceAll(string(data), "{{APP_VERSION}}", s.appVersion)
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(data)
+	w.Write([]byte(html))
 }
 
 func (s *Server) wsHandler(room string) http.HandlerFunc {
@@ -199,6 +211,16 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func noCacheStaticAssets(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.ToLower(r.URL.Path)
+		if strings.HasSuffix(path, ".js") || strings.HasSuffix(path, ".css") {
+			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
