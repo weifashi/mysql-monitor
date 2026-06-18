@@ -168,31 +168,11 @@ func (m *CustomSQLManager) doCheck(cfg *store.CustomSQLCheck) {
 	m.emit("custom_sql_result", cfg.ID, cfg.Name, logEntry.Message, logEntry)
 
 	if logEntry.Status == "alert" {
-		notifyEveryRun := strings.EqualFold(strings.TrimSpace(cfg.Condition), "always")
-		if cfg.NotifyEnabled && (notifyEveryRun || !m.isAlertNotified(cfg.ID)) {
-			if err := m.dispatcher.SendScopedNotifications("custom_sql", cfg.ID, buildCustomSQLMessage(cfg, &logEntry)); err != nil {
-				log.Printf("[CustomSQL %s] notification failed: %v", cfg.Name, err)
-				m.emit("custom_sql_error", cfg.ID, cfg.Name, fmt.Sprintf("通知发送失败: %v", err), nil)
-			} else {
-				m.emit("custom_sql_notified", cfg.ID, cfg.Name, "已发送告警通知", nil)
-			}
-			if !notifyEveryRun {
-				m.setAlertNotified(cfg.ID, true)
-			}
-		}
 		return
 	}
 
 	if logEntry.Status == "ok" && m.isAlertNotified(cfg.ID) {
 		m.setAlertNotified(cfg.ID, false)
-		if cfg.NotifyEnabled && cfg.RecoveryNotify {
-			recoveryMsg := fmt.Sprintf("SQL 恢复通知\n\n规则: %s\n数据库: %s\n当前值: %s\n状态: 已恢复正常", cfg.Name, cfg.DatabaseName, logEntry.Value)
-			if err := m.dispatcher.SendScopedNotifications("custom_sql", cfg.ID, recoveryMsg); err != nil {
-				log.Printf("[CustomSQL %s] recovery notification failed: %v", cfg.Name, err)
-			} else {
-				m.emit("custom_sql_notified", cfg.ID, cfg.Name, "已发送恢复通知", nil)
-			}
-		}
 	}
 }
 
@@ -405,6 +385,7 @@ type customSQLAlertRule struct {
 	ResultField       string `json:"result_field"`
 	Field             string `json:"field,omitempty"`
 	Strategy          string `json:"strategy"`
+	AlertStrategy     string `json:"alert_strategy,omitempty"`
 	Condition         string `json:"condition"`
 	ExpectedValue     string `json:"expected_value"`
 	Value             string `json:"value,omitempty"`
@@ -430,6 +411,9 @@ func customSQLAlertRulesFromConfig(cfg *store.CustomSQLCheck) []customSQLAlertRu
 		}
 		if strings.TrimSpace(rule.ExpectedValue) == "" {
 			rule.ExpectedValue = rule.Value
+		}
+		if strings.TrimSpace(rule.Strategy) == "" {
+			rule.Strategy = strings.TrimSpace(rule.AlertStrategy)
 		}
 		if strings.TrimSpace(rule.Strategy) == "" {
 			rule.Strategy = "threshold"
@@ -866,49 +850,4 @@ func EvaluateCustomSQLCondition(value, condition, expected string) (bool, string
 		ok := actual == target
 		return ok, fmt.Sprintf("未知条件 %q，按等于比较: %t", condition, ok)
 	}
-}
-
-func buildCustomSQLMessage(cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog) string {
-	if strings.TrimSpace(cfg.MessageTemplate) != "" {
-		msg := cfg.MessageTemplate
-		replacements := map[string]string{
-			"{{name}}":           cfg.Name,
-			"{{database}}":       cfg.DatabaseName,
-			"{{db_name}}":        cfg.DBName,
-			"{{result_field}}":   cfg.ResultField,
-			"{{alert_strategy}}": cfg.AlertStrategy,
-			"{{value}}":          logEntry.Value,
-			"{{expected}}":       cfg.ExpectedValue,
-			"{{condition}}":      cfg.Condition,
-			"{{message}}":        logEntry.Message,
-			"{{sql}}":            cfg.SQLText,
-			"{{duration_ms}}":    fmt.Sprintf("%d", logEntry.DurationMs),
-			"{{detected_at}}":    time.Now().Format("2006-01-02 15:04:05"),
-			"{{status}}":         logEntry.Status,
-			"{{database_id}}":    fmt.Sprintf("%d", cfg.DatabaseID),
-			"{{custom_sql_id}}":  fmt.Sprintf("%d", cfg.ID),
-		}
-		for k, v := range replacements {
-			msg = strings.ReplaceAll(msg, k, v)
-		}
-		return msg
-	}
-
-	resultField := strings.TrimSpace(cfg.ResultField)
-	if resultField == "" {
-		resultField = "第一列"
-	}
-	if strings.TrimSpace(cfg.AlertRules) != "" && strings.TrimSpace(cfg.AlertRules) != "[]" {
-		resultField = "见结果详情"
-	}
-	condition := cfg.Condition
-	if strings.TrimSpace(logEntry.Condition) != "" {
-		condition = logEntry.Condition
-	}
-	expected := cfg.ExpectedValue
-	if strings.TrimSpace(logEntry.ExpectedValue) != "" {
-		expected = logEntry.ExpectedValue
-	}
-	return fmt.Sprintf("SQL 告警\n\n规则: %s\n数据库: %s\n执行库: %s\n结果字段: %s\n异常策略: %s\n条件: %s %s\n当前值: %s\n结果: %s\n耗时: %dms\n\nSQL:\n%s",
-		cfg.Name, cfg.DatabaseName, cfg.DBName, resultField, cfg.AlertStrategy, condition, expected, logEntry.Value, logEntry.Message, logEntry.DurationMs, cfg.SQLText)
 }

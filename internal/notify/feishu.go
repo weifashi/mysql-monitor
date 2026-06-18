@@ -175,10 +175,10 @@ func splitFeishuMessage(message string) (title, body, codeTitle, codeText string
 func feishuTemplate(title, body string) string {
 	text := strings.ToLower(title + "\n" + body)
 	switch {
-	case strings.Contains(text, "告警") || strings.Contains(text, "异常") || strings.Contains(text, "error") || strings.Contains(text, "down"):
-		return "red"
 	case strings.Contains(text, "恢复"):
 		return "green"
+	case strings.Contains(text, "告警") || strings.Contains(text, "异常") || strings.Contains(text, "error") || strings.Contains(text, "down"):
+		return "red"
 	case strings.Contains(text, "测试"):
 		return "blue"
 	default:

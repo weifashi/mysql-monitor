@@ -3,6 +3,8 @@ package monitor
 import (
 	"strings"
 	"testing"
+
+	"ops-sentinel/internal/store"
 )
 
 func TestValidateCustomSQLRejectsUnsafeStatements(t *testing.T) {
@@ -44,5 +46,56 @@ func TestValidateCustomSQLAllowsSafeMonitoringQueries(t *testing.T) {
 				t.Fatalf("expected valid SQL, got %v", err)
 			}
 		})
+	}
+}
+
+func TestCustomSQLAlertRuleAcceptsFrontendFieldNames(t *testing.T) {
+	cfg := &store.CustomSQLCheck{
+		Name: "lock waits",
+		AlertRules: `[
+			{
+				"name": "MySQL 行锁等待次数突增",
+				"result_field": "innodb_row_lock_waits",
+				"alert_strategy": "increase",
+				"condition": "gt",
+				"expected_value": "",
+				"alert_delta_value": "500"
+			}
+		]`,
+	}
+
+	rules := customSQLAlertRulesFromConfig(cfg)
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Strategy != "increase" {
+		t.Fatalf("expected strategy increase, got %q", rules[0].Strategy)
+	}
+	if rules[0].DeltaValue != "500" {
+		t.Fatalf("expected delta value 500, got %q", rules[0].DeltaValue)
+	}
+
+	ruleCfg := customSQLCheckForAlertRule(cfg, rules[0])
+	state := &healthMetricState{Field: ruleCfg.ResultField}
+
+	matched, reason := EvaluateCustomSQLRule("1360602", ruleCfg, state)
+	if matched {
+		t.Fatalf("first sample should only seed state, got alert: %s", reason)
+	}
+
+	matched, reason = EvaluateCustomSQLRule("1361000", ruleCfg, state)
+	if matched {
+		t.Fatalf("delta below 500 should not alert: %s", reason)
+	}
+	if !strings.Contains(reason, "变化 398") {
+		t.Fatalf("expected increase reason with delta, got %q", reason)
+	}
+
+	matched, reason = EvaluateCustomSQLRule("1361601", ruleCfg, state)
+	if !matched {
+		t.Fatalf("delta >= 500 should alert: %s", reason)
+	}
+	if !strings.Contains(reason, "变化量阈值 500") {
+		t.Fatalf("expected delta threshold in reason, got %q", reason)
 	}
 }

@@ -805,8 +805,8 @@ const CustomSQLPage = defineComponent({
             alert_delta_percent: '',
             alert_consecutive: 1,
             alert_rules: [],
-            notify_enabled: true,
-            recovery_notify: true,
+            notify_enabled: false,
+            recovery_notify: false,
             message_template: '',
         });
         const message = useMessage();
@@ -866,8 +866,8 @@ const CustomSQLPage = defineComponent({
                 alert_delta_percent: '',
                 alert_consecutive: 1,
                 alert_rules: [],
-                notify_enabled: true,
-                recovery_notify: true,
+                notify_enabled: false,
+                recovery_notify: false,
                 message_template: '',
             });
         }
@@ -894,9 +894,9 @@ const CustomSQLPage = defineComponent({
                 alert_delta_percent: row.alert_delta_percent || '',
                 alert_consecutive: row.alert_consecutive || 1,
                 alert_rules: rules,
-                notify_enabled: !!row.notify_enabled,
-                recovery_notify: !!row.recovery_notify,
-                message_template: row.message_template || '',
+                notify_enabled: false,
+                recovery_notify: false,
+                message_template: '',
             });
             showModal.value = true;
         }
@@ -925,15 +925,25 @@ const CustomSQLPage = defineComponent({
             saving.value = false;
         }
         function normalizeCustomSQLAlertRule(rule = {}) {
+            const strategy = rule.alert_strategy || rule.strategy || 'threshold';
+            const expectedValue = rule.expected_value || rule.value || rule.alert_value || '';
+            const deltaValue = rule.alert_delta_value || rule.delta_value || '';
+            const deltaPercent = rule.alert_delta_percent || rule.delta_percent || '';
+            const consecutive = rule.alert_consecutive || rule.consecutive || 1;
             return {
                 name: rule.name || '',
                 result_field: rule.result_field || rule.field || '',
-                alert_strategy: rule.alert_strategy || rule.strategy || 'threshold',
+                alert_strategy: strategy,
+                strategy,
                 condition: rule.condition || rule.alert_condition || 'gt',
-                expected_value: rule.expected_value || rule.value || rule.alert_value || '',
-                alert_delta_value: rule.alert_delta_value || rule.delta_value || '',
-                alert_delta_percent: rule.alert_delta_percent || rule.delta_percent || '',
-                alert_consecutive: rule.alert_consecutive || rule.consecutive || 1,
+                expected_value: expectedValue,
+                value: expectedValue,
+                alert_delta_value: deltaValue,
+                delta_value: deltaValue,
+                alert_delta_percent: deltaPercent,
+                delta_percent: deltaPercent,
+                alert_consecutive: consecutive,
+                consecutive,
             };
         }
         function parseCustomSQLAlertRules(raw, row) {
@@ -981,6 +991,9 @@ const CustomSQLPage = defineComponent({
                 alert_delta_value: firstRule.alert_delta_value || '',
                 alert_delta_percent: firstRule.alert_delta_percent || '',
                 alert_consecutive: firstRule.alert_consecutive || 1,
+                notify_enabled: false,
+                recovery_notify: false,
+                message_template: '',
             };
         }
         function customSQLExportItem(row) {
@@ -1000,9 +1013,9 @@ const CustomSQLPage = defineComponent({
                 alert_delta_percent: row.alert_delta_percent || '',
                 alert_consecutive: row.alert_consecutive || 1,
                 alert_rules: row.alert_rules || '[]',
-                notify_enabled: row.notify_enabled !== false,
-                recovery_notify: row.recovery_notify !== false,
-                message_template: row.message_template || '',
+                notify_enabled: false,
+                recovery_notify: false,
+                message_template: '',
                 enabled: row.enabled !== false,
             };
         }
@@ -1068,9 +1081,9 @@ const CustomSQLPage = defineComponent({
                 alert_delta_percent: item.alert_delta_percent || firstRule.alert_delta_percent || '',
                 alert_consecutive: item.alert_consecutive || firstRule.alert_consecutive || 1,
                 alert_rules: JSON.stringify(rules),
-                notify_enabled: item.notify_enabled !== false,
-                recovery_notify: item.recovery_notify !== false,
-                message_template: item.message_template || '',
+                notify_enabled: false,
+                recovery_notify: false,
+                message_template: '',
             };
         }
         async function importCustomSQLFile(event) {
@@ -1163,7 +1176,6 @@ const CustomSQLPage = defineComponent({
                 return h(NText, { depth: 3, style: 'font-size:12px;line-height:1.35;white-space:normal' }, () => formatCustomSQLRule(rules[0] || row));
             } },
             { title: 'SQL', key: 'sql_text', width: 360, ellipsis: { tooltip: true }, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.7;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;white-space:nowrap', onClick: () => showSqlDetail({ sql_text: row.sql_text, database_name: row.database_name }) }, truncate(row.sql_text, _isMobile.value ? 36 : 90)) },
-            { title: '通知', key: 'notify_enabled', width: 70, _hideOnMobile: true, render: row => row.notify_enabled ? h(NTag, { type: 'success', size: 'small' }, () => '开启') : h(NTag, { size: 'small' }, () => '关闭') },
             { title: '状态', key: 'status', width: 90, render: row => row.running ? h(NTag, { type: 'success', size: 'small' }, () => '运行中') : row.enabled ? h(NTag, { type: 'warning', size: 'small' }, () => '已启用') : h(NTag, { size: 'small' }, () => '已禁用') },
             { title: '操作', key: 'actions', width: _isMobile.value ? 160 : 330, fixed: _isMobile.value ? undefined : 'right', render: row => h(NSpace, { size: 'small', wrap: false }, () => [
                 h(NButton, { size: 'small', secondary: true, onClick: () => toggle(row) }, () => row.enabled ? '禁用' : '启用'),
@@ -1227,11 +1239,6 @@ const CustomSQLPage = defineComponent({
                         ]),
                     ])),
                 ])),
-                h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
-                    h(NGi, null, () => h(NFormItem, { label: '命中后通知' }, () => h(NSwitch, { value: form.notify_enabled, 'onUpdate:value': v => form.notify_enabled = v }))),
-                    h(NGi, null, () => h(NFormItem, { label: '恢复通知' }, () => h(NSwitch, { value: form.recovery_notify, 'onUpdate:value': v => form.recovery_notify = v }))),
-                ]),
-                h(NFormItem, { label: '消息模板' }, () => h(NInput, { value: form.message_template, 'onUpdate:value': v => form.message_template = v, type: 'textarea', autosize: { minRows: 3, maxRows: 7 }, placeholder: '可选。支持 {{name}} {{database}} {{db_name}} {{result_field}} {{alert_strategy}} {{value}} {{expected}} {{condition}} {{message}} {{sql}} {{duration_ms}}' })),
                 h(NButton, { type: 'primary', block: true, loading: saving.value, onClick: save, style: 'margin-top:8px' }, () => editingId.value ? '保存' : '创建'),
             ])),
         ]);
