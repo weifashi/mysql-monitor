@@ -600,6 +600,14 @@ func (s *Store) SetSetting(key, value string) error {
 	return err
 }
 
+func (s *Store) DeleteSettingsByPrefix(prefix string) error {
+	if prefix == "" {
+		return nil
+	}
+	_, err := s.db.Exec(`DELETE FROM settings WHERE key LIKE ?`, prefix+"%")
+	return err
+}
+
 func (s *Store) GetAllSettings() map[string]string {
 	m := make(map[string]string)
 	rows, err := s.db.Query(`SELECT key, value FROM settings`)

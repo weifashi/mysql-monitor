@@ -2199,9 +2199,7 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if req.NotifyEnabled != nil && *req.NotifyEnabled {
-		s.store.SetSetting(fmt.Sprintf("custom_sql_alert_%d", id), "")
-	}
+	s.clearCustomSQLRuntimeState(id)
 	s.customSQLMgr.Stop(id)
 	if existing.Enabled {
 		if err := s.customSQLMgr.Start(id); err != nil {
@@ -2287,10 +2285,20 @@ func (s *Server) apiCustomSQLDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.store.SetSetting(fmt.Sprintf("custom_sql_alert_%d", id), "")
-	s.store.SetSetting(fmt.Sprintf("custom_sql_last_value_%d", id), "")
+	s.clearCustomSQLRuntimeState(id)
 	s.audit(r, "delete", "custom_sql", id, "删除自定义SQL监控")
 	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func (s *Server) clearCustomSQLRuntimeState(id int64) {
+	s.store.SetSetting(fmt.Sprintf("custom_sql_alert_%d", id), "")
+	s.store.SetSetting(fmt.Sprintf("custom_sql_last_value_%d", id), "")
+	if err := s.store.DeleteSettingsByPrefix(fmt.Sprintf("custom_sql_last_value_%d_", id)); err != nil {
+		log.Printf("clear custom sql last values %d: %v", id, err)
+	}
+	if err := s.store.DeleteSettingsByPrefix(fmt.Sprintf("custom_sql_metric_state_%d_", id)); err != nil {
+		log.Printf("clear custom sql metric states %d: %v", id, err)
+	}
 }
 
 func (s *Server) apiCustomSQLToggle(w http.ResponseWriter, r *http.Request) {
