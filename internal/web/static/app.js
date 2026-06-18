@@ -1278,6 +1278,9 @@ const CustomSQLLogsPage = defineComponent({
         watch(() => messages.value.length, () => {
             const latest = messages.value[messages.value.length - 1];
             if (latest && latest.type === 'custom_sql_result' && latest.data) {
+                if (!latest.data.detected_at || isInvalidTime(latest.data.detected_at)) {
+                    latest.data.detected_at = new Date().toISOString();
+                }
                 if (!filterCheck.value || latest.database_id === filterCheck.value) {
                     data.value.data.unshift(latest.data);
                     if (data.value.data.length > 200) data.value.data.length = 200;
@@ -1519,6 +1522,7 @@ const SettingsPage = defineComponent({
 function formatTime(t) {
     if (!t) return '';
     const d = new Date(t);
+    if (Number.isNaN(d.getTime()) || d.getFullYear() < 2000) return '';
     return (d.getMonth()+1).toString().padStart(2,'0') + '-' +
            d.getDate().toString().padStart(2,'0') + ' ' +
            d.getHours().toString().padStart(2,'0') + ':' +
@@ -1529,9 +1533,15 @@ function formatTime(t) {
 function formatTimeShort(t) {
     if (!t) return '';
     const d = new Date(t);
+    if (Number.isNaN(d.getTime()) || d.getFullYear() < 2000) return '';
     return d.getHours().toString().padStart(2,'0') + ':' +
            d.getMinutes().toString().padStart(2,'0') + ':' +
            d.getSeconds().toString().padStart(2,'0');
+}
+
+function isInvalidTime(t) {
+    const d = new Date(t);
+    return Number.isNaN(d.getTime()) || d.getFullYear() < 2000;
 }
 
 function truncate(s, n) {
