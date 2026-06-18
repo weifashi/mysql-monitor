@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"ops-sentinel/internal/auth"
 	"ops-sentinel/internal/monitor"
@@ -16,6 +15,8 @@ import (
 
 //go:embed static
 var staticFS embed.FS
+
+const defaultAppVersion = "20260618132311"
 
 type Server struct {
 	store          *store.Store
@@ -39,7 +40,7 @@ func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *mo
 	staticSub, _ := fs.Sub(staticFS, "static")
 	appVersion := strings.TrimSpace(os.Getenv("APP_VERSION"))
 	if appVersion == "" {
-		appVersion = time.Now().UTC().Format("20060102150405")
+		appVersion = defaultAppVersion
 	}
 	return &Server{
 		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, grafanaMgr: gm, customSQLMgr: csql, dispatcher: d, hub: hub,
