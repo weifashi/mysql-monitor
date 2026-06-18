@@ -28,6 +28,8 @@ type CustomSQLManager struct {
 	metricStates map[string]*healthMetricState
 }
 
+const customSQLMetricStateVersion = 2
+
 type customSQLMon struct {
 	cancel context.CancelFunc
 }
@@ -333,6 +335,9 @@ func (m *CustomSQLManager) loadMetricState(id int64, ruleKey, field string) *hea
 	if err := json.Unmarshal([]byte(raw), st); err != nil {
 		return &healthMetricState{Field: field}
 	}
+	if st.Version != customSQLMetricStateVersion {
+		return &healthMetricState{Field: field}
+	}
 	st.Field = field
 	return st
 }
@@ -341,6 +346,7 @@ func (m *CustomSQLManager) saveMetricState(id int64, ruleKey, field string, st *
 	if st == nil {
 		return
 	}
+	st.Version = customSQLMetricStateVersion
 	data, err := json.Marshal(st)
 	if err != nil {
 		return

@@ -31,6 +31,7 @@ type hcMon struct {
 }
 
 type healthMetricState struct {
+	Version            int
 	Field              string
 	HasLast            bool
 	LastValue          float64
