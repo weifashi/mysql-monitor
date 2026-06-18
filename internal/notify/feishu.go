@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"ops-sentinel/internal/store"
 )
+
+var feishuBlockedSleepPattern = regexp.MustCompile(`(?i)\bsleep\s*\(`)
 
 func SendFeishu(cfg store.FeishuConfig, message string) error {
 	type textContent struct {
@@ -85,6 +88,7 @@ func SendFeishu(cfg store.FeishuConfig, message string) error {
 
 func buildFeishuCard(message string) map[string]any {
 	title, body, codeTitle, codeText := splitFeishuMessage(message)
+	title = feishuSafeTitle(title)
 	template := feishuTemplate(title, body)
 	elements := []map[string]any{}
 
@@ -135,6 +139,17 @@ func buildFeishuCard(message string) map[string]any {
 		},
 		"elements": elements,
 	}
+}
+
+func feishuSafeTitle(title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return "Ops Sentinel 通知"
+	}
+	if strings.Contains(strings.ToLower(title), "ops sentinel") {
+		return title
+	}
+	return "Ops Sentinel " + title
 }
 
 func splitFeishuMessage(message string) (title, body, codeTitle, codeText string) {
@@ -205,13 +220,24 @@ func formatFeishuBody(body string) string {
 			key := strings.TrimSpace(k)
 			value := strings.TrimSpace(v)
 			if key != "" {
+				value = sanitizeFeishuBlockedText(value)
 				out = append(out, fmt.Sprintf("**%s**: %s", escapeLarkMarkdown(key), escapeLarkMarkdown(value)))
 				continue
 			}
 		}
-		out = append(out, escapeLarkMarkdown(line))
+		out = append(out, escapeLarkMarkdown(sanitizeFeishuBlockedText(line)))
 	}
 	return strings.Join(out, "\n")
+}
+
+func sanitizeFeishuBlockedText(s string) string {
+	return feishuBlockedSleepPattern.ReplaceAllStringFunc(s, func(match string) string {
+		idx := strings.LastIndex(match, "(")
+		if idx < 0 {
+			return match
+		}
+		return strings.TrimRight(match[:idx], " \t\r\n") + " ("
+	})
 }
 
 func escapeLarkMarkdown(s string) string {

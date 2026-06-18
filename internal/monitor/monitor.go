@@ -222,10 +222,12 @@ func (m *Manager) doCheck(dbID int64, dbCfg *store.Database, mysqlDB *sql.DB, no
 	// Filter out ignored SQL patterns before notification
 	notifyQueries := notifier.FilterIgnored(queries)
 	if len(notifyQueries) == 0 {
+		log.Printf("[%s] slow queries found but all ignored, skip notification", dbCfg.Name)
 		return
 	}
 
 	if !notifier.SyncAndShouldNotify(notifyQueries) {
+		log.Printf("[%s] slow queries already notified, skip notification", dbCfg.Name)
 		return
 	}
 

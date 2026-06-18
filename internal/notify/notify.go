@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
+	"strings"
 
 	"ops-sentinel/internal/store"
 )
@@ -36,8 +38,10 @@ func (d *Dispatcher) SendNotifications(databaseID int64, message string) error {
 		return fmt.Errorf("load notification configs: %w", err)
 	}
 	if len(configs) == 0 {
+		log.Printf("notification skipped: no enabled configs for database_id=%d", databaseID)
 		return nil
 	}
+	log.Printf("notification dispatch: database_id=%d configs=%d", databaseID, len(configs))
 	return d.dispatchToConfigs(configs, message)
 }
 
@@ -48,8 +52,10 @@ func (d *Dispatcher) SendGlobalNotifications(message string) error {
 		return fmt.Errorf("load global notification configs: %w", err)
 	}
 	if len(configs) == 0 {
+		log.Printf("global notification skipped: no enabled global configs")
 		return nil
 	}
+	log.Printf("global notification dispatch: configs=%d", len(configs))
 	return d.dispatchToConfigs(configs, message)
 }
 
@@ -60,8 +66,10 @@ func (d *Dispatcher) SendScopedNotifications(scopeType string, scopeID int64, me
 		return fmt.Errorf("load scoped notification configs: %w", err)
 	}
 	if len(configs) == 0 {
+		log.Printf("notification skipped: no enabled configs for scope=%s scope_id=%d", scopeType, scopeID)
 		return nil
 	}
+	log.Printf("notification dispatch: scope=%s scope_id=%d configs=%d", scopeType, scopeID, len(configs))
 	return d.dispatchToConfigs(configs, message)
 }
 
@@ -76,6 +84,7 @@ func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, messa
 				continue
 			}
 			if c.Webhook == "" {
+				log.Printf("dingtalk config id=%d skipped: empty webhook", cfg.ID)
 				continue
 			}
 			if err := SendDingTalk(c, message); err != nil {
@@ -89,11 +98,17 @@ func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, messa
 				continue
 			}
 			if c.Webhook == "" {
+				log.Printf("feishu config id=%d skipped: empty webhook", cfg.ID)
 				continue
 			}
+			target := notificationTarget(c.Webhook)
+			log.Printf("sending feishu notification config_id=%d scope=%s database_id=%v target=%s", cfg.ID, cfg.ScopeType, cfg.DatabaseID, target)
 			if err := SendFeishu(c, message); err != nil {
-				log.Printf("feishu send failed: %v", err)
-				lastErr = err
+				wrappedErr := fmt.Errorf("feishu target=%s send failed: %w", target, err)
+				log.Printf("%v", wrappedErr)
+				lastErr = wrappedErr
+			} else {
+				log.Printf("feishu notification sent config_id=%d", cfg.ID)
 			}
 		case "email":
 			var c store.EmailConfig
@@ -102,6 +117,7 @@ func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, messa
 				continue
 			}
 			if c.From == "" || c.To == "" {
+				log.Printf("email config id=%d skipped: empty from/to", cfg.ID)
 				continue
 			}
 			if err := SendEmail(c, message); err != nil {
@@ -115,15 +131,44 @@ func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, messa
 				continue
 			}
 			if c.BaseURL == "" || c.Token == "" || c.DialogID == "" {
+				log.Printf("dootask config id=%d skipped: incomplete config", cfg.ID)
 				continue
 			}
 			if err := SendDooTask(c, message); err != nil {
 				log.Printf("dootask send failed: %v", err)
 				lastErr = err
 			}
+		default:
+			log.Printf("notification config id=%d skipped: unknown type=%s", cfg.ID, cfg.Type)
 		}
 	}
 	return lastErr
+}
+
+func notificationTarget(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "-"
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return maskSecretTail(raw)
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) > 0 {
+		parts[len(parts)-1] = maskSecretTail(parts[len(parts)-1])
+		u.Path = "/" + strings.Join(parts, "/")
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+func maskSecretTail(s string) string {
+	if len(s) <= 12 {
+		return s
+	}
+	return s[:6] + "..." + s[len(s)-4:]
 }
 
 // SendTestNotification sends a test message to a specific notification config.

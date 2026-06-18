@@ -15,3 +15,11 @@ func TestFeishuTemplateUsesGreenForRecoveryTitle(t *testing.T) {
 		t.Fatalf("expected green recovery template, got %q", got)
 	}
 }
+
+func TestSanitizeFeishuBlockedSleepFunction(t *testing.T) {
+	got := sanitizeFeishuBlockedText("SELECT SLEEP(13)")
+	want := "SELECT SLEEP (13)"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}

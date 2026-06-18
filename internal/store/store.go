@@ -105,15 +105,24 @@ type Store struct {
 }
 
 func New(dataDir string) (*Store, error) {
-	dsn := fmt.Sprintf("file:%s/monitor.db?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=ON", dataDir)
+	dsn := fmt.Sprintf("file:%s/monitor.db", dataDir)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
 	if err := db.Ping(); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
+	if err := configureSQLite(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if _, err := db.Exec(schemaSQL); err != nil {
+		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 	// Auto-migrate: add missing columns
@@ -166,6 +175,20 @@ func New(dataDir string) (*Store, error) {
 	}
 
 	return &Store{db: db}, nil
+}
+
+func configureSQLite(db *sql.DB) error {
+	pragmas := []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA busy_timeout=5000",
+		"PRAGMA foreign_keys=ON",
+	}
+	for _, stmt := range pragmas {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("configure sqlite %q: %w", stmt, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error {
@@ -1369,14 +1392,18 @@ func (s *Store) IsProcessNotified(dbID int64, processID uint64, fingerprint stri
 }
 
 func (s *Store) MarkProcessNotified(dbID int64, processID uint64, fingerprint string) {
-	s.db.Exec(`INSERT INTO notified_pids (database_id, process_id, sql_fingerprint, notified_at) VALUES (?, ?, ?, datetime('now'))
+	if _, err := s.db.Exec(`INSERT INTO notified_pids (database_id, process_id, sql_fingerprint, notified_at) VALUES (?, ?, ?, datetime('now'))
 		ON CONFLICT(database_id, process_id) DO UPDATE SET sql_fingerprint=excluded.sql_fingerprint, notified_at=datetime('now')`,
-		dbID, processID, fingerprint)
+		dbID, processID, fingerprint); err != nil {
+		log.Printf("mark notified pid failed db_id=%d process_id=%d: %v", dbID, processID, err)
+	}
 }
 
 func (s *Store) ClearNotifiedPIDs(dbID int64, activeProcessIDs []uint64) {
 	if len(activeProcessIDs) == 0 {
-		s.db.Exec(`DELETE FROM notified_pids WHERE database_id=?`, dbID)
+		if _, err := s.db.Exec(`DELETE FROM notified_pids WHERE database_id=?`, dbID); err != nil {
+			log.Printf("clear notified pids failed db_id=%d: %v", dbID, err)
+		}
 		return
 	}
 	// Keep only active PIDs, remove stale ones
@@ -1386,11 +1413,15 @@ func (s *Store) ClearNotifiedPIDs(dbID int64, activeProcessIDs []uint64) {
 		placeholders[i] = "?"
 		args = append(args, pid)
 	}
-	s.db.Exec(`DELETE FROM notified_pids WHERE database_id=? AND process_id NOT IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if _, err := s.db.Exec(`DELETE FROM notified_pids WHERE database_id=? AND process_id NOT IN (`+strings.Join(placeholders, ",")+`)`, args...); err != nil {
+		log.Printf("clear stale notified pids failed db_id=%d: %v", dbID, err)
+	}
 }
 
 func (s *Store) CleanupOldNotifiedPIDs() {
-	s.db.Exec(`DELETE FROM notified_pids WHERE notified_at < datetime('now', '-1 day')`)
+	if _, err := s.db.Exec(`DELETE FROM notified_pids WHERE notified_at < datetime('now', '-1 day')`); err != nil {
+		log.Printf("cleanup old notified pids failed: %v", err)
+	}
 }
 
 // --- Ignored SQL Patterns ---
