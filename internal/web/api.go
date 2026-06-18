@@ -2071,6 +2071,7 @@ func (s *Server) apiCustomSQLCreate(w http.ResponseWriter, r *http.Request) {
 		AlertDeltaValue   string `json:"alert_delta_value"`
 		AlertDeltaPercent string `json:"alert_delta_percent"`
 		AlertConsecutive  int    `json:"alert_consecutive"`
+		AlertRules        string `json:"alert_rules"`
 		NotifyEnabled     *bool  `json:"notify_enabled"`
 		RecoveryNotify    *bool  `json:"recovery_notify"`
 		MessageTemplate   string `json:"message_template"`
@@ -2079,7 +2080,7 @@ func (s *Server) apiCustomSQLCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	cfg, ok := s.customSQLFromRequest(w, req.DatabaseID, req.Name, req.DBName, req.SQLText, req.ResultField, req.IntervalSec, req.TimeoutSec, req.AlertStrategy, req.Condition, req.ExpectedValue, req.AlertDeltaValue, req.AlertDeltaPercent, req.AlertConsecutive, req.NotifyEnabled, req.RecoveryNotify, req.MessageTemplate)
+	cfg, ok := s.customSQLFromRequest(w, req.DatabaseID, req.Name, req.DBName, req.SQLText, req.ResultField, req.IntervalSec, req.TimeoutSec, req.AlertStrategy, req.Condition, req.ExpectedValue, req.AlertDeltaValue, req.AlertDeltaPercent, req.AlertConsecutive, req.AlertRules, req.NotifyEnabled, req.RecoveryNotify, req.MessageTemplate)
 	if !ok {
 		return
 	}
@@ -2120,6 +2121,7 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 		AlertDeltaValue   *string `json:"alert_delta_value"`
 		AlertDeltaPercent *string `json:"alert_delta_percent"`
 		AlertConsecutive  int     `json:"alert_consecutive"`
+		AlertRules        *string `json:"alert_rules"`
 		NotifyEnabled     *bool   `json:"notify_enabled"`
 		RecoveryNotify    *bool   `json:"recovery_notify"`
 		MessageTemplate   *string `json:"message_template"`
@@ -2168,6 +2170,9 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.AlertConsecutive > 0 {
 		existing.AlertConsecutive = req.AlertConsecutive
 	}
+	if req.AlertRules != nil {
+		existing.AlertRules = *req.AlertRules
+	}
 	if req.NotifyEnabled != nil {
 		existing.NotifyEnabled = *req.NotifyEnabled
 	}
@@ -2204,7 +2209,7 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
-func (s *Server) customSQLFromRequest(w http.ResponseWriter, databaseID int64, name, dbName, sqlText, resultField string, intervalSec, timeoutSec int, alertStrategy, condition, expectedValue, alertDeltaValue, alertDeltaPercent string, alertConsecutive int, notifyEnabled, recoveryNotify *bool, messageTemplate string) (*store.CustomSQLCheck, bool) {
+func (s *Server) customSQLFromRequest(w http.ResponseWriter, databaseID int64, name, dbName, sqlText, resultField string, intervalSec, timeoutSec int, alertStrategy, condition, expectedValue, alertDeltaValue, alertDeltaPercent string, alertConsecutive int, alertRules string, notifyEnabled, recoveryNotify *bool, messageTemplate string) (*store.CustomSQLCheck, bool) {
 	name = strings.TrimSpace(name)
 	sqlText = strings.TrimSpace(sqlText)
 	if databaseID <= 0 || name == "" || sqlText == "" {
@@ -2233,6 +2238,7 @@ func (s *Server) customSQLFromRequest(w http.ResponseWriter, databaseID int64, n
 		AlertDeltaValue:   strings.TrimSpace(alertDeltaValue),
 		AlertDeltaPercent: strings.TrimSpace(alertDeltaPercent),
 		AlertConsecutive:  alertConsecutive,
+		AlertRules:        strings.TrimSpace(alertRules),
 		NotifyEnabled:     true,
 		RecoveryNotify:    true,
 		MessageTemplate:   messageTemplate,
@@ -2262,6 +2268,9 @@ func normalizeCustomSQLDefaults(cfg *store.CustomSQLCheck) {
 	}
 	if cfg.AlertConsecutive <= 0 {
 		cfg.AlertConsecutive = 1
+	}
+	if cfg.AlertRules == "" {
+		cfg.AlertRules = "[]"
 	}
 }
 

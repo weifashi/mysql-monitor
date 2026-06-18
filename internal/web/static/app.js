@@ -788,6 +788,8 @@ const CustomSQLPage = defineComponent({
         const showModal = ref(false);
         const editingId = ref(null);
         const saving = ref(false);
+        const importing = ref(false);
+        const importInputRef = ref(null);
         const form = reactive({
             database_id: null,
             name: '',
@@ -802,6 +804,7 @@ const CustomSQLPage = defineComponent({
             alert_delta_value: '',
             alert_delta_percent: '',
             alert_consecutive: 1,
+            alert_rules: [],
             notify_enabled: true,
             recovery_notify: true,
             message_template: '',
@@ -830,9 +833,9 @@ const CustomSQLPage = defineComponent({
             { label: '连续上升', value: 'continuous_increase' },
         ];
         const strategyLabels = Object.fromEntries(strategyOptions.map(o => [o.value, o.label]));
-        const needsExpected = computed(() => !['empty', 'not_empty', 'changed', 'always'].includes(form.condition));
-        const usesDelta = computed(() => form.alert_strategy === 'increase');
-        const usesConsecutive = computed(() => ['sustained', 'continuous_increase'].includes(form.alert_strategy));
+        const ruleNeedsExpected = rule => !['empty', 'not_empty', 'changed', 'always'].includes(rule.condition);
+        const ruleUsesDelta = rule => rule.alert_strategy === 'increase';
+        const ruleUsesConsecutive = rule => ['sustained', 'continuous_increase'].includes(rule.alert_strategy);
 
         async function load() {
             loading.value = true;
@@ -852,7 +855,7 @@ const CustomSQLPage = defineComponent({
                 database_id: databases.value[0] ? databases.value[0].id : null,
                 name: '',
                 db_name: '',
-                sql_text: 'SELECT COUNT(*) FROM your_table WHERE status = 0',
+                sql_text: 'SELECT COUNT(*) AS process_count FROM information_schema.PROCESSLIST',
                 result_field: '',
                 interval_sec: 30,
                 timeout_sec: 10,
@@ -862,6 +865,7 @@ const CustomSQLPage = defineComponent({
                 alert_delta_value: '',
                 alert_delta_percent: '',
                 alert_consecutive: 1,
+                alert_rules: [],
                 notify_enabled: true,
                 recovery_notify: true,
                 message_template: '',
@@ -874,6 +878,7 @@ const CustomSQLPage = defineComponent({
         }
         function openEdit(row) {
             editingId.value = row.id;
+            const rules = parseCustomSQLAlertRules(row.alert_rules, row);
             Object.assign(form, {
                 database_id: row.database_id,
                 name: row.name,
@@ -888,6 +893,7 @@ const CustomSQLPage = defineComponent({
                 alert_delta_value: row.alert_delta_value || '',
                 alert_delta_percent: row.alert_delta_percent || '',
                 alert_consecutive: row.alert_consecutive || 1,
+                alert_rules: rules,
                 notify_enabled: !!row.notify_enabled,
                 recovery_notify: !!row.recovery_notify,
                 message_template: row.message_template || '',
@@ -903,7 +909,7 @@ const CustomSQLPage = defineComponent({
         async function save() {
             saving.value = true;
             try {
-                const payload = { ...form };
+                const payload = customSQLPayload();
                 if (editingId.value) {
                     await api.put('/api/custom-sql/' + editingId.value, payload);
                     message.success('更新成功');
@@ -917,6 +923,221 @@ const CustomSQLPage = defineComponent({
                 message.error(e.message);
             }
             saving.value = false;
+        }
+        function normalizeCustomSQLAlertRule(rule = {}) {
+            return {
+                name: rule.name || '',
+                result_field: rule.result_field || rule.field || '',
+                alert_strategy: rule.alert_strategy || rule.strategy || 'threshold',
+                condition: rule.condition || rule.alert_condition || 'gt',
+                expected_value: rule.expected_value || rule.value || rule.alert_value || '',
+                alert_delta_value: rule.alert_delta_value || rule.delta_value || '',
+                alert_delta_percent: rule.alert_delta_percent || rule.delta_percent || '',
+                alert_consecutive: rule.alert_consecutive || rule.consecutive || 1,
+            };
+        }
+        function parseCustomSQLAlertRules(raw, row) {
+            let parsed = [];
+            if (Array.isArray(raw)) parsed = raw;
+            else {
+                try {
+                    const value = JSON.parse(raw || '[]');
+                    parsed = Array.isArray(value) ? value : [];
+                } catch { parsed = []; }
+            }
+            parsed = parsed.map(normalizeCustomSQLAlertRule);
+            if (parsed.length === 0 && row) {
+                parsed.push(normalizeCustomSQLAlertRule({
+                    name: row.result_field || '第一列',
+                    result_field: row.result_field || '',
+                    alert_strategy: row.alert_strategy || 'threshold',
+                    condition: row.condition || 'gt',
+                    expected_value: row.expected_value || '',
+                    alert_delta_value: row.alert_delta_value || '',
+                    alert_delta_percent: row.alert_delta_percent || '',
+                    alert_consecutive: row.alert_consecutive || 1,
+                }));
+            }
+            return parsed;
+        }
+        function customSQLPayload() {
+            const rules = (form.alert_rules || []).map(normalizeCustomSQLAlertRule);
+            const firstRule = rules[0] || normalizeCustomSQLAlertRule({
+                result_field: form.result_field,
+                alert_strategy: form.alert_strategy,
+                condition: form.condition,
+                expected_value: form.expected_value,
+                alert_delta_value: form.alert_delta_value,
+                alert_delta_percent: form.alert_delta_percent,
+                alert_consecutive: form.alert_consecutive,
+            });
+            return {
+                ...form,
+                alert_rules: JSON.stringify(rules),
+                result_field: firstRule.result_field || '',
+                alert_strategy: firstRule.alert_strategy || 'threshold',
+                condition: firstRule.condition || 'gt',
+                expected_value: firstRule.expected_value || '',
+                alert_delta_value: firstRule.alert_delta_value || '',
+                alert_delta_percent: firstRule.alert_delta_percent || '',
+                alert_consecutive: firstRule.alert_consecutive || 1,
+            };
+        }
+        function customSQLExportItem(row) {
+            return {
+                database_name: row.database_name || '',
+                database_id: row.database_id || null,
+                name: row.name || '',
+                db_name: row.db_name || '',
+                sql_text: row.sql_text || '',
+                result_field: row.result_field || '',
+                interval_sec: row.interval_sec || 30,
+                timeout_sec: row.timeout_sec || 10,
+                alert_strategy: row.alert_strategy || 'threshold',
+                condition: row.condition || 'gt',
+                expected_value: row.expected_value || '',
+                alert_delta_value: row.alert_delta_value || '',
+                alert_delta_percent: row.alert_delta_percent || '',
+                alert_consecutive: row.alert_consecutive || 1,
+                alert_rules: row.alert_rules || '[]',
+                notify_enabled: row.notify_enabled !== false,
+                recovery_notify: row.recovery_notify !== false,
+                message_template: row.message_template || '',
+                enabled: row.enabled !== false,
+            };
+        }
+        function exportCustomSQLChecks() {
+            if (!checks.value.length) {
+                message.warning('没有可导出的自定义 SQL 监控');
+                return;
+            }
+            const payload = {
+                type: 'ops-sentinel.custom_sql_checks',
+                version: 1,
+                exported_at: new Date().toISOString(),
+                items: checks.value.map(customSQLExportItem),
+            };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'ops-sentinel-custom-sql-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.json';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            message.success('已导出 ' + checks.value.length + ' 条配置');
+        }
+        function triggerImportCustomSQL() {
+            if (importInputRef.value) importInputRef.value.click();
+        }
+        function parseCustomSQLImportItems(raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed;
+            if (Array.isArray(parsed.items)) return parsed.items;
+            if (Array.isArray(parsed.custom_sql_checks)) return parsed.custom_sql_checks;
+            throw new Error('导入文件格式不正确');
+        }
+        function resolveImportDatabaseID(item) {
+            const dbs = databases.value || [];
+            const byName = item.database_name ? dbs.find(d => d.name === item.database_name) : null;
+            if (byName) return byName.id;
+            const byID = item.database_id ? dbs.find(d => d.id === item.database_id) : null;
+            if (byID) return byID.id;
+            if (dbs.length === 1) return dbs[0].id;
+            throw new Error('找不到数据库连接: ' + (item.database_name || item.database_id || item.name || '未指定'));
+        }
+        function importCustomSQLPayload(item) {
+            let alertRules = item.alert_rules;
+            if (Array.isArray(alertRules)) alertRules = JSON.stringify(alertRules.map(normalizeCustomSQLAlertRule));
+            if (typeof alertRules !== 'string') alertRules = '[]';
+            const rules = parseCustomSQLAlertRules(alertRules, item);
+            const firstRule = rules[0] || normalizeCustomSQLAlertRule(item);
+            return {
+                database_id: resolveImportDatabaseID(item),
+                name: item.name || '导入的自定义SQL',
+                db_name: item.db_name || '',
+                sql_text: item.sql_text || '',
+                result_field: item.result_field || firstRule.result_field || '',
+                interval_sec: item.interval_sec || 30,
+                timeout_sec: item.timeout_sec || 10,
+                alert_strategy: item.alert_strategy || firstRule.alert_strategy || 'threshold',
+                condition: item.condition || firstRule.condition || 'gt',
+                expected_value: item.expected_value || firstRule.expected_value || '',
+                alert_delta_value: item.alert_delta_value || firstRule.alert_delta_value || '',
+                alert_delta_percent: item.alert_delta_percent || firstRule.alert_delta_percent || '',
+                alert_consecutive: item.alert_consecutive || firstRule.alert_consecutive || 1,
+                alert_rules: JSON.stringify(rules),
+                notify_enabled: item.notify_enabled !== false,
+                recovery_notify: item.recovery_notify !== false,
+                message_template: item.message_template || '',
+            };
+        }
+        async function importCustomSQLFile(event) {
+            const file = event.target.files && event.target.files[0];
+            event.target.value = '';
+            if (!file) return;
+            importing.value = true;
+            try {
+                const text = await file.text();
+                const items = parseCustomSQLImportItems(text);
+                if (!items.length) {
+                    message.warning('导入文件里没有配置');
+                    return;
+                }
+                let ok = 0;
+                const failures = [];
+                for (const item of items) {
+                    try {
+                        const payload = importCustomSQLPayload(item);
+                        const created = await api.post('/api/custom-sql', payload);
+                        if (item.enabled === false && created && created.id) {
+                            await api.post('/api/custom-sql/' + created.id + '/toggle');
+                        }
+                        ok++;
+                    } catch (e) {
+                        failures.push((item && item.name ? item.name : '未命名配置') + ': ' + (e.message || e));
+                    }
+                }
+                await load();
+                if (failures.length) {
+                    message.warning('导入完成：成功 ' + ok + ' 条，失败 ' + failures.length + ' 条；第一条失败：' + failures[0]);
+                } else {
+                    message.success('导入成功：' + ok + ' 条');
+                }
+            } catch (e) {
+                message.error(e.message || '导入失败');
+            } finally {
+                importing.value = false;
+            }
+        }
+        function addCustomSQLAlertRule(rule = {}) {
+            form.alert_rules.push(normalizeCustomSQLAlertRule(rule));
+        }
+        function removeCustomSQLAlertRule(index) {
+            form.alert_rules.splice(index, 1);
+        }
+        function formatCustomSQLRule(rule) {
+            const normalized = normalizeCustomSQLAlertRule(rule);
+            const field = normalized.result_field || '第一列';
+            const strategy = strategyLabels[normalized.alert_strategy] || normalized.alert_strategy;
+            let text = field + ' / ' + strategy;
+            if (normalized.alert_strategy === 'increase') {
+                const parts = [];
+                if (normalized.alert_delta_value) parts.push('变化量>=' + normalized.alert_delta_value);
+                if (normalized.alert_delta_percent) parts.push('变化率>=' + normalized.alert_delta_percent + '%');
+                if (normalized.expected_value) parts.push((conditionLabels[normalized.condition] || normalized.condition) + ' ' + normalized.expected_value);
+                return text + ' / ' + (parts.join('，') || '比上次上升');
+            }
+            if (normalized.alert_strategy === 'continuous_increase') {
+                text += ' / 连续 ' + (normalized.alert_consecutive || 1) + ' 次';
+                if (normalized.expected_value) text += ' / ' + (conditionLabels[normalized.condition] || normalized.condition) + ' ' + normalized.expected_value;
+                return text;
+            }
+            text += ' / ' + (conditionLabels[normalized.condition] || normalized.condition);
+            if (normalized.expected_value) text += ' ' + normalized.expected_value;
+            if (normalized.alert_strategy === 'sustained') text += ' / 连续 ' + (normalized.alert_consecutive || 1) + ' 次';
+            return text;
         }
         async function toggle(row) {
             try { await api.post('/api/custom-sql/' + row.id + '/toggle'); await load(); } catch (e) { message.error(e.message); }
@@ -933,12 +1154,14 @@ const CustomSQLPage = defineComponent({
         }
 
         const columns = useColumns([
-            { title: '名称', key: 'name', width: 180, ellipsis: { tooltip: true }, render: row => h(NText, { strong: true, style: 'white-space:nowrap' }, () => row.name) },
+            { title: '名称', key: 'name', width: 180, ellipsis: { tooltip: true }, render: row => h(NText, { strong: true, style: 'display:block;white-space:normal;word-break:break-word;line-height:1.35' }, () => row.name) },
             { title: '数据库', key: 'database_name', width: 120, _hideOnMobile: true },
             { title: '执行库', key: 'db_name', width: 150, _hideOnMobile: true, ellipsis: { tooltip: true }, render: row => row.db_name || 'performance_schema' },
-            { title: '取值', key: 'result_field', width: 90, _hideOnMobile: true, render: row => row.result_field || '第一列' },
-            { title: '策略', key: 'alert_strategy', width: 120, _hideOnMobile: true, render: row => strategyLabels[row.alert_strategy || 'threshold'] || row.alert_strategy },
-            { title: '条件', key: 'condition', width: 180, render: row => h(NText, { depth: 3, style: 'font-size:12px;white-space:nowrap' }, () => (conditionLabels[row.condition] || row.condition) + (row.expected_value ? ' ' + row.expected_value : '')) },
+            { title: '规则', key: 'alert_rules', width: 280, _hideOnMobile: true, render: row => {
+                const rules = parseCustomSQLAlertRules(row.alert_rules, row);
+                if (rules.length > 1) return h(NText, { depth: 3, style: 'font-size:12px;line-height:1.35;white-space:normal' }, () => rules.length + ' 条: ' + rules.map(r => r.name || r.result_field || '第一列').join(' / '));
+                return h(NText, { depth: 3, style: 'font-size:12px;line-height:1.35;white-space:normal' }, () => formatCustomSQLRule(rules[0] || row));
+            } },
             { title: 'SQL', key: 'sql_text', width: 360, ellipsis: { tooltip: true }, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.7;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;white-space:nowrap', onClick: () => showSqlDetail({ sql_text: row.sql_text, database_name: row.database_name }) }, truncate(row.sql_text, _isMobile.value ? 36 : 90)) },
             { title: '通知', key: 'notify_enabled', width: 70, _hideOnMobile: true, render: row => row.notify_enabled ? h(NTag, { type: 'success', size: 'small' }, () => '开启') : h(NTag, { size: 'small' }, () => '关闭') },
             { title: '状态', key: 'status', width: 90, render: row => row.running ? h(NTag, { type: 'success', size: 'small' }, () => '运行中') : row.enabled ? h(NTag, { type: 'warning', size: 'small' }, () => '已启用') : h(NTag, { size: 'small' }, () => '已禁用') },
@@ -954,36 +1177,56 @@ const CustomSQLPage = defineComponent({
         return () => h('div', { class: 'page-body' }, [
             h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
                 h('h3', { class: 'page-title' }, '自定义SQL监控'),
-                h(NButton, { type: 'primary', onClick: openAdd, size: _isMobile.value ? 'small' : 'medium' }, () => '+ 添加'),
+                h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end' }, [
+                    h('input', { ref: importInputRef, type: 'file', accept: '.json,application/json', style: 'display:none', onChange: importCustomSQLFile }),
+                    h(NButton, { secondary: true, onClick: exportCustomSQLChecks, size: _isMobile.value ? 'small' : 'medium' }, () => '导出'),
+                    h(NButton, { secondary: true, loading: importing.value, onClick: triggerImportCustomSQL, size: _isMobile.value ? 'small' : 'medium' }, () => '导入'),
+                    h(NButton, { type: 'primary', onClick: openAdd, size: _isMobile.value ? 'small' : 'medium' }, () => '+ 添加'),
+                ]),
             ]),
             h(NDataTable, { columns: columns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 620 : 1590 }),
-            h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑自定义SQL' : '添加自定义SQL', style: _isMobile.value ? 'width:95vw' : 'width:760px', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 120 }, [
+            h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑自定义SQL' : '添加自定义SQL', style: _isMobile.value ? 'width:95vw' : 'width:1120px;max-width:96vw', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 120 }, [
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '名称' }, () => h(NInput, { value: form.name, 'onUpdate:value': v => form.name = v, placeholder: '如: 待处理订单数量' }))),
                     h(NGi, null, () => h(NFormItem, { label: '数据库连接' }, () => h(NSelect, { value: form.database_id, 'onUpdate:value': v => form.database_id = v, options: dbOptions.value, placeholder: '选择数据库' }))),
                 ]),
                 h(NFormItem, { label: '执行库' }, () => h(NInput, { value: form.db_name, 'onUpdate:value': v => form.db_name = v, placeholder: '可选，不填默认 performance_schema；也可以在SQL里写库名.表名' })),
-                h(NFormItem, { label: 'SQL' }, () => h(NInput, { value: form.sql_text, 'onUpdate:value': v => form.sql_text = v, type: 'textarea', autosize: { minRows: 4, maxRows: 10 }, placeholder: 'SELECT COUNT(*) FROM orders WHERE status = 0' })),
+                h(NFormItem, { label: 'SQL' }, () => h('div', { style: 'width:100%;display:flex;flex-direction:column;gap:6px' }, [
+                    h(NInput, { value: form.sql_text, 'onUpdate:value': v => form.sql_text = v, type: 'textarea', autosize: { minRows: 4, maxRows: 10 }, placeholder: 'SELECT COUNT(*) AS process_count FROM information_schema.PROCESSLIST' }),
+                    h(NText, { depth: 3, style: 'font-size:12px;line-height:1.45' }, () => '只允许查询 SQL。禁止写入/锁表/SLEEP/SELECT *；普通 SELECT 必须带 LIMIT，聚合单行查询如 COUNT/SUM 可不带 LIMIT。'),
+                ])),
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '检查间隔(秒)' }, () => h(NInputNumber, { value: form.interval_sec, 'onUpdate:value': v => form.interval_sec = v, min: 1 }))),
                     h(NGi, null, () => h(NFormItem, { label: '超时(秒)' }, () => h(NInputNumber, { value: form.timeout_sec, 'onUpdate:value': v => form.timeout_sec = v, min: 1 }))),
                 ]),
-                h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
-                    h(NGi, null, () => h(NFormItem, { label: '结果字段' }, () => h(NInput, { value: form.result_field, 'onUpdate:value': v => form.result_field = v, placeholder: '列名或序号；不填取第一列' }))),
-                    h(NGi, null, () => h(NFormItem, { label: '异常策略' }, () => h(NSelect, { value: form.alert_strategy, 'onUpdate:value': v => form.alert_strategy = v, options: strategyOptions }))),
-                ]),
-                h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
-                    h(NGi, null, () => h(NFormItem, { label: '当前值条件' }, () => h(NSelect, { value: form.condition, 'onUpdate:value': v => form.condition = v, options: conditionOptions }))),
-                    needsExpected.value ? h(NGi, null, () => h(NFormItem, { label: '期望值' }, () => h(NInput, { value: form.expected_value, 'onUpdate:value': v => form.expected_value = v, placeholder: '如: 0' }))) : null,
-                ]),
-                usesDelta.value ? h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
-                    h(NGi, null, () => h(NFormItem, { label: '变化量>=' }, () => h(NInput, { value: form.alert_delta_value, 'onUpdate:value': v => form.alert_delta_value = v, placeholder: '如: 500' }))),
-                    h(NGi, null, () => h(NFormItem, { label: '变化率>=' }, () => h(NInput, { value: form.alert_delta_percent, 'onUpdate:value': v => form.alert_delta_percent = v, placeholder: '百分比，如: 30' }))),
-                ]) : null,
-                usesConsecutive.value ? h(NFormItem, { label: '连续次数' }, () => h(NInputNumber, { value: form.alert_consecutive, 'onUpdate:value': v => form.alert_consecutive = v, min: 1, max: 100, style: _isMobile.value ? 'width:100%' : 'width:180px' })) : null,
-                form.alert_strategy === 'increase' ? h(NText, { depth: 3, style: 'display:block;font-size:12px;margin:-4px 0 10px ' + (_isMobile.value ? '0' : '120px') }, () => '突增：与上一次采样比较；变化量和变化率任一满足即可，当前值阈值填了则也必须满足。') : null,
-                form.alert_strategy === 'continuous_increase' ? h(NText, { depth: 3, style: 'display:block;font-size:12px;margin:-4px 0 10px ' + (_isMobile.value ? '0' : '120px') }, () => '连续上升：连续多次比上一次采样更高；当前值阈值可选，填了则也必须满足。') : null,
-                form.alert_strategy === 'sustained' ? h(NText, { depth: 3, style: 'display:block;font-size:12px;margin:-4px 0 10px ' + (_isMobile.value ? '0' : '120px') }, () => '连续命中阈值：只有连续多次满足当前值条件才告警，适合过滤短暂抖动。') : null,
+                h(NFormItem, { label: '结果规则' }, () => h('div', { style: 'width:100%;display:flex;flex-direction:column;gap:10px' }, [
+                    h('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap' }, [
+                        h(NButton, { size: 'small', secondary: true, onClick: () => addCustomSQLAlertRule({ name: '新规则', alert_strategy: 'threshold', condition: 'gt', expected_value: '0' }) }, () => '+ 规则'),
+                        h(NText, { depth: 3, style: 'font-size:12px' }, () => 'SQL 返回多列时，可为不同列分别配置告警规则；任意一条命中就会上报。'),
+                    ]),
+                    (form.alert_rules || []).length === 0 ? h(NText, { depth: 3, style: 'font-size:12px' }, () => '未配置时会按第一列和旧的单规则字段判断。') : null,
+                    ...(form.alert_rules || []).map((rule, index) => h('div', { style: 'border:1px solid rgba(128,128,128,.22);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:8px' }, [
+                        h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 8, yGap: 8 }, () => [
+                            h(NGi, null, () => h(NInput, { value: rule.name, 'onUpdate:value': v => rule.name = v, placeholder: '规则名称，如 连接数异常' })),
+                            h(NGi, null, () => h(NInput, { value: rule.result_field, 'onUpdate:value': v => rule.result_field = v, placeholder: '结果字段：列名或序号；不填取第一列' })),
+                            h(NGi, null, () => h(NSelect, { value: rule.alert_strategy, 'onUpdate:value': v => rule.alert_strategy = v, options: strategyOptions })),
+                            h(NGi, null, () => h(NSelect, { value: rule.condition, 'onUpdate:value': v => rule.condition = v, options: conditionOptions })),
+                            ruleNeedsExpected(rule) ? h(NGi, null, () => h(NInput, { value: rule.expected_value, 'onUpdate:value': v => rule.expected_value = v, placeholder: '期望值/阈值，如 3' })) : null,
+                            ruleUsesDelta(rule) ? h(NGi, null, () => h(NInput, { value: rule.alert_delta_value, 'onUpdate:value': v => rule.alert_delta_value = v, placeholder: '变化量>=，如 500' })) : null,
+                            ruleUsesDelta(rule) ? h(NGi, null, () => h(NInput, { value: rule.alert_delta_percent, 'onUpdate:value': v => rule.alert_delta_percent = v, placeholder: '变化率>=，如 30' })) : null,
+                            ruleUsesConsecutive(rule) ? h(NGi, null, () => h(NInputNumber, { value: rule.alert_consecutive, 'onUpdate:value': v => rule.alert_consecutive = v, min: 1, max: 100, style: 'width:100%', placeholder: '连续次数' })) : null,
+                        ]),
+                        h('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:8px' }, [
+                            h(NText, { depth: 3, style: 'font-size:12px;line-height:1.4' }, () => {
+                                if (rule.alert_strategy === 'increase') return '突增：与上一次采样比较，变化量和变化率任一满足即可。';
+                                if (rule.alert_strategy === 'continuous_increase') return '连续上升：连续多次比上一次采样更高，可叠加当前值阈值。';
+                                if (rule.alert_strategy === 'sustained') return '连续命中阈值：连续多次满足条件才告警。';
+                                return '单次阈值：本次满足条件即告警。';
+                            }),
+                            h(NButton, { size: 'tiny', secondary: true, type: 'error', onClick: () => removeCustomSQLAlertRule(index) }, () => '删除'),
+                        ]),
+                    ])),
+                ])),
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '命中后通知' }, () => h(NSwitch, { value: form.notify_enabled, 'onUpdate:value': v => form.notify_enabled = v }))),
                     h(NGi, null, () => h(NFormItem, { label: '恢复通知' }, () => h(NSwitch, { value: form.recovery_notify, 'onUpdate:value': v => form.recovery_notify = v }))),
@@ -1599,7 +1842,7 @@ const HealthChecksPage = defineComponent({
             showModal.value = true;
         }
         function normalizeAlertRule(rule) {
-            return {
+            const normalized = {
                 name: rule.name || '',
                 field: rule.field || rule.alert_field || '',
                 strategy: rule.strategy || rule.alert_strategy || 'threshold',
@@ -1609,6 +1852,9 @@ const HealthChecksPage = defineComponent({
                 delta_percent: rule.delta_percent || rule.alert_delta_percent || '',
                 consecutive: rule.consecutive || rule.alert_consecutive || 1,
             };
+            normalized.value = normalizeRuleMetricInput(normalized.field, normalized.value);
+            normalized.delta_value = normalizeRuleMetricInput(normalized.field, normalized.delta_value);
+            return normalized;
         }
         function parseAlertRules(raw, row) {
             let parsed = [];
@@ -1735,10 +1981,10 @@ const HealthChecksPage = defineComponent({
         }
         function addTTPOSMetricRules() {
             form.alert_rules.push(
-                normalizeAlertRule({ name: 'heap 当前占用过高', field: 'data.heap_alloc_kb', strategy: 'sustained', condition: 'gt', value: '1500000', consecutive: 3 }),
-                normalizeAlertRule({ name: 'heap 对象数过高', field: 'data.heap_objects', strategy: 'sustained', condition: 'gt', value: '15000000', consecutive: 3 }),
-                normalizeAlertRule({ name: 'goroutine 数过高', field: 'data.goroutines', strategy: 'sustained', condition: 'gt', value: '2000', consecutive: 3 }),
-                normalizeAlertRule({ name: 'heap 持续上升', field: 'data.heap_alloc_kb', strategy: 'continuous_increase', condition: 'gt', value: '1200000', consecutive: 5 }),
+                normalizeAlertRule({ name: 'heap 当前占用过高', field: 'data.heap_alloc_kb', strategy: 'sustained', condition: 'gt', value: '1000', consecutive: 3 }),
+                normalizeAlertRule({ name: 'heap 对象数过高', field: 'data.heap_objects', strategy: 'sustained', condition: 'gt', value: '9000000', consecutive: 3 }),
+                normalizeAlertRule({ name: 'goroutine 数过高', field: 'data.goroutines', strategy: 'sustained', condition: 'gt', value: '1500', consecutive: 3 }),
+                normalizeAlertRule({ name: 'heap 持续上升', field: 'data.heap_alloc_kb', strategy: 'continuous_increase', condition: 'gt', value: '800', consecutive: 5 }),
                 normalizeAlertRule({ name: '字体处理排队', field: 'data.imgFontSemaphore.semaphore_length', strategy: 'sustained', condition: 'gt', value: '0', consecutive: 2 }),
             );
         }
@@ -1799,26 +2045,61 @@ const HealthChecksPage = defineComponent({
         const ruleUsesThreshold = rule => ['threshold', 'sustained', 'increase', 'continuous_increase'].includes(rule.strategy);
         const ruleUsesDelta = rule => rule.strategy === 'increase';
         const ruleUsesConsecutive = rule => ['sustained', 'continuous_increase'].includes(rule.strategy);
+        const isKBMetricField = field => /(^|\.)[^.]+_kb$/.test(String(field || ''));
+        function normalizeRuleMetricInput(field, value) {
+            if (!isKBMetricField(field) || value === '' || value == null) return value || '';
+            const raw = String(value).replace(/,/g, '');
+            if (raw === '1024000') return '1000';
+            if (raw === '150000000') return '1000';
+            if (raw === '819200') return '800';
+            if (raw === '1500000') return '1464.84';
+            if (raw === '1200000') return '1171.88';
+            return String(value);
+        }
+        function formatRuleMetricValue(field, value) {
+            if (value === '' || value == null) return '';
+            const numeric = Number(String(value).replace(/,/g, ''));
+            if (!Number.isFinite(numeric)) return value;
+            if (isKBMetricField(field)) return formatNumber(numeric) + ' MB';
+            return formatNumber(numeric);
+        }
+        function ruleInputValue(rule, key = 'value') {
+            return normalizeRuleMetricInput(rule.field, rule[key]);
+        }
+        function setRuleInputValue(rule, value, key = 'value') {
+            rule[key] = value == null ? '' : String(value);
+        }
+        function ruleValuePlaceholder(rule) {
+            return isKBMetricField(rule.field) ? '当前值阈值，单位 MB，如 1000' : (rule.strategy === 'threshold' || rule.strategy === 'sustained' ? '当前值阈值，如 2000' : '当前值阈值，可选');
+        }
+        function ruleValueInput(rule, key = 'value', placeholder = '') {
+            const input = h(NInput, { value: ruleInputValue(rule, key), onUpdateValue: v => setRuleInputValue(rule, v, key), placeholder });
+            if (!isKBMetricField(rule.field)) return input;
+            return h(NInputGroup, null, () => [
+                input,
+                h(NButton, { disabled: true, secondary: true, style: 'width:64px;pointer-events:none' }, () => 'MB'),
+            ]);
+        }
         function formatAlertRule(row) {
             const strategyLabels = { threshold: '单次', sustained: '连续命中', increase: '突增', continuous_increase: '连续上升' };
             const strategy = row.alert_strategy || 'threshold';
             let text = (strategyLabels[strategy] || strategy) + ': ' + row.alert_field;
             if (strategy === 'increase') {
                 const parts = [];
-                if (row.alert_delta_value) parts.push('涨幅>=' + row.alert_delta_value);
+                if (row.alert_delta_value) parts.push('涨幅>=' + formatRuleMetricValue(row.alert_field, row.alert_delta_value));
                 if (row.alert_delta_percent) parts.push('涨幅率>=' + row.alert_delta_percent + '%');
-                if (row.alert_value) parts.push((row.alert_condition || 'gt') + ' ' + row.alert_value);
+                if (row.alert_value) parts.push((row.alert_condition || 'gt') + ' ' + formatRuleMetricValue(row.alert_field, row.alert_value));
                 return text + ' ' + (parts.join(' 且/或 ') || '比上次上升');
             }
             if (strategy === 'continuous_increase') {
                 text += ' 连续上升 ' + (row.alert_consecutive || 1) + ' 次';
-                if (row.alert_value) text += ' 且 ' + (row.alert_condition || 'gt') + ' ' + row.alert_value;
+                if (row.alert_value) text += ' 且 ' + (row.alert_condition || 'gt') + ' ' + formatRuleMetricValue(row.alert_field, row.alert_value);
                 return text;
             }
             if (strategy === 'sustained') {
-                return text + ' ' + (row.alert_condition || 'gt') + ' ' + (row.alert_value || '') + ' 连续 ' + (row.alert_consecutive || 1) + ' 次';
+                return text + ' ' + (row.alert_condition || 'gt') + ' ' + formatRuleMetricValue(row.alert_field, row.alert_value || '') + ' 连续 ' + (row.alert_consecutive || 1) + ' 次';
             }
-            return text + ' ' + (row.alert_condition || 'gt') + ' ' + (row.alert_value || '');
+            return text + ' ' + (row.alert_condition || 'gt') + ' ' + formatRuleMetricValue(row.alert_field, row.alert_value || '');
         }
         const triggerActionTypeOptions = [
             { label: '命令', value: 'command' },
@@ -1898,8 +2179,8 @@ const HealthChecksPage = defineComponent({
                             h(NGi, null, () => h(NInput, { value: rule.field, onUpdateValue: v => rule.field = v, placeholder: '字段，如 data.heap_alloc_kb' })),
                             h(NGi, null, () => h(NSelect, { value: rule.strategy, onUpdateValue: v => rule.strategy = v, options: alertStrategyOptions })),
                             ruleUsesThreshold(rule) ? h(NGi, null, () => h(NSelect, { value: rule.condition, onUpdateValue: v => rule.condition = v, options: alertConditionOptions })) : null,
-                            ruleUsesThreshold(rule) && ruleNeedsValue(rule) ? h(NGi, null, () => h(NInput, { value: rule.value, onUpdateValue: v => rule.value = v, placeholder: rule.strategy === 'threshold' || rule.strategy === 'sustained' ? '当前值阈值，如 2000' : '当前值阈值，可选' })) : null,
-                            ruleUsesDelta(rule) ? h(NGi, null, () => h(NInput, { value: rule.delta_value, onUpdateValue: v => rule.delta_value = v, placeholder: '变化量>=，如 500' })) : null,
+                            ruleUsesThreshold(rule) && ruleNeedsValue(rule) ? h(NGi, null, () => ruleValueInput(rule, 'value', ruleValuePlaceholder(rule))) : null,
+                            ruleUsesDelta(rule) ? h(NGi, null, () => ruleValueInput(rule, 'delta_value', isKBMetricField(rule.field) ? '变化量>=，单位 MB，如 200' : '变化量>=，如 500')) : null,
                             ruleUsesDelta(rule) ? h(NGi, null, () => h(NInput, { value: rule.delta_percent, onUpdateValue: v => rule.delta_percent = v, placeholder: '变化率>=，如 30' })) : null,
                             ruleUsesConsecutive(rule) ? h(NGi, null, () => h(NInputNumber, { value: rule.consecutive, onUpdateValue: v => rule.consecutive = v, min: 1, max: 100, style: 'width:100%', placeholder: '连续次数' })) : null,
                         ]),

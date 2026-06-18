@@ -3,9 +3,11 @@ package monitor
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,7 +25,7 @@ type CustomSQLManager struct {
 	eventBus     *EventBus
 	mu           sync.Mutex
 	monitors     map[int64]*customSQLMon
-	metricStates map[int64]*healthMetricState
+	metricStates map[string]*healthMetricState
 }
 
 type customSQLMon struct {
@@ -36,7 +38,7 @@ func NewCustomSQLManager(s *store.Store, d *notify.Dispatcher, eb *EventBus) *Cu
 		dispatcher:   d,
 		eventBus:     eb,
 		monitors:     make(map[int64]*customSQLMon),
-		metricStates: make(map[int64]*healthMetricState),
+		metricStates: make(map[string]*healthMetricState),
 	}
 }
 
@@ -82,7 +84,7 @@ func (m *CustomSQLManager) Stop(id int64) {
 	if mon, ok := m.monitors[id]; ok {
 		mon.cancel()
 		delete(m.monitors, id)
-		delete(m.metricStates, id)
+		m.deleteMetricStatesLocked(id)
 		log.Printf("stopped custom sql check id=%d", id)
 	}
 }
@@ -99,7 +101,7 @@ func (m *CustomSQLManager) StopAll() {
 	for id, mon := range m.monitors {
 		mon.cancel()
 		delete(m.monitors, id)
-		delete(m.metricStates, id)
+		m.deleteMetricStatesLocked(id)
 	}
 	log.Println("all custom sql checks stopped")
 }
@@ -154,7 +156,9 @@ func (m *CustomSQLManager) runMonitor(ctx context.Context, cfg *store.CustomSQLC
 func (m *CustomSQLManager) doCheck(cfg *store.CustomSQLCheck) {
 	m.emit("custom_sql_checking", cfg.ID, cfg.Name, "检查中...", nil)
 
-	logEntry := TestCustomSQLCheckWithMetricState(m.store, cfg, m.metricState(cfg.ID, cfg.ResultField))
+	logEntry := TestCustomSQLCheckWithMetricStateProvider(m.store, cfg, func(ruleKey, field string) *healthMetricState {
+		return m.metricState(cfg.ID, ruleKey, field)
+	})
 	if id, err := m.store.InsertCustomSQLLog(&logEntry); err == nil {
 		logEntry.ID = id
 	} else {
@@ -182,7 +186,7 @@ func (m *CustomSQLManager) doCheck(cfg *store.CustomSQLCheck) {
 	if logEntry.Status == "ok" && m.isAlertNotified(cfg.ID) {
 		m.setAlertNotified(cfg.ID, false)
 		if cfg.NotifyEnabled && cfg.RecoveryNotify {
-			recoveryMsg := fmt.Sprintf("自定义 SQL 恢复通知\n\n规则: %s\n数据库: %s\n当前值: %s\n状态: 已恢复正常", cfg.Name, cfg.DatabaseName, logEntry.Value)
+			recoveryMsg := fmt.Sprintf("SQL 恢复通知\n\n规则: %s\n数据库: %s\n当前值: %s\n状态: 已恢复正常", cfg.Name, cfg.DatabaseName, logEntry.Value)
 			if err := m.dispatcher.SendScopedNotifications("custom_sql", cfg.ID, recoveryMsg); err != nil {
 				log.Printf("[CustomSQL %s] recovery notification failed: %v", cfg.Name, err)
 			} else {
@@ -192,18 +196,28 @@ func (m *CustomSQLManager) doCheck(cfg *store.CustomSQLCheck) {
 	}
 }
 
-func (m *CustomSQLManager) metricState(id int64, field string) *healthMetricState {
+func (m *CustomSQLManager) metricState(id int64, ruleKey, field string) *healthMetricState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if field == "" {
 		field = "first_column"
 	}
-	st := m.metricStates[id]
+	key := fmt.Sprintf("%d:%s:%s", id, ruleKey, field)
+	st := m.metricStates[key]
 	if st == nil || st.Field != field {
 		st = &healthMetricState{Field: field}
-		m.metricStates[id] = st
+		m.metricStates[key] = st
 	}
 	return st
+}
+
+func (m *CustomSQLManager) deleteMetricStatesLocked(id int64) {
+	prefix := fmt.Sprintf("%d:", id)
+	for key := range m.metricStates {
+		if strings.HasPrefix(key, prefix) {
+			delete(m.metricStates, key)
+		}
+	}
 }
 
 func (m *CustomSQLManager) settingKey(id int64) string {
@@ -227,6 +241,15 @@ func TestCustomSQLCheck(s *store.Store, cfg *store.CustomSQLCheck) store.CustomS
 }
 
 func TestCustomSQLCheckWithMetricState(s *store.Store, cfg *store.CustomSQLCheck, metricState *healthMetricState) store.CustomSQLLog {
+	return TestCustomSQLCheckWithMetricStateProvider(s, cfg, func(ruleKey, field string) *healthMetricState {
+		if metricState != nil {
+			metricState.Field = field
+		}
+		return metricState
+	})
+}
+
+func TestCustomSQLCheckWithMetricStateProvider(s *store.Store, cfg *store.CustomSQLCheck, metricState func(ruleKey, field string) *healthMetricState) store.CustomSQLLog {
 	start := time.Now()
 	result := store.CustomSQLLog{
 		CheckID:       cfg.ID,
@@ -276,42 +299,192 @@ func TestCustomSQLCheckWithMetricState(s *store.Store, cfg *store.CustomSQLCheck
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	value, err := querySelectedValue(ctx, db, strings.TrimSpace(strings.TrimSuffix(cfg.SQLText, ";")), cfg.ResultField)
+	sqlText := strings.TrimSpace(strings.TrimSuffix(cfg.SQLText, ";"))
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		result.Status = "error"
+		result.Error = fmt.Sprintf("启动只读事务失败: %v", err)
+		result.Message = result.Error
+		return result
+	}
+	defer tx.Rollback()
+	cols, values, err := queryFirstRowValues(ctx, tx, sqlText)
 	if err != nil {
 		result.Status = "error"
 		result.Error = err.Error()
 		result.Message = err.Error()
 		return result
 	}
-	result.Value = value
-
-	if strings.EqualFold(strings.TrimSpace(cfg.Condition), "changed") {
-		key := fmt.Sprintf("custom_sql_last_value_%d", cfg.ID)
-		last := s.GetSetting(key)
-		s.SetSetting(key, value)
-		if last != "" && last != value {
-			result.Status = "alert"
-			result.Message = fmt.Sprintf("当前值从 %q 变为 %q", last, value)
-		} else {
-			result.Status = "ok"
-			if last == "" {
-				result.Message = "已记录首次结果"
-			} else {
-				result.Message = "当前值未变化"
-			}
-		}
+	if err := tx.Commit(); err != nil {
+		result.Status = "error"
+		result.Error = fmt.Sprintf("提交只读查询失败: %v", err)
+		result.Message = result.Error
 		return result
 	}
-
-	matched, reason := EvaluateCustomSQLRule(value, cfg, metricState)
-	if matched {
-		result.Status = "alert"
-		result.Message = reason
-	} else {
-		result.Status = "ok"
-		result.Message = reason
+	rules := customSQLAlertRulesFromConfig(cfg)
+	if len(rules) == 0 {
+		rules = []customSQLAlertRule{{
+			ResultField:      cfg.ResultField,
+			Strategy:         cfg.AlertStrategy,
+			Condition:        cfg.Condition,
+			ExpectedValue:    cfg.ExpectedValue,
+			DeltaValue:       cfg.AlertDeltaValue,
+			DeltaPercent:     cfg.AlertDeltaPercent,
+			AlertConsecutive: cfg.AlertConsecutive,
+		}}
 	}
+
+	var summaries []string
+	for i, rule := range rules {
+		value, err := selectedCustomSQLValue(cols, values, rule.ResultField)
+		if err != nil {
+			result.Status = "error"
+			result.Error = err.Error()
+			result.Message = err.Error()
+			return result
+		}
+		ruleName := strings.TrimSpace(rule.Name)
+		if ruleName == "" {
+			ruleName = strings.TrimSpace(rule.ResultField)
+		}
+		if ruleName == "" {
+			ruleName = "第一列"
+		}
+		ruleKey := fmt.Sprintf("%d:%s:%s", i, ruleName, rule.ResultField)
+		ruleCfg := customSQLCheckForAlertRule(cfg, rule)
+		fieldName := strings.TrimSpace(ruleCfg.ResultField)
+		if fieldName == "" {
+			fieldName = "第一列"
+		}
+		summaries = append(summaries, fmt.Sprintf("%s=%s", fieldName, value))
+
+		if strings.EqualFold(strings.TrimSpace(ruleCfg.Condition), "changed") {
+			key := fmt.Sprintf("custom_sql_last_value_%d_%s", cfg.ID, safeCustomSQLSettingSuffix(ruleKey))
+			if len(rules) == 1 && strings.TrimSpace(cfg.AlertRules) == "" {
+				key = fmt.Sprintf("custom_sql_last_value_%d", cfg.ID)
+			}
+			last := s.GetSetting(key)
+			s.SetSetting(key, value)
+			result.Value = value
+			result.ExpectedValue = ruleCfg.ExpectedValue
+			result.Condition = ruleCfg.Condition
+			if last != "" && last != value {
+				result.Status = "alert"
+				result.Message = fmt.Sprintf("命中规则: %s\n字段: %s\n当前值: %s\n上次值: %s\n策略: 发生变化", ruleName, fieldName, value, last)
+				return result
+			}
+			continue
+		}
+
+		st := (*healthMetricState)(nil)
+		if metricState != nil {
+			st = metricState(ruleKey, fieldName)
+		}
+		matched, reason := EvaluateCustomSQLRule(value, ruleCfg, st)
+		if matched {
+			result.Status = "alert"
+			result.Value = value
+			result.ExpectedValue = ruleCfg.ExpectedValue
+			result.Condition = ruleCfg.Condition
+			result.Message = fmt.Sprintf("命中规则: %s\n%s", ruleName, reason)
+			return result
+		}
+	}
+
+	result.Status = "ok"
+	result.Value = strings.Join(summaries, "; ")
+	if result.Value == "" {
+		result.Value = strings.Join(values, "; ")
+	}
+	result.Message = "所有规则正常"
 	return result
+}
+
+type customSQLAlertRule struct {
+	Name              string `json:"name"`
+	ResultField       string `json:"result_field"`
+	Field             string `json:"field,omitempty"`
+	Strategy          string `json:"strategy"`
+	Condition         string `json:"condition"`
+	ExpectedValue     string `json:"expected_value"`
+	Value             string `json:"value,omitempty"`
+	DeltaValue        string `json:"delta_value"`
+	DeltaPercent      string `json:"delta_percent"`
+	AlertDeltaValue   string `json:"alert_delta_value,omitempty"`
+	AlertDeltaPercent string `json:"alert_delta_percent,omitempty"`
+	Consecutive       int    `json:"consecutive"`
+	AlertConsecutive  int    `json:"alert_consecutive,omitempty"`
+}
+
+func customSQLAlertRulesFromConfig(cfg *store.CustomSQLCheck) []customSQLAlertRule {
+	var rules []customSQLAlertRule
+	if strings.TrimSpace(cfg.AlertRules) != "" && strings.TrimSpace(cfg.AlertRules) != "[]" {
+		if err := json.Unmarshal([]byte(cfg.AlertRules), &rules); err != nil {
+			rules = nil
+		}
+	}
+	normalized := make([]customSQLAlertRule, 0, len(rules)+1)
+	for _, rule := range rules {
+		if strings.TrimSpace(rule.ResultField) == "" {
+			rule.ResultField = strings.TrimSpace(rule.Field)
+		}
+		if strings.TrimSpace(rule.ExpectedValue) == "" {
+			rule.ExpectedValue = rule.Value
+		}
+		if strings.TrimSpace(rule.Strategy) == "" {
+			rule.Strategy = "threshold"
+		}
+		if strings.TrimSpace(rule.Condition) == "" {
+			rule.Condition = "gt"
+		}
+		if rule.Consecutive <= 0 {
+			if rule.AlertConsecutive > 0 {
+				rule.Consecutive = rule.AlertConsecutive
+			} else {
+				rule.Consecutive = 1
+			}
+		}
+		if rule.DeltaValue == "" {
+			rule.DeltaValue = rule.AlertDeltaValue
+		}
+		if rule.DeltaPercent == "" {
+			rule.DeltaPercent = rule.AlertDeltaPercent
+		}
+		normalized = append(normalized, rule)
+	}
+	if len(normalized) > 0 {
+		return normalized
+	}
+	return []customSQLAlertRule{{
+		ResultField:      cfg.ResultField,
+		Strategy:         cfg.AlertStrategy,
+		Condition:        cfg.Condition,
+		ExpectedValue:    cfg.ExpectedValue,
+		DeltaValue:       cfg.AlertDeltaValue,
+		DeltaPercent:     cfg.AlertDeltaPercent,
+		AlertConsecutive: cfg.AlertConsecutive,
+	}}
+}
+
+func customSQLCheckForAlertRule(base *store.CustomSQLCheck, rule customSQLAlertRule) *store.CustomSQLCheck {
+	copied := *base
+	copied.ResultField = rule.ResultField
+	copied.AlertStrategy = rule.Strategy
+	copied.Condition = rule.Condition
+	copied.ExpectedValue = rule.ExpectedValue
+	copied.AlertDeltaValue = rule.DeltaValue
+	copied.AlertDeltaPercent = rule.DeltaPercent
+	copied.AlertConsecutive = rule.Consecutive
+	if copied.AlertStrategy == "" {
+		copied.AlertStrategy = "threshold"
+	}
+	if copied.Condition == "" {
+		copied.Condition = "gt"
+	}
+	if copied.AlertConsecutive <= 0 {
+		copied.AlertConsecutive = 1
+	}
+	return &copied
 }
 
 func EvaluateCustomSQLRule(value string, cfg *store.CustomSQLCheck, st *healthMetricState) (bool, string) {
@@ -433,29 +606,37 @@ func customSQLDSN(db *store.Database, dbName string) string {
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true", db.User, db.Password, db.Host, db.Port, url.PathEscape(schema))
 }
 
-func querySelectedValue(ctx context.Context, db *sql.DB, sqlText, resultField string) (string, error) {
-	rows, err := db.QueryContext(ctx, sqlText)
+type customSQLQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func querySelectedValue(ctx context.Context, q customSQLQueryer, sqlText, resultField string) (string, error) {
+	cols, values, err := queryFirstRowValues(ctx, q, sqlText)
 	if err != nil {
 		return "", err
+	}
+	return selectedCustomSQLValue(cols, values, resultField)
+}
+
+func queryFirstRowValues(ctx context.Context, q customSQLQueryer, sqlText string) ([]string, []string, error) {
+	rows, err := q.QueryContext(ctx, sqlText)
+	if err != nil {
+		return nil, nil, err
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
 	if len(cols) == 0 {
-		return "", nil
-	}
-	selectedIndex, err := resolveCustomSQLResultIndex(cols, resultField)
-	if err != nil {
-		return "", err
+		return cols, nil, nil
 	}
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
-			return "", err
+			return cols, nil, err
 		}
-		return "", nil
+		return cols, nil, nil
 	}
 
 	raw := make([]sql.RawBytes, len(cols))
@@ -464,12 +645,29 @@ func querySelectedValue(ctx context.Context, db *sql.DB, sqlText, resultField st
 		dest[i] = &raw[i]
 	}
 	if err := rows.Scan(dest...); err != nil {
-		return "", err
+		return cols, nil, err
 	}
-	if raw[selectedIndex] == nil {
+	values := make([]string, len(cols))
+	for i := range raw {
+		if raw[i] != nil {
+			values[i] = string(raw[i])
+		}
+	}
+	return cols, values, nil
+}
+
+func selectedCustomSQLValue(cols, values []string, resultField string) (string, error) {
+	if len(cols) == 0 || len(values) == 0 {
 		return "", nil
 	}
-	return string(raw[selectedIndex]), nil
+	selectedIndex, err := resolveCustomSQLResultIndex(cols, resultField)
+	if err != nil {
+		return "", err
+	}
+	if selectedIndex >= len(values) {
+		return "", nil
+	}
+	return values[selectedIndex], nil
 }
 
 func resolveCustomSQLResultIndex(cols []string, resultField string) (int, error) {
@@ -491,6 +689,26 @@ func resolveCustomSQLResultIndex(cols []string, resultField string) (int, error)
 	return 0, fmt.Errorf("结果字段 %q 不存在，当前返回列: %s", field, strings.Join(cols, ", "))
 }
 
+func safeCustomSQLSettingSuffix(input string) string {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return "default"
+	}
+	var b strings.Builder
+	for _, r := range input {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('_')
+	}
+	out := strings.Trim(b.String(), "_")
+	if out == "" {
+		return "default"
+	}
+	return out
+}
+
 func ValidateCustomSQL(sqlText string) error {
 	stmt := strings.TrimSpace(sqlText)
 	if stmt == "" {
@@ -501,13 +719,103 @@ func ValidateCustomSQL(sqlText string) error {
 		return fmt.Errorf("只允许单条查询 SQL")
 	}
 	lower := strings.ToLower(strings.TrimSpace(stmt))
-	allowed := []string{"select ", "show ", "with ", "explain ", "select\n", "show\n", "with\n", "explain\n"}
-	for _, prefix := range allowed {
-		if strings.HasPrefix(lower, prefix) || lower == strings.TrimSpace(prefix) {
-			return nil
+	tokens := customSQLTokens(lower)
+	if len(tokens) == 0 {
+		return fmt.Errorf("SQL 不能为空")
+	}
+	switch tokens[0] {
+	case "select", "show", "with", "explain":
+	default:
+		return fmt.Errorf("只允许 SELECT / SHOW / WITH / EXPLAIN 查询")
+	}
+	if err := validateCustomSQLReadOnly(lower, tokens); err != nil {
+		return err
+	}
+	if err := validateCustomSQLScanRisk(lower, tokens); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateCustomSQLReadOnly(lower string, tokens []string) error {
+	blockedPhrases := []string{
+		" into outfile", " into dumpfile", " into @", " for update",
+		" lock in share mode", " procedure analyse",
+	}
+	padded := " " + customSQLSpaceRE.ReplaceAllString(lower, " ") + " "
+	for _, phrase := range blockedPhrases {
+		if strings.Contains(padded, phrase) {
+			return fmt.Errorf("自定义 SQL 只能查询，禁止使用 %s", strings.TrimSpace(strings.ToUpper(phrase)))
 		}
 	}
-	return fmt.Errorf("只允许 SELECT / SHOW / WITH / EXPLAIN 查询")
+	blockedTokens := map[string]string{
+		"insert": "INSERT", "update": "UPDATE", "delete": "DELETE", "replace": "REPLACE",
+		"truncate": "TRUNCATE", "drop": "DROP", "alter": "ALTER", "create": "CREATE",
+		"rename": "RENAME", "grant": "GRANT", "revoke": "REVOKE", "call": "CALL",
+		"load": "LOAD", "handler": "HANDLER", "lock": "LOCK", "unlock": "UNLOCK",
+		"analyze": "ANALYZE", "optimize": "OPTIMIZE", "repair": "REPAIR", "kill": "KILL",
+		"set": "SET", "reset": "RESET", "use": "USE", "flush": "FLUSH", "commit": "COMMIT",
+		"rollback": "ROLLBACK", "start": "START", "begin": "BEGIN", "do": "DO",
+		"get_lock": "GET_LOCK", "release_lock": "RELEASE_LOCK", "sleep": "SLEEP",
+	}
+	for _, token := range tokens {
+		if keyword, ok := blockedTokens[token]; ok {
+			return fmt.Errorf("自定义 SQL 只能查询，禁止使用 %s", keyword)
+		}
+	}
+	return nil
+}
+
+func validateCustomSQLScanRisk(lower string, tokens []string) error {
+	if tokens[0] != "select" && tokens[0] != "with" {
+		return nil
+	}
+	normalized := " " + customSQLSpaceRE.ReplaceAllString(lower, " ") + " "
+	if !strings.Contains(normalized, " from ") {
+		return nil
+	}
+	if regexp.MustCompile(`(?i)\bselect\s+\*`).FindStringIndex(lower) != nil {
+		return fmt.Errorf("禁止 SELECT *，请只查询需要监控的字段")
+	}
+	hasLimit := tokenExists(tokens, "limit")
+	hasGroupBy := strings.Contains(normalized, " group by ")
+	if hasLimit {
+		return nil
+	}
+	if customSQLLooksSingleRowAggregate(lower) && !hasGroupBy {
+		return nil
+	}
+	return fmt.Errorf("普通 SELECT 必须带 LIMIT，避免监控 SQL 拉取全量数据；聚合单行查询如 COUNT/SUM 可不带 LIMIT")
+}
+
+func customSQLLooksSingleRowAggregate(lower string) bool {
+	aggregateRE := regexp.MustCompile(`(?i)\b(count|sum|avg|min|max)\s*\(`)
+	return aggregateRE.FindStringIndex(lower) != nil
+}
+
+var customSQLSpaceRE = regexp.MustCompile(`\s+`)
+
+func customSQLTokens(lower string) []string {
+	parts := strings.FieldsFunc(lower, func(r rune) bool {
+		return !(r == '_' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func tokenExists(tokens []string, target string) bool {
+	for _, token := range tokens {
+		if token == target {
+			return true
+		}
+	}
+	return false
 }
 
 func EvaluateCustomSQLCondition(value, condition, expected string) (bool, string) {
@@ -590,6 +898,17 @@ func buildCustomSQLMessage(cfg *store.CustomSQLCheck, logEntry *store.CustomSQLL
 	if resultField == "" {
 		resultField = "第一列"
 	}
-	return fmt.Sprintf("自定义 SQL 告警\n\n规则: %s\n数据库: %s\n执行库: %s\n结果字段: %s\n异常策略: %s\n条件: %s %s\n当前值: %s\n结果: %s\n耗时: %dms\n\nSQL:\n%s",
-		cfg.Name, cfg.DatabaseName, cfg.DBName, resultField, cfg.AlertStrategy, cfg.Condition, cfg.ExpectedValue, logEntry.Value, logEntry.Message, logEntry.DurationMs, cfg.SQLText)
+	if strings.TrimSpace(cfg.AlertRules) != "" && strings.TrimSpace(cfg.AlertRules) != "[]" {
+		resultField = "见结果详情"
+	}
+	condition := cfg.Condition
+	if strings.TrimSpace(logEntry.Condition) != "" {
+		condition = logEntry.Condition
+	}
+	expected := cfg.ExpectedValue
+	if strings.TrimSpace(logEntry.ExpectedValue) != "" {
+		expected = logEntry.ExpectedValue
+	}
+	return fmt.Sprintf("SQL 告警\n\n规则: %s\n数据库: %s\n执行库: %s\n结果字段: %s\n异常策略: %s\n条件: %s %s\n当前值: %s\n结果: %s\n耗时: %dms\n\nSQL:\n%s",
+		cfg.Name, cfg.DatabaseName, cfg.DBName, resultField, cfg.AlertStrategy, condition, expected, logEntry.Value, logEntry.Message, logEntry.DurationMs, cfg.SQLText)
 }

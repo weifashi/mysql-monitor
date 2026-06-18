@@ -226,6 +226,7 @@ CREATE TABLE IF NOT EXISTS custom_sql_checks (
     alert_delta_value TEXT   NOT NULL DEFAULT '',
     alert_delta_percent TEXT NOT NULL DEFAULT '',
     alert_consecutive INTEGER NOT NULL DEFAULT 1,
+    alert_rules      TEXT    NOT NULL DEFAULT '[]',
     notify_enabled   INTEGER NOT NULL DEFAULT 1,
     recovery_notify  INTEGER NOT NULL DEFAULT 1,
     message_template TEXT    NOT NULL DEFAULT '',

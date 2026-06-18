@@ -450,8 +450,8 @@ func healthCheckForAlertRule(base *store.HealthCheck, rule healthAlertRule) *sto
 	copied.AlertField = rule.Field
 	copied.AlertStrategy = rule.Strategy
 	copied.AlertCondition = rule.Condition
-	copied.AlertValue = rule.Value
-	copied.AlertDeltaValue = rule.DeltaValue
+	copied.AlertValue = normalizeHealthConfiguredMetricValue(rule.Field, rule.Value)
+	copied.AlertDeltaValue = normalizeHealthConfiguredMetricValue(rule.Field, rule.DeltaValue)
 	copied.AlertDeltaPercent = rule.DeltaPercent
 	copied.AlertConsecutive = rule.Consecutive
 	if copied.AlertStrategy == "" {
@@ -475,7 +475,7 @@ func evaluateSingleHealthAlertField(respJSON map[string]interface{}, cfg *store.
 		valStr := fmt.Sprintf("%v", val)
 		matched, msg := evaluateHealthAlertRule(valStr, cfg, metricState)
 		if matched {
-			return true, fmt.Sprintf("%s，当前值 %s", msg, valStr), nil
+			return true, msg, nil
 		}
 		return false, msg, nil
 	}
@@ -492,11 +492,12 @@ func evaluateHealthAlertRule(value string, cfg *store.HealthCheck, st *healthMet
 		consecutive = 1
 	}
 	thresholdConfigured := strings.TrimSpace(cfg.AlertValue) != "" || cfg.AlertCondition == "empty" || cfg.AlertCondition == "not_empty"
-	thresholdMatched, thresholdMsg := evaluateHealthAlertCondition(value, cfg.AlertCondition, cfg.AlertValue)
+	comparableValue := normalizeHealthRuntimeMetricValue(cfg.AlertField, value)
+	thresholdMatched, thresholdMsg := evaluateHealthAlertCondition(comparableValue, cfg.AlertCondition, cfg.AlertValue)
 
 	switch strategy {
 	case "threshold":
-		return thresholdMatched, formatHealthThresholdMessage(cfg.AlertField, value, cfg.AlertCondition, cfg.AlertValue, thresholdMsg, 0, 0)
+		return thresholdMatched, formatHealthThresholdMessage(cfg.AlertField, comparableValue, cfg.AlertCondition, cfg.AlertValue, thresholdMsg, 0, 0)
 	case "sustained":
 		if st == nil {
 			st = &healthMetricState{}
@@ -507,9 +508,9 @@ func evaluateHealthAlertRule(value string, cfg *store.HealthCheck, st *healthMet
 			st.ConsecutiveMatched = 0
 		}
 		matched := st.ConsecutiveMatched >= consecutive
-		return matched, formatHealthThresholdMessage(cfg.AlertField, value, cfg.AlertCondition, cfg.AlertValue, thresholdMsg, st.ConsecutiveMatched, consecutive)
+		return matched, formatHealthThresholdMessage(cfg.AlertField, comparableValue, cfg.AlertCondition, cfg.AlertValue, thresholdMsg, st.ConsecutiveMatched, consecutive)
 	case "increase", "sudden_increase":
-		current, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		current, err := strconv.ParseFloat(strings.TrimSpace(comparableValue), 64)
 		if err != nil {
 			return true, fmt.Sprintf("%s 突增判断需要数值，当前值=%q", cfg.AlertField, value)
 		}
@@ -521,7 +522,7 @@ func evaluateHealthAlertRule(value string, cfg *store.HealthCheck, st *healthMet
 		st.LastValue = current
 		return matched, msg
 	case "continuous_increase":
-		current, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		current, err := strconv.ParseFloat(strings.TrimSpace(comparableValue), 64)
 		if err != nil {
 			return true, fmt.Sprintf("%s 连续上升判断需要数值，当前值=%q", cfg.AlertField, value)
 		}
@@ -634,6 +635,44 @@ func healthConditionSymbol(condition string) string {
 	}
 }
 
+func normalizeHealthRuntimeMetricValue(field, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !isHealthKBMetricField(field) {
+		return raw
+	}
+	v, err := strconv.ParseFloat(strings.ReplaceAll(raw, ",", ""), 64)
+	if err != nil {
+		return raw
+	}
+	return strconv.FormatFloat(v/1024, 'f', -1, 64)
+}
+
+func normalizeHealthConfiguredMetricValue(field, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !isHealthKBMetricField(field) {
+		return raw
+	}
+	// Only migrate the old built-in template values. User-entered values are now
+	// stored as MB and must not be guessed by magnitude.
+	switch strings.ReplaceAll(raw, ",", "") {
+	case "1024000":
+		return "1000"
+	case "150000000":
+		return "1000"
+	case "819200":
+		return "800"
+	case "1500000":
+		return "1464.84"
+	case "1200000":
+		return "1171.88"
+	}
+	return raw
+}
+
+func isHealthKBMetricField(field string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(field)), "_kb")
+}
+
 func formatHealthMetricValue(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -657,9 +696,8 @@ func formatHealthMetricValueForField(field, raw string) string {
 }
 
 func formatHealthNumberForField(field string, v float64) string {
-	field = strings.ToLower(strings.TrimSpace(field))
-	if strings.HasSuffix(field, "_kb") {
-		return formatHealthNumber(v/1024) + " MB"
+	if isHealthKBMetricField(field) {
+		return formatHealthNumber(v) + " MB"
 	}
 	return formatHealthNumber(v)
 }

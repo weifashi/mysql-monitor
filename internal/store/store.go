@@ -138,6 +138,7 @@ func New(dataDir string) (*Store, error) {
 		"ALTER TABLE custom_sql_checks ADD COLUMN alert_delta_value TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE custom_sql_checks ADD COLUMN alert_delta_percent TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE custom_sql_checks ADD COLUMN alert_consecutive INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE custom_sql_checks ADD COLUMN alert_rules TEXT NOT NULL DEFAULT '[]'",
 	}
 	// Migrate existing data: database_id not null → scope_type='mysql'
 	db.Exec(`UPDATE notification_configs SET scope_type='mysql' WHERE database_id IS NOT NULL AND scope_type='all'`)
@@ -1168,6 +1169,7 @@ type CustomSQLCheck struct {
 	AlertDeltaValue   string    `json:"alert_delta_value"`
 	AlertDeltaPercent string    `json:"alert_delta_percent"`
 	AlertConsecutive  int       `json:"alert_consecutive"`
+	AlertRules        string    `json:"alert_rules"`
 	NotifyEnabled     bool      `json:"notify_enabled"`
 	RecoveryNotify    bool      `json:"recovery_notify"`
 	MessageTemplate   string    `json:"message_template"`
@@ -1193,7 +1195,7 @@ type CustomSQLLog struct {
 }
 
 func (s *Store) ListCustomSQLChecks() ([]CustomSQLCheck, error) {
-	rows, err := s.db.Query(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.result_field, c.interval_sec, c.timeout_sec, c.alert_strategy, c.condition, c.expected_value, c.alert_delta_value, c.alert_delta_percent, c.alert_consecutive, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id ORDER BY c.id`)
+	rows, err := s.db.Query(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.result_field, c.interval_sec, c.timeout_sec, c.alert_strategy, c.condition, c.expected_value, c.alert_delta_value, c.alert_delta_percent, c.alert_consecutive, c.alert_rules, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id ORDER BY c.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1202,7 +1204,7 @@ func (s *Store) ListCustomSQLChecks() ([]CustomSQLCheck, error) {
 	for rows.Next() {
 		var c CustomSQLCheck
 		var notifyEnabled, recoveryNotify, enabled int
-		if err := rows.Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.ResultField, &c.IntervalSec, &c.TimeoutSec, &c.AlertStrategy, &c.Condition, &c.ExpectedValue, &c.AlertDeltaValue, &c.AlertDeltaPercent, &c.AlertConsecutive, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.ResultField, &c.IntervalSec, &c.TimeoutSec, &c.AlertStrategy, &c.Condition, &c.ExpectedValue, &c.AlertDeltaValue, &c.AlertDeltaPercent, &c.AlertConsecutive, &c.AlertRules, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.NotifyEnabled = notifyEnabled == 1
@@ -1216,8 +1218,8 @@ func (s *Store) ListCustomSQLChecks() ([]CustomSQLCheck, error) {
 func (s *Store) GetCustomSQLCheck(id int64) (*CustomSQLCheck, error) {
 	var c CustomSQLCheck
 	var notifyEnabled, recoveryNotify, enabled int
-	err := s.db.QueryRow(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.result_field, c.interval_sec, c.timeout_sec, c.alert_strategy, c.condition, c.expected_value, c.alert_delta_value, c.alert_delta_percent, c.alert_consecutive, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id WHERE c.id=?`, id).
-		Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.ResultField, &c.IntervalSec, &c.TimeoutSec, &c.AlertStrategy, &c.Condition, &c.ExpectedValue, &c.AlertDeltaValue, &c.AlertDeltaPercent, &c.AlertConsecutive, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt)
+	err := s.db.QueryRow(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.result_field, c.interval_sec, c.timeout_sec, c.alert_strategy, c.condition, c.expected_value, c.alert_delta_value, c.alert_delta_percent, c.alert_consecutive, c.alert_rules, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id WHERE c.id=?`, id).
+		Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.ResultField, &c.IntervalSec, &c.TimeoutSec, &c.AlertStrategy, &c.Condition, &c.ExpectedValue, &c.AlertDeltaValue, &c.AlertDeltaPercent, &c.AlertConsecutive, &c.AlertRules, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -1228,8 +1230,8 @@ func (s *Store) GetCustomSQLCheck(id int64) (*CustomSQLCheck, error) {
 }
 
 func (s *Store) CreateCustomSQLCheck(c *CustomSQLCheck) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO custom_sql_checks (database_id, name, db_name, sql_text, result_field, interval_sec, timeout_sec, alert_strategy, condition, expected_value, alert_delta_value, alert_delta_percent, alert_consecutive, notify_enabled, recovery_notify, message_template, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.ResultField, c.IntervalSec, c.TimeoutSec, c.AlertStrategy, c.Condition, c.ExpectedValue, c.AlertDeltaValue, c.AlertDeltaPercent, c.AlertConsecutive, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled))
+	res, err := s.db.Exec(`INSERT INTO custom_sql_checks (database_id, name, db_name, sql_text, result_field, interval_sec, timeout_sec, alert_strategy, condition, expected_value, alert_delta_value, alert_delta_percent, alert_consecutive, alert_rules, notify_enabled, recovery_notify, message_template, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.ResultField, c.IntervalSec, c.TimeoutSec, c.AlertStrategy, c.Condition, c.ExpectedValue, c.AlertDeltaValue, c.AlertDeltaPercent, c.AlertConsecutive, c.AlertRules, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled))
 	if err != nil {
 		return 0, err
 	}
@@ -1237,8 +1239,8 @@ func (s *Store) CreateCustomSQLCheck(c *CustomSQLCheck) (int64, error) {
 }
 
 func (s *Store) UpdateCustomSQLCheck(c *CustomSQLCheck) error {
-	_, err := s.db.Exec(`UPDATE custom_sql_checks SET database_id=?, name=?, db_name=?, sql_text=?, result_field=?, interval_sec=?, timeout_sec=?, alert_strategy=?, condition=?, expected_value=?, alert_delta_value=?, alert_delta_percent=?, alert_consecutive=?, notify_enabled=?, recovery_notify=?, message_template=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
-		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.ResultField, c.IntervalSec, c.TimeoutSec, c.AlertStrategy, c.Condition, c.ExpectedValue, c.AlertDeltaValue, c.AlertDeltaPercent, c.AlertConsecutive, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled), c.ID)
+	_, err := s.db.Exec(`UPDATE custom_sql_checks SET database_id=?, name=?, db_name=?, sql_text=?, result_field=?, interval_sec=?, timeout_sec=?, alert_strategy=?, condition=?, expected_value=?, alert_delta_value=?, alert_delta_percent=?, alert_consecutive=?, alert_rules=?, notify_enabled=?, recovery_notify=?, message_template=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
+		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.ResultField, c.IntervalSec, c.TimeoutSec, c.AlertStrategy, c.Condition, c.ExpectedValue, c.AlertDeltaValue, c.AlertDeltaPercent, c.AlertConsecutive, c.AlertRules, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled), c.ID)
 	return err
 }
 
