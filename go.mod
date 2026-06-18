@@ -1,4 +1,4 @@
-module mysql-monitor
+module ops-sentinel
 
 go 1.25.0
 

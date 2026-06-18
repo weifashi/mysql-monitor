@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"mysql-monitor/internal/store"
+	"ops-sentinel/internal/store"
 )
 
 func SendEmail(cfg store.EmailConfig, message string) error {

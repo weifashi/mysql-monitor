@@ -24,7 +24,7 @@ var encryptionKey []byte
 // InitEncryption derives a 256-bit AES key from the admin password using PBKDF2.
 // Must be called before any Store operations that read/write passwords.
 func InitEncryption(adminPassword string) {
-	salt := []byte("mysql-monitor-fixed-salt-v1")
+	salt := []byte("ops-sentinel-fixed-salt-v1")
 	encryptionKey = pbkdf2.Key([]byte(adminPassword), salt, pbkdf2Iterations, keyLen, sha256.New)
 }
 

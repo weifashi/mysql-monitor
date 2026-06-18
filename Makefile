@@ -23,12 +23,12 @@ init: ## 从示例生成 docker-compose.yml（已存在则跳过）
 
 build: ## 本地编译
 	@echo "🔨 编译中..."
-	go build -o mysql-monitor .
-	@echo "✅ 编译完成: ./mysql-monitor"
+	go build -o ops-sentinel .
+	@echo "✅ 编译完成: ./ops-sentinel"
 
 run: build ## 本地运行
 	@if [ ! -f $(ENV_FILE) ]; then cp .env.example $(ENV_FILE); echo "已创建 .env，请修改后重新运行"; exit 1; fi
-	@export $$(grep -v '^#' $(ENV_FILE) | xargs) && ./mysql-monitor
+	@export $$(grep -v '^#' $(ENV_FILE) | xargs) && ./ops-sentinel
 
 up: ## Docker 启动
 	@if [ ! -f $(COMPOSE_FILE) ]; then cp $(COMPOSE_EXAMPLE) $(COMPOSE_FILE); echo "✅ 已创建 $(COMPOSE_FILE)"; fi

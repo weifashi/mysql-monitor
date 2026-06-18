@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"mysql-monitor/internal/store"
+	"ops-sentinel/internal/store"
 )
 
 var dootaskClient = &http.Client{Timeout: 30 * time.Second}

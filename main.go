@@ -6,16 +6,16 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
-	"mysql-monitor/internal/auth"
-	"mysql-monitor/internal/monitor"
-	"mysql-monitor/internal/notify"
-	"mysql-monitor/internal/store"
-	"mysql-monitor/internal/web"
+	"ops-sentinel/internal/auth"
+	"ops-sentinel/internal/monitor"
+	"ops-sentinel/internal/notify"
+	"ops-sentinel/internal/store"
+	"ops-sentinel/internal/web"
 )
 
 func main() {

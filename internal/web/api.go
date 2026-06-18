@@ -15,10 +15,10 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
-	"mysql-monitor/internal/auth"
-	"mysql-monitor/internal/monitor"
-	"mysql-monitor/internal/notify"
-	"mysql-monitor/internal/store"
+	"ops-sentinel/internal/auth"
+	"ops-sentinel/internal/monitor"
+	"ops-sentinel/internal/notify"
+	"ops-sentinel/internal/store"
 )
 
 // --- Helpers ---
@@ -242,8 +242,8 @@ func (s *Server) apiDashboardStats(w http.ResponseWriter, r *http.Request) {
 		rocketmqConfigs, rocketmqAlertsToday        int
 		healthCheckCount, healthCheckErrorsToday    int
 		grafanaConfigs, grafanaAlertsToday          int
-		recentLogs                                   []store.SlowQueryLog
-		wg                                           sync.WaitGroup
+		recentLogs                                  []store.SlowQueryLog
+		wg                                          sync.WaitGroup
 	)
 	wg.Add(11)
 	go func() { defer wg.Done(); totalDBs, _ = s.store.CountDatabases() }()
@@ -260,21 +260,21 @@ func (s *Server) apiDashboardStats(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 
 	jsonOK(w, map[string]any{
-		"total_dbs":              totalDBs,
-		"enabled_dbs":           enabledDBs,
-		"running_dbs":           s.manager.RunningCount(),
-		"today_count":           todayCount,
-		"week_count":            weekCount,
-		"recent_logs":           recentLogs,
-		"rocketmq_configs":      rocketmqConfigs,
-		"rocketmq_running":      s.rocketMQMgr.RunningCount(),
-		"rocketmq_alerts_today": rocketmqAlertsToday,
-		"health_checks":              healthCheckCount,
-		"health_checks_running":      s.healthCheckMgr.RunningCount(),
+		"total_dbs":                 totalDBs,
+		"enabled_dbs":               enabledDBs,
+		"running_dbs":               s.manager.RunningCount(),
+		"today_count":               todayCount,
+		"week_count":                weekCount,
+		"recent_logs":               recentLogs,
+		"rocketmq_configs":          rocketmqConfigs,
+		"rocketmq_running":          s.rocketMQMgr.RunningCount(),
+		"rocketmq_alerts_today":     rocketmqAlertsToday,
+		"health_checks":             healthCheckCount,
+		"health_checks_running":     s.healthCheckMgr.RunningCount(),
 		"health_check_errors_today": healthCheckErrorsToday,
-		"grafana_configs":       grafanaConfigs,
-		"grafana_running":       s.grafanaMgr.RunningCount(),
-		"grafana_alerts_today":  grafanaAlertsToday,
+		"grafana_configs":           grafanaConfigs,
+		"grafana_running":           s.grafanaMgr.RunningCount(),
+		"grafana_alerts_today":      grafanaAlertsToday,
 	})
 }
 
@@ -901,11 +901,11 @@ func (s *Server) apiSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	allowed := map[string]bool{
-		"github_client_id":        true,
-		"github_client_secret":    true,
-		"github_enabled":          true,
-		"password_login_enabled":  true,
-		"oauth_public_base_url":   true,
+		"github_client_id":       true,
+		"github_client_secret":   true,
+		"github_enabled":         true,
+		"password_login_enabled": true,
+		"oauth_public_base_url":  true,
 	}
 	var changed []string
 	for k, v := range req {
@@ -1005,7 +1005,7 @@ func (s *Server) apiRocketMQCreate(w http.ResponseWriter, r *http.Request) {
 		ConsumerGroup: req.ConsumerGroup, Topic: req.Topic,
 		Threshold: req.Threshold, IntervalSec: req.IntervalSec,
 		NotifyNewMsg: req.NotifyNewMsg,
-		Enabled: true,
+		Enabled:      true,
 	}
 	id, err := s.store.CreateRocketMQConfig(cfg)
 	if err != nil {

@@ -3,7 +3,7 @@
 .env.local
 .env.*.local
 # 编译产物
-mysql-monitor
+ops-sentinel
 perf_monitor
 /monitor
 *.exe

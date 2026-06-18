@@ -6,25 +6,25 @@ import (
 	"net/http"
 	"strings"
 
-	"mysql-monitor/internal/auth"
-	"mysql-monitor/internal/monitor"
-	"mysql-monitor/internal/notify"
-	"mysql-monitor/internal/store"
+	"ops-sentinel/internal/auth"
+	"ops-sentinel/internal/monitor"
+	"ops-sentinel/internal/notify"
+	"ops-sentinel/internal/store"
 )
 
 //go:embed static
 var staticFS embed.FS
 
 type Server struct {
-	store           *store.Store
-	auth            *auth.SessionStore
-	manager         *monitor.Manager
-	rocketMQMgr     *monitor.RocketMQManager
-	healthCheckMgr  *monitor.HealthCheckManager
-	grafanaMgr      *monitor.GrafanaManager
-	dispatcher      *notify.Dispatcher
-	hub             *Hub
-	staticHandler   http.Handler
+	store          *store.Store
+	auth           *auth.SessionStore
+	manager        *monitor.Manager
+	rocketMQMgr    *monitor.RocketMQManager
+	healthCheckMgr *monitor.HealthCheckManager
+	grafanaMgr     *monitor.GrafanaManager
+	dispatcher     *notify.Dispatcher
+	hub            *Hub
+	staticHandler  http.Handler
 	// publicBaseURL 若设置（如 https://app.example.com），OAuth redirect_uri 固定由此拼接，避免反向代理下 r.Host 与公网不一致。
 	publicBaseURL string
 }

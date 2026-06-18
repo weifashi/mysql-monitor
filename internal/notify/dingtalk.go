@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"time"
 
-	"mysql-monitor/internal/store"
+	"ops-sentinel/internal/store"
 )
 
 func SendDingTalk(cfg store.DingTalkConfig, message string) error {

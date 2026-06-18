@@ -21,7 +21,7 @@
 ### 方式 1：一键启动（推荐）
 
 ```bash
-cd mysql-monitor
+cd ops-sentinel
 ./scripts/quick_start.sh
 ```
 
@@ -35,7 +35,7 @@ cd mysql-monitor
 ### 方式 2：使用 Makefile
 
 ```bash
-cd mysql-monitor
+cd ops-sentinel
 
 # 初始化配置
 make init
@@ -53,7 +53,7 @@ make logs-prod
 ### 方式 3：Docker Compose
 
 ```bash
-cd mysql-monitor
+cd ops-sentinel
 
 # 复制配置
 cp .env.example .env
@@ -195,7 +195,7 @@ make update       # 更新代码并重启
 ## 📦 项目结构
 
 ```
-mysql-monitor/
+ops-sentinel/
 ├── README.md                           # 主文档（本文件）
 ├── docker-compose.yml                  # Docker Compose 配置
 ├── Dockerfile                          # Docker 镜像构建
@@ -237,7 +237,7 @@ docker ps -a | grep monitor
 ping your-mysql-host
 
 # 检查环境变量
-docker inspect mysql-monitor-prod | grep -A 20 "Env"
+docker inspect ops-sentinel-prod | grep -A 20 "Env"
 ```
 
 ### 通知不工作

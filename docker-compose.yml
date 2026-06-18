@@ -1,7 +1,7 @@
 services:
   monitor:
     build: .
-    container_name: mysql-monitor
+    container_name: ops-sentinel
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-8080}:8080"

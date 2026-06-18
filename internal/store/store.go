@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"mysql-monitor/internal/auth"
+	"ops-sentinel/internal/auth"
 
 	_ "modernc.org/sqlite"
 )
@@ -1145,11 +1145,11 @@ func (s *Store) CleanupOldNotifiedPIDs() {
 // --- Ignored SQL Patterns ---
 
 type IgnoredSQLPattern struct {
-	ID         int64     `json:"id"`
-	DatabaseID int64     `json:"database_id"`
-	Fingerprint string   `json:"fingerprint"`
-	SampleSQL  string    `json:"sample_sql"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID          int64     `json:"id"`
+	DatabaseID  int64     `json:"database_id"`
+	Fingerprint string    `json:"fingerprint"`
+	SampleSQL   string    `json:"sample_sql"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // NormalizeSQL replaces literal values in SQL with ? placeholders to create a fingerprint.

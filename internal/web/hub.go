@@ -10,7 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"mysql-monitor/internal/monitor"
+	"ops-sentinel/internal/monitor"
 )
 
 var upgrader = websocket.Upgrader{

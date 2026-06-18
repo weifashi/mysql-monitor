@@ -10,8 +10,8 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
-	"mysql-monitor/internal/notify"
-	"mysql-monitor/internal/store"
+	"ops-sentinel/internal/notify"
+	"ops-sentinel/internal/store"
 )
 
 type Manager struct {

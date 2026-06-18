@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"mysql-monitor/internal/notify"
-	"mysql-monitor/internal/store"
+	"ops-sentinel/internal/notify"
+	"ops-sentinel/internal/store"
 )
 
 // --- Alert Rule Definitions ---
@@ -269,7 +269,7 @@ func (m *GrafanaManager) CleanupGrafanaResources(id int64) {
 // HandleWebhook processes incoming Grafana alert webhooks.
 func (m *GrafanaManager) HandleWebhook(body []byte) error {
 	var payload struct {
-		Status       string `json:"status"`
+		Status       string            `json:"status"`
 		CommonLabels map[string]string `json:"commonLabels"`
 		Alerts       []struct {
 			Status      string            `json:"status"`

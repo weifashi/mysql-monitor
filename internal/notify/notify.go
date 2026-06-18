@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"mysql-monitor/internal/store"
+	"ops-sentinel/internal/store"
 )
 
 type LongQuery struct {

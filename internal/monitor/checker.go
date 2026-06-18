@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"mysql-monitor/internal/notify"
-	"mysql-monitor/internal/store"
+	"ops-sentinel/internal/notify"
+	"ops-sentinel/internal/store"
 )
 
 const maxSlowQueries = 20

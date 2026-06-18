@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"mysql-monitor/internal/store"
+	"ops-sentinel/internal/store"
 )
 
 func SendFeishu(cfg store.FeishuConfig, message string) error {
