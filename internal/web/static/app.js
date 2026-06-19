@@ -2265,6 +2265,7 @@ const HealthCheckLogsPage = defineComponent({
         const loading = ref(true);
         const showDetail = ref(false);
         const detailRow = ref(null);
+        const detailFieldsExpanded = ref(false);
         const { connected, messages, stop } = useWebSocket('/ws/healthcheck-logs');
         onUnmounted(stop);
 
@@ -2290,6 +2291,7 @@ const HealthCheckLogsPage = defineComponent({
 
         function openDetail(row) {
             detailRow.value = row;
+            detailFieldsExpanded.value = false;
             showDetail.value = true;
         }
         const rowProps = row => ({
@@ -2395,9 +2397,13 @@ const HealthCheckLogsPage = defineComponent({
             if (!rows.length) {
                 rows = defaultResponseDescriptionPaths.map(path => ({ path, value: '-' }));
             }
+            const expanded = detailFieldsExpanded.value;
             return h('div', { style: 'display:flex;flex-direction:column;gap:6px;min-width:0' }, [
-                h('div', { style: 'font-weight:600' }, '字段说明'),
-                h('div', { style: `max-height:${maxHeight}px;overflow:auto;border:1px solid rgba(128,128,128,.18);border-radius:6px;background:rgba(128,128,128,.05)` }, [
+                h('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:8px' }, [
+                    h('div', { style: 'font-weight:600' }, '字段说明'),
+                    h(NButton, { size: 'tiny', secondary: true, onClick: () => detailFieldsExpanded.value = !detailFieldsExpanded.value }, () => expanded ? '收起' : '展开'),
+                ]),
+                expanded ? h('div', { style: `max-height:${maxHeight}px;overflow:auto;border:1px solid rgba(128,128,128,.18);border-radius:6px;background:rgba(128,128,128,.05)` }, [
                     h('table', { style: 'width:100%;border-collapse:collapse;font-size:12px;line-height:1.45' }, [
                         h('tbody', null, rows.map(item => h('tr', { style: 'border-bottom:1px solid rgba(128,128,128,.12)' }, [
                             h('td', { style: 'width:34%;vertical-align:top;padding:7px 8px;font-family:var(--font-mono);color:#63e2b7;word-break:break-word' }, item.path),
@@ -2405,7 +2411,7 @@ const HealthCheckLogsPage = defineComponent({
                             h('td', { style: 'vertical-align:top;padding:7px 8px;opacity:.82;word-break:break-word' }, responseFieldDescriptions[item.path]),
                         ]))),
                     ]),
-                ]),
+                ]) : null,
             ]);
         }
         function detailSections(row) {
@@ -2430,13 +2436,14 @@ const HealthCheckLogsPage = defineComponent({
                 responseJSON: response.json,
             };
         }
-        function logBlock(text, maxHeight = 360) {
-            return h('pre', { style: `white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:12px;line-height:1.55;margin:0;max-height:${maxHeight}px;overflow:auto;background:rgba(128,128,128,.08);border:1px solid rgba(128,128,128,.18);border-radius:6px;padding:10px` }, text || '-');
+        function logBlock(text, maxHeight = 360, fill = false) {
+            const sizeStyle = fill ? 'flex:1;min-height:0;overflow:auto' : `max-height:${maxHeight}px;overflow:auto`;
+            return h('pre', { style: `white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:12px;line-height:1.55;margin:0;${sizeStyle};background:rgba(128,128,128,.08);border:1px solid rgba(128,128,128,.18);border-radius:6px;padding:10px` }, text || '-');
         }
-        function sectionBlock(title, text, maxHeight = 360, emptyText = '-') {
-            return h('div', { style: 'display:flex;flex-direction:column;gap:6px;min-width:0' }, [
+        function sectionBlock(title, text, maxHeight = 360, emptyText = '-', fill = false) {
+            return h('div', { style: `display:flex;flex-direction:column;gap:6px;min-width:0;${fill ? 'flex:1;min-height:0' : ''}` }, [
                 h('div', { style: 'font-weight:600' }, title),
-                logBlock(text || emptyText, maxHeight),
+                logBlock(text || emptyText, maxHeight, fill),
             ]);
         }
         function renderDetail() {
@@ -2458,12 +2465,12 @@ const HealthCheckLogsPage = defineComponent({
                         h(NDescriptionsItem, { label: '延迟' }, () => (detailRow.value.latency_ms || 0) + 'ms'),
                         h(NDescriptionsItem, { label: '日志ID' }, () => String(detailRow.value.id || '-')),
                     ]),
-                    sectionBlock('响应 / 规则跟踪', sections.response, 360),
-                    fieldDescriptionBlock(sections.responseJSON, sections.response, 420),
+                    sectionBlock('响应 / 规则跟踪', sections.response, 240),
+                    fieldDescriptionBlock(sections.responseJSON, sections.response, 260),
                 ]),
                 h('div', { style: panelStyle }, [
                     sectionBlock('错误', sections.error, 260),
-                    sectionBlock('诊断输出', sections.diagnostic, 720, '本条日志没有保存诊断输出。只有配置了触发操作并命中首次异常时，才会写入这里。'),
+                    sectionBlock('诊断输出', sections.diagnostic, 720, '本条日志没有保存诊断输出。只有配置了触发操作并命中首次异常时，才会写入这里。', !_isMobile.value),
                 ]),
             ]);
         }
