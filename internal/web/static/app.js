@@ -2387,7 +2387,7 @@ const HealthCheckLogsPage = defineComponent({
             'data.imgFontSemaphore.available',
             'data.imgFontSemaphore.memory_usage',
         ];
-        function fieldDescriptionBlock(json, responseText) {
+        function fieldDescriptionBlock(json, responseText, maxHeight = 260) {
             if (!json && !String(responseText || '').trim()) return null;
             let rows = json ? flattenJSONFields(json)
                 .filter(item => responseFieldDescriptions[item.path])
@@ -2397,7 +2397,7 @@ const HealthCheckLogsPage = defineComponent({
             }
             return h('div', { style: 'display:flex;flex-direction:column;gap:6px;min-width:0' }, [
                 h('div', { style: 'font-weight:600' }, '字段说明'),
-                h('div', { style: 'max-height:260px;overflow:auto;border:1px solid rgba(128,128,128,.18);border-radius:6px;background:rgba(128,128,128,.05)' }, [
+                h('div', { style: `max-height:${maxHeight}px;overflow:auto;border:1px solid rgba(128,128,128,.18);border-radius:6px;background:rgba(128,128,128,.05)` }, [
                     h('table', { style: 'width:100%;border-collapse:collapse;font-size:12px;line-height:1.45' }, [
                         h('tbody', null, rows.map(item => h('tr', { style: 'border-bottom:1px solid rgba(128,128,128,.12)' }, [
                             h('td', { style: 'width:34%;vertical-align:top;padding:7px 8px;font-family:var(--font-mono);color:#63e2b7;word-break:break-word' }, item.path),
@@ -2451,6 +2451,9 @@ const HealthCheckLogsPage = defineComponent({
             const topGridStyle = _isMobile.value
                 ? 'display:flex;flex-direction:column;gap:14px;min-width:0'
                 : 'display:grid;grid-template-columns:minmax(0,0.9fr) minmax(0,1.1fr);gap:16px;align-items:start;min-width:0';
+            const bottomGridStyle = _isMobile.value
+                ? 'display:flex;flex-direction:column;gap:14px;min-width:0'
+                : 'display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start;min-width:0';
             return h('div', { style: shellStyle }, [
                 h('div', { style: topGridStyle }, [
                     h('div', { style: panelStyle }, [
@@ -2468,8 +2471,10 @@ const HealthCheckLogsPage = defineComponent({
                         sectionBlock('诊断输出', sections.diagnostic, 620, '本条日志没有保存诊断输出。只有配置了触发操作并命中首次异常时，才会写入这里。'),
                     ]),
                 ]),
-                sectionBlock('响应 / 规则跟踪', sections.response, 360),
-                fieldDescriptionBlock(sections.responseJSON, sections.response),
+                h('div', { style: bottomGridStyle }, [
+                    sectionBlock('响应 / 规则跟踪', sections.response, 520),
+                    fieldDescriptionBlock(sections.responseJSON, sections.response, 520),
+                ]),
             ]);
         }
 
