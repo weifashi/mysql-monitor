@@ -132,13 +132,18 @@ func TestCustomSQLMetricSourceSignatureSeparatesSQLSources(t *testing.T) {
 	second := *first
 	second.SQLText = "SELECT VARIABLE_VALUE AS Value FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Questions' LIMIT 1"
 
-	if customSQLMetricSourceSignature(first) == customSQLMetricSourceSignature(&second) {
+	if customSQLMetricSourceSignature(first, "server_id=1;hostname=db-a") == customSQLMetricSourceSignature(&second, "server_id=1;hostname=db-a") {
 		t.Fatalf("different SQL sources should not share a metric baseline key")
 	}
 
 	sameWithWhitespace := *first
 	sameWithWhitespace.SQLText = "  SHOW GLOBAL STATUS LIKE 'Questions';  "
-	if customSQLMetricSourceSignature(first) != customSQLMetricSourceSignature(&sameWithWhitespace) {
+	if customSQLMetricSourceSignature(first, "server_id=1;hostname=db-a") != customSQLMetricSourceSignature(&sameWithWhitespace, "server_id=1;hostname=db-a") {
 		t.Fatalf("whitespace and trailing semicolon should not change metric source signature")
+	}
+
+	otherServer := *first
+	if customSQLMetricSourceSignature(first, "server_id=1;hostname=db-a") == customSQLMetricSourceSignature(&otherServer, "server_id=2;hostname=db-b") {
+		t.Fatalf("different MySQL backends should not share a metric baseline key")
 	}
 }

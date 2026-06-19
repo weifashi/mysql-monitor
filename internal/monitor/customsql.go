@@ -480,6 +480,7 @@ func TestCustomSQLCheckWithMetricStateProvider(s *store.Store, cfg *store.Custom
 		result.Message = err.Error()
 		return result
 	}
+	serverIdentity := queryCustomSQLServerIdentity(ctx, tx)
 	if err := tx.Commit(); err != nil {
 		result.Status = "error"
 		result.Error = fmt.Sprintf("提交只读查询失败: %v", err)
@@ -501,7 +502,7 @@ func TestCustomSQLCheckWithMetricStateProvider(s *store.Store, cfg *store.Custom
 
 	var summaries []string
 	var firstAlert *store.CustomSQLLog
-	sourceKey := customSQLMetricSourceSignature(cfg)
+	sourceKey := customSQLMetricSourceSignature(cfg, serverIdentity)
 	for i, rule := range rules {
 		value, err := selectedCustomSQLValue(cols, values, rule.ResultField)
 		if err != nil {
@@ -559,6 +560,9 @@ func TestCustomSQLCheckWithMetricStateProvider(s *store.Store, cfg *store.Custom
 				alert.ExpectedValue = ruleCfg.ExpectedValue
 				alert.Condition = ruleCfg.Condition
 				alert.Message = fmt.Sprintf("命中规则: %s\n%s", ruleName, reason)
+				if strings.TrimSpace(serverIdentity) != "" {
+					alert.Message += "\n数据源: " + serverIdentity
+				}
 				firstAlert = &alert
 			}
 		}
@@ -876,12 +880,31 @@ func resolveCustomSQLResultIndex(cols []string, resultField string) (int, error)
 	return 0, fmt.Errorf("结果字段 %q 不存在，当前返回列: %s", field, strings.Join(cols, ", "))
 }
 
-func customSQLMetricSourceSignature(cfg *store.CustomSQLCheck) string {
+func queryCustomSQLServerIdentity(ctx context.Context, q customSQLQueryer) string {
+	cols, values, err := queryFirstRowValues(ctx, q, "SELECT @@server_id AS server_id, @@hostname AS hostname")
+	if err != nil {
+		return ""
+	}
+	parts := make([]string, 0, len(cols))
+	for i, col := range cols {
+		if i >= len(values) {
+			break
+		}
+		value := strings.TrimSpace(values[i])
+		if value == "" {
+			continue
+		}
+		parts = append(parts, strings.TrimSpace(col)+"="+value)
+	}
+	return strings.Join(parts, ";")
+}
+
+func customSQLMetricSourceSignature(cfg *store.CustomSQLCheck, serverIdentity string) string {
 	if cfg == nil {
 		return "default"
 	}
 	normalizedSQL := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cfg.SQLText), ";"))
-	source := fmt.Sprintf("db=%d;schema=%s;sql=%s", cfg.DatabaseID, strings.TrimSpace(cfg.DBName), normalizedSQL)
+	source := fmt.Sprintf("db=%d;schema=%s;server=%s;sql=%s", cfg.DatabaseID, strings.TrimSpace(cfg.DBName), strings.TrimSpace(serverIdentity), normalizedSQL)
 	sum := sha1.Sum([]byte(source))
 	return fmt.Sprintf("%x", sum)[:12]
 }
