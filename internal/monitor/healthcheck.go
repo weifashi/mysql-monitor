@@ -241,10 +241,11 @@ func (m *HealthCheckManager) doCheck(cfg *store.HealthCheck) {
 				cfg.Name, cfg.URL, result.Status, errMsg, diagnosticsSection)
 			if sendErr := m.dispatcher.SendScopedNotifications("health", cfg.ID, alertMsg); sendErr != nil {
 				log.Printf("[HealthCheck %s] alert notification failed: %v", cfg.Name, sendErr)
+				m.emit("healthcheck_notify_error", cfg.ID, cfg.Name, fmt.Sprintf("通知发送失败: %v", sendErr), nil)
 			} else {
 				m.emit("healthcheck_notified", cfg.ID, cfg.Name, "已发送异常告警通知", nil)
+				m.setDownNotified(cfg.ID, true)
 			}
-			m.setDownNotified(cfg.ID, true)
 		} else {
 			m.store.InsertHealthCheckLog(&result)
 		}

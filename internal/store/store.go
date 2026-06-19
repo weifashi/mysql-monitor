@@ -356,14 +356,14 @@ func (s *Store) GetEffectiveNotifications(databaseID int64) ([]NotificationConfi
 }
 
 // GetScopedNotifications returns notifications for a given scope type and ID.
-// It returns scope-specific configs first, then falls back to global (scope_type='all').
+// It returns scope-specific configs first, then global configs. Multiple enabled
+// configs of the same type are all returned so every configured destination is tried.
 func (s *Store) GetScopedNotifications(scopeType string, scopeID int64) ([]NotificationConfig, error) {
-	rows, err := s.db.Query(`SELECT id, database_id, scope_type, type, config_json, enabled, created_at, updated_at FROM notification_configs WHERE enabled=1 AND ((scope_type=? AND database_id=?) OR scope_type='all') ORDER BY CASE WHEN scope_type='all' THEN 1 ELSE 0 END, database_id DESC`, scopeType, scopeID)
+	rows, err := s.db.Query(`SELECT id, database_id, scope_type, type, config_json, enabled, created_at, updated_at FROM notification_configs WHERE enabled=1 AND ((scope_type=? AND database_id=?) OR scope_type='all') ORDER BY CASE WHEN scope_type='all' THEN 1 ELSE 0 END, id`, scopeType, scopeID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	seenType := make(map[string]bool)
 	var list []NotificationConfig
 	for rows.Next() {
 		var nc NotificationConfig
@@ -374,10 +374,6 @@ func (s *Store) GetScopedNotifications(scopeType string, scopeID int64) ([]Notif
 		}
 		nc.ConfigJSON = json.RawMessage(configStr)
 		nc.Enabled = enabled == 1
-		if seenType[nc.Type] {
-			continue
-		}
-		seenType[nc.Type] = true
 		list = append(list, nc)
 	}
 	if err := rows.Err(); err != nil {

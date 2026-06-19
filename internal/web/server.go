@@ -16,7 +16,7 @@ import (
 //go:embed static
 var staticFS embed.FS
 
-const defaultAppVersion = "20260619165822"
+const defaultAppVersion = "20260619170305"
 
 type Server struct {
 	store          *store.Store

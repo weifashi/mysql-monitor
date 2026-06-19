@@ -1390,6 +1390,7 @@ const MonitorLogsPage = defineComponent({
 
         function clearLogs() { logEntries.value = []; clear(); }
         function getIcon(type) {
+            if (String(type || '').includes('notify_error')) return '\u2717';
             switch(type) {
                 case 'checking': return '...';
                 case 'no_queries': return '\u2713';
@@ -1400,6 +1401,7 @@ const MonitorLogsPage = defineComponent({
             }
         }
         function getMsgClass(type) {
+            if (String(type || '').includes('notify_error')) return 'log-msg-error';
             switch(type) {
                 case 'checking': return 'log-msg-checking';
                 case 'no_queries': return 'log-msg-ok';
