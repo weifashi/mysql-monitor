@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -28,10 +29,11 @@ type CustomSQLManager struct {
 	metricStates map[string]*healthMetricState
 }
 
-const customSQLMetricStateVersion = 2
+const customSQLMetricStateVersion = 3
 
 type customSQLMon struct {
 	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func NewCustomSQLManager(s *store.Store, d *notify.Dispatcher, eb *EventBus) *CustomSQLManager {
@@ -73,22 +75,36 @@ func (m *CustomSQLManager) Start(id int64) error {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	m.monitors[id] = &customSQLMon{cancel: cancel}
+	done := make(chan struct{})
+	m.monitors[id] = &customSQLMon{cancel: cancel, done: done}
 
-	go m.runMonitor(ctx, cfg)
+	go func() {
+		defer close(done)
+		m.runMonitor(ctx, cfg)
+	}()
 	log.Printf("started custom sql check for %s", cfg.Name)
 	return nil
 }
 
 func (m *CustomSQLManager) Stop(id int64) {
+	var mon *customSQLMon
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if mon, ok := m.monitors[id]; ok {
-		mon.cancel()
+	if running, ok := m.monitors[id]; ok {
+		mon = running
+		running.cancel()
 		delete(m.monitors, id)
 		m.deleteMetricStatesLocked(id)
-		log.Printf("stopped custom sql check id=%d", id)
 	}
+	m.mu.Unlock()
+	if mon == nil {
+		return
+	}
+	select {
+	case <-mon.done:
+	case <-time.After(2 * time.Second):
+		log.Printf("timeout waiting custom sql check id=%d to stop", id)
+	}
+	log.Printf("stopped custom sql check id=%d", id)
 }
 
 func (m *CustomSQLManager) Restart(id int64) error {
@@ -485,6 +501,7 @@ func TestCustomSQLCheckWithMetricStateProvider(s *store.Store, cfg *store.Custom
 
 	var summaries []string
 	var firstAlert *store.CustomSQLLog
+	sourceKey := customSQLMetricSourceSignature(cfg)
 	for i, rule := range rules {
 		value, err := selectedCustomSQLValue(cols, values, rule.ResultField)
 		if err != nil {
@@ -500,7 +517,7 @@ func TestCustomSQLCheckWithMetricStateProvider(s *store.Store, cfg *store.Custom
 		if ruleName == "" {
 			ruleName = "第一列"
 		}
-		ruleKey := fmt.Sprintf("%d:%s:%s", i, ruleName, rule.ResultField)
+		ruleKey := fmt.Sprintf("%s:%d:%s:%s", sourceKey, i, ruleName, rule.ResultField)
 		ruleCfg := customSQLCheckForAlertRule(cfg, rule)
 		fieldName := strings.TrimSpace(ruleCfg.ResultField)
 		if fieldName == "" {
@@ -857,6 +874,16 @@ func resolveCustomSQLResultIndex(cols []string, resultField string) (int, error)
 		}
 	}
 	return 0, fmt.Errorf("结果字段 %q 不存在，当前返回列: %s", field, strings.Join(cols, ", "))
+}
+
+func customSQLMetricSourceSignature(cfg *store.CustomSQLCheck) string {
+	if cfg == nil {
+		return "default"
+	}
+	normalizedSQL := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cfg.SQLText), ";"))
+	source := fmt.Sprintf("db=%d;schema=%s;sql=%s", cfg.DatabaseID, strings.TrimSpace(cfg.DBName), normalizedSQL)
+	sum := sha1.Sum([]byte(source))
+	return fmt.Sprintf("%x", sum)[:12]
 }
 
 func safeCustomSQLSettingSuffix(input string) string {

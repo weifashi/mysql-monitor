@@ -378,11 +378,14 @@ func (s *Server) apiDatabaseUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existingDB, err := s.store.GetDatabase(id)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "not found")
+		return
+	}
 	password := req.Password
 	if password == "" {
-		if existing, err := s.store.GetDatabase(id); err == nil {
-			password = existing.Password
-		}
+		password = existingDB.Password
 	}
 
 	enabled := true
@@ -401,6 +404,7 @@ func (s *Server) apiDatabaseUpdate(w http.ResponseWriter, r *http.Request) {
 		ThresholdSec: req.ThresholdSec,
 		Enabled:      enabled,
 	}
+	connectionChanged := databaseConnectionChanged(existingDB, db)
 
 	if err := s.store.UpdateDatabase(db); err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -412,9 +416,22 @@ func (s *Server) apiDatabaseUpdate(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.manager.StopDatabase(id)
 	}
+	if connectionChanged {
+		s.resetCustomSQLRuntimeStateForDatabase(id)
+	}
 
 	s.audit(r, "update", "database", id, "更新数据库 "+db.Name)
 	jsonOK(w, map[string]string{"status": "ok"})
+}
+
+func databaseConnectionChanged(before, after *store.Database) bool {
+	if before == nil || after == nil {
+		return false
+	}
+	return strings.TrimSpace(before.Host) != strings.TrimSpace(after.Host) ||
+		before.Port != after.Port ||
+		strings.TrimSpace(before.User) != strings.TrimSpace(after.User) ||
+		before.Password != after.Password
 }
 
 func (s *Server) apiDatabaseDelete(w http.ResponseWriter, r *http.Request) {
@@ -2131,6 +2148,7 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	previous := *existing
 	if req.DatabaseID > 0 {
 		existing.DatabaseID = req.DatabaseID
 	}
@@ -2194,13 +2212,29 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	normalizeCustomSQLDefaults(existing)
+	previousForCompare := previous
+	normalizeCustomSQLDefaults(&previousForCompare)
+	resetMetricState := customSQLMetricStateResetNeeded(&previousForCompare, existing)
+
+	wasRunning := s.customSQLMgr.IsRunning(id)
+	if wasRunning {
+		s.customSQLMgr.Stop(id)
+	}
 
 	if err := s.store.UpdateCustomSQLCheck(existing); err != nil {
+		if wasRunning {
+			if startErr := s.customSQLMgr.Start(id); startErr != nil {
+				log.Printf("restart custom sql %d after update failure: %v", id, startErr)
+			}
+		}
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.clearCustomSQLRuntimeState(id)
-	s.customSQLMgr.Stop(id)
+	if resetMetricState {
+		s.clearCustomSQLRuntimeState(id)
+	} else {
+		s.clearCustomSQLAlertState(id)
+	}
 	if existing.Enabled {
 		if err := s.customSQLMgr.Start(id); err != nil {
 			log.Printf("restart custom sql %d: %v", id, err)
@@ -2275,6 +2309,43 @@ func normalizeCustomSQLDefaults(cfg *store.CustomSQLCheck) {
 	}
 }
 
+func customSQLMetricStateResetNeeded(before, after *store.CustomSQLCheck) bool {
+	if before == nil || after == nil {
+		return false
+	}
+	return before.DatabaseID != after.DatabaseID ||
+		strings.TrimSpace(before.DBName) != strings.TrimSpace(after.DBName) ||
+		normalizeCustomSQLComparableText(before.SQLText) != normalizeCustomSQLComparableText(after.SQLText) ||
+		strings.TrimSpace(before.ResultField) != strings.TrimSpace(after.ResultField) ||
+		strings.TrimSpace(before.AlertStrategy) != strings.TrimSpace(after.AlertStrategy) ||
+		strings.TrimSpace(before.Condition) != strings.TrimSpace(after.Condition) ||
+		strings.TrimSpace(before.ExpectedValue) != strings.TrimSpace(after.ExpectedValue) ||
+		strings.TrimSpace(before.AlertDeltaValue) != strings.TrimSpace(after.AlertDeltaValue) ||
+		strings.TrimSpace(before.AlertDeltaPercent) != strings.TrimSpace(after.AlertDeltaPercent) ||
+		before.AlertConsecutive != after.AlertConsecutive ||
+		normalizeCustomSQLComparableJSON(before.AlertRules) != normalizeCustomSQLComparableJSON(after.AlertRules)
+}
+
+func normalizeCustomSQLComparableText(value string) string {
+	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(value), ";"))
+}
+
+func normalizeCustomSQLComparableJSON(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "[]"
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(value), &parsed); err != nil {
+		return value
+	}
+	data, err := json.Marshal(parsed)
+	if err != nil {
+		return value
+	}
+	return string(data)
+}
+
 func (s *Server) apiCustomSQLDelete(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -2291,13 +2362,40 @@ func (s *Server) apiCustomSQLDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) clearCustomSQLRuntimeState(id int64) {
-	s.store.SetSetting(fmt.Sprintf("custom_sql_alert_%d", id), "")
+	s.clearCustomSQLAlertState(id)
 	s.store.SetSetting(fmt.Sprintf("custom_sql_last_value_%d", id), "")
 	if err := s.store.DeleteSettingsByPrefix(fmt.Sprintf("custom_sql_last_value_%d_", id)); err != nil {
 		log.Printf("clear custom sql last values %d: %v", id, err)
 	}
 	if err := s.store.DeleteSettingsByPrefix(fmt.Sprintf("custom_sql_metric_state_%d_", id)); err != nil {
 		log.Printf("clear custom sql metric states %d: %v", id, err)
+	}
+}
+
+func (s *Server) clearCustomSQLAlertState(id int64) {
+	s.store.SetSetting(fmt.Sprintf("custom_sql_alert_%d", id), "")
+}
+
+func (s *Server) resetCustomSQLRuntimeStateForDatabase(databaseID int64) {
+	checks, err := s.store.ListCustomSQLChecks()
+	if err != nil {
+		log.Printf("list custom sql checks for database reset %d: %v", databaseID, err)
+		return
+	}
+	for _, cfg := range checks {
+		if cfg.DatabaseID != databaseID {
+			continue
+		}
+		wasRunning := s.customSQLMgr.IsRunning(cfg.ID)
+		if wasRunning {
+			s.customSQLMgr.Stop(cfg.ID)
+		}
+		s.clearCustomSQLRuntimeState(cfg.ID)
+		if cfg.Enabled {
+			if err := s.customSQLMgr.Start(cfg.ID); err != nil {
+				log.Printf("restart custom sql %d after database change: %v", cfg.ID, err)
+			}
+		}
 	}
 }
 

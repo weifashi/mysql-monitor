@@ -121,3 +121,24 @@ func TestCustomSQLIncreaseSkipsEmptyValue(t *testing.T) {
 		t.Fatalf("empty value should not overwrite last value, got %.4f", state.LastValue)
 	}
 }
+
+func TestCustomSQLMetricSourceSignatureSeparatesSQLSources(t *testing.T) {
+	first := &store.CustomSQLCheck{
+		DatabaseID:  1,
+		DBName:      "performance_schema",
+		SQLText:     "SHOW GLOBAL STATUS LIKE 'Questions'",
+		ResultField: "Value",
+	}
+	second := *first
+	second.SQLText = "SELECT VARIABLE_VALUE AS Value FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Questions' LIMIT 1"
+
+	if customSQLMetricSourceSignature(first) == customSQLMetricSourceSignature(&second) {
+		t.Fatalf("different SQL sources should not share a metric baseline key")
+	}
+
+	sameWithWhitespace := *first
+	sameWithWhitespace.SQLText = "  SHOW GLOBAL STATUS LIKE 'Questions';  "
+	if customSQLMetricSourceSignature(first) != customSQLMetricSourceSignature(&sameWithWhitespace) {
+		t.Fatalf("whitespace and trailing semicolon should not change metric source signature")
+	}
+}

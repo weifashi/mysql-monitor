@@ -2444,27 +2444,32 @@ const HealthCheckLogsPage = defineComponent({
             const sections = detailSections(detailRow.value);
             const shellStyle = _isMobile.value
                 ? 'display:flex;flex-direction:column;gap:14px;max-height:calc(100vh - 180px);overflow:auto'
-                : 'display:grid;grid-template-columns:minmax(0,0.9fr) minmax(0,1.1fr);gap:16px;align-items:start;max-height:calc(100vh - 190px);overflow:hidden';
+                : 'display:flex;flex-direction:column;gap:14px;max-height:calc(100vh - 190px);overflow:auto';
             const panelStyle = _isMobile.value
                 ? 'display:flex;flex-direction:column;gap:14px;min-width:0'
-                : 'display:flex;flex-direction:column;gap:14px;min-width:0;max-height:calc(100vh - 210px);overflow:auto';
+                : 'display:flex;flex-direction:column;gap:14px;min-width:0';
+            const topGridStyle = _isMobile.value
+                ? 'display:flex;flex-direction:column;gap:14px;min-width:0'
+                : 'display:grid;grid-template-columns:minmax(0,0.9fr) minmax(0,1.1fr);gap:16px;align-items:start;min-width:0';
             return h('div', { style: shellStyle }, [
-                h('div', { style: panelStyle }, [
-                    h(NDescriptions, { bordered: true, column: 2, labelPlacement: 'top', size: 'small' }, () => [
-                        h(NDescriptionsItem, { label: '时间' }, () => formatTime(detailRow.value.detected_at)),
-                        h(NDescriptionsItem, { label: '服务' }, () => detailRow.value.check_name || '-'),
-                        h(NDescriptionsItem, { label: '状态' }, () => h(NTag, { type: detailRow.value.status === 'up' ? 'success' : 'error', size: 'small', bordered: false }, () => (detailRow.value.status || '').toUpperCase())),
-                        h(NDescriptionsItem, { label: 'HTTP' }, () => String(detailRow.value.http_status || 0)),
-                        h(NDescriptionsItem, { label: '延迟' }, () => (detailRow.value.latency_ms || 0) + 'ms'),
-                        h(NDescriptionsItem, { label: '日志ID' }, () => String(detailRow.value.id || '-')),
+                h('div', { style: topGridStyle }, [
+                    h('div', { style: panelStyle }, [
+                        h(NDescriptions, { bordered: true, column: 2, labelPlacement: 'top', size: 'small' }, () => [
+                            h(NDescriptionsItem, { label: '时间' }, () => formatTime(detailRow.value.detected_at)),
+                            h(NDescriptionsItem, { label: '服务' }, () => detailRow.value.check_name || '-'),
+                            h(NDescriptionsItem, { label: '状态' }, () => h(NTag, { type: detailRow.value.status === 'up' ? 'success' : 'error', size: 'small', bordered: false }, () => (detailRow.value.status || '').toUpperCase())),
+                            h(NDescriptionsItem, { label: 'HTTP' }, () => String(detailRow.value.http_status || 0)),
+                            h(NDescriptionsItem, { label: '延迟' }, () => (detailRow.value.latency_ms || 0) + 'ms'),
+                            h(NDescriptionsItem, { label: '日志ID' }, () => String(detailRow.value.id || '-')),
+                        ]),
+                        sectionBlock('错误', sections.error, 260),
                     ]),
-                    sectionBlock('错误', sections.error, 260),
-                    sectionBlock('响应 / 规则跟踪', sections.response, 320),
-                    fieldDescriptionBlock(sections.responseJSON, sections.response),
+                    h('div', { style: panelStyle }, [
+                        sectionBlock('诊断输出', sections.diagnostic, 620, '本条日志没有保存诊断输出。只有配置了触发操作并命中首次异常时，才会写入这里。'),
+                    ]),
                 ]),
-                h('div', { style: panelStyle }, [
-                    sectionBlock('诊断输出', sections.diagnostic, 620, '本条日志没有保存诊断输出。只有配置了触发操作并命中首次异常时，才会写入这里。'),
-                ]),
+                sectionBlock('响应 / 规则跟踪', sections.response, 360),
+                fieldDescriptionBlock(sections.responseJSON, sections.response),
             ]);
         }
 
