@@ -67,6 +67,27 @@ const api = {
 };
 
 // ============================================================
+// UI settings
+// ============================================================
+const _uiSettings = reactive({
+    show_rocketmq_menu: '1',
+    show_grafana_menu: '1',
+});
+
+function applyUISettings(settings) {
+    if (!settings) return;
+    for (const key of Object.keys(_uiSettings)) {
+        if (Object.prototype.hasOwnProperty.call(settings, key)) {
+            _uiSettings[key] = settings[key] || '0';
+        }
+    }
+}
+
+function isUISettingEnabled(key) {
+    return _uiSettings[key] !== '0';
+}
+
+// ============================================================
 // WebSocket composable
 // ============================================================
 function useWebSocket(path) {
@@ -323,22 +344,27 @@ const DashboardPage = defineComponent({
                     { label: '已配置', value: stats.value.total_dbs, color: '#2080f0', link: '/databases' },
                     { label: '今日慢SQL', value: stats.value.today_count, color: stats.value.today_count > 0 ? '#d03050' : '#999', link: '/slow-queries' },
                 ], '/databases'),
-                statCard('RocketMQ', '消息堆积监控', [
+                isUISettingEnabled('show_rocketmq_menu') ? statCard('RocketMQ', '消息堆积监控', [
                     { label: '运行中', value: stats.value.rocketmq_running || 0, color: '#18a058', link: '/rocketmq' },
                     { label: '已配置', value: stats.value.rocketmq_configs || 0, color: '#2080f0', link: '/rocketmq' },
                     { label: '今日告警', value: stats.value.rocketmq_alerts_today || 0, color: (stats.value.rocketmq_alerts_today || 0) > 0 ? '#d03050' : '#999', link: '/rocketmq-alerts' },
-                ], '/rocketmq'),
+                ], '/rocketmq') : null,
                 statCard('健康检查', 'HTTP 端点监控', [
                     { label: '运行中', value: stats.value.health_checks_running || 0, color: '#18a058', link: '/health-checks' },
                     { label: '已配置', value: stats.value.health_checks || 0, color: '#2080f0', link: '/health-checks' },
                     { label: '今日异常', value: stats.value.health_check_errors_today || 0, color: (stats.value.health_check_errors_today || 0) > 0 ? '#d03050' : '#999', link: '/health-checks-logs' },
                 ], '/health-checks'),
-                statCard('Grafana', '告警集成', [
+                isUISettingEnabled('show_grafana_menu') ? statCard('Grafana', '告警集成', [
                     { label: '运行中', value: stats.value.grafana_running || 0, color: '#18a058', link: '/grafana' },
                     { label: '已配置', value: stats.value.grafana_configs || 0, color: '#2080f0', link: '/grafana' },
                     { label: '今日告警', value: stats.value.grafana_alerts_today || 0, color: (stats.value.grafana_alerts_today || 0) > 0 ? '#d03050' : '#999', link: '/grafana-alerts' },
-                ], '/grafana'),
-            ]),
+                ], '/grafana') : null,
+                statCard('Cloud Logging', '日志查询监控', [
+                    { label: '运行中', value: stats.value.cloud_logging_running || 0, color: '#18a058', link: '/cloud-logging-checks' },
+                    { label: '已配置', value: stats.value.cloud_logging_configs || 0, color: '#2080f0', link: '/cloud-logging-configs' },
+                    { label: '今日告警', value: stats.value.cloud_logging_alerts_today || 0, color: (stats.value.cloud_logging_alerts_today || 0) > 0 ? '#d03050' : '#999', link: '/cloud-logging-logs' },
+                ], '/cloud-logging-configs'),
+            ].filter(Boolean)),
             h('h4', { class: 'section-title' }, '最近慢SQL'),
             stats.value.recent_logs && stats.value.recent_logs.length > 0
                 ? h(NDataTable, { columns: recentColumns.value, data: stats.value.recent_logs, bordered: false, size: 'small', maxHeight: 400, scrollX: _isMobile.value ? 400 : undefined, rowKey: row => row.id || row.detected_at })
@@ -491,10 +517,11 @@ const NotificationsPage = defineComponent({
             { label: '健康检查', value: 'health' },
             { label: 'MySQL', value: 'mysql' },
             { label: '自定义SQL', value: 'custom_sql' },
+            { label: 'Cloud Logging', value: 'cloud_logging' },
             { label: 'RocketMQ', value: 'rocketmq' },
             { label: 'Grafana', value: 'grafana' },
         ];
-        const scopeTypeLabels = { all: '全局', health: '健康检查', mysql: 'MySQL', custom_sql: '自定义SQL', rocketmq: 'RocketMQ', grafana: 'Grafana' };
+        const scopeTypeLabels = { all: '全局', health: '健康检查', mysql: 'MySQL', custom_sql: '自定义SQL', cloud_logging: 'Cloud Logging', rocketmq: 'RocketMQ', grafana: 'Grafana' };
         const scopeItemOptions = computed(() => {
             const items = scopes.value[form.scope_type] || [];
             return items.map(d => ({ label: d.name, value: d.id }));
@@ -805,6 +832,7 @@ const CustomSQLPage = defineComponent({
             alert_delta_percent: '',
             alert_consecutive: 1,
             alert_rules: [],
+            trigger_actions: [],
             notify_enabled: true,
             recovery_notify: true,
             message_template: '',
@@ -831,6 +859,16 @@ const CustomSQLPage = defineComponent({
             { label: '连续命中阈值', value: 'sustained' },
             { label: '突增', value: 'increase' },
             { label: '连续上升', value: 'continuous_increase' },
+        ];
+        const triggerActionTypeOptions = [
+            { label: '命令', value: 'command' },
+            { label: 'HTTP', value: 'http' },
+        ];
+        const triggerHTTPMethodOptions = [
+            { label: 'GET', value: 'GET' },
+            { label: 'POST', value: 'POST' },
+            { label: 'PUT', value: 'PUT' },
+            { label: 'HEAD', value: 'HEAD' },
         ];
         const strategyLabels = Object.fromEntries(strategyOptions.map(o => [o.value, o.label]));
         const ruleNeedsExpected = rule => !['empty', 'not_empty', 'changed', 'always'].includes(rule.condition);
@@ -866,6 +904,7 @@ const CustomSQLPage = defineComponent({
                 alert_delta_percent: '',
                 alert_consecutive: 1,
                 alert_rules: [],
+                trigger_actions: [],
                 notify_enabled: true,
                 recovery_notify: true,
                 message_template: '',
@@ -894,6 +933,7 @@ const CustomSQLPage = defineComponent({
                 alert_delta_percent: row.alert_delta_percent || '',
                 alert_consecutive: row.alert_consecutive || 1,
                 alert_rules: rules,
+                trigger_actions: parseCustomSQLTriggerActions(row.trigger_actions),
                 notify_enabled: row.notify_enabled !== false,
                 recovery_notify: row.recovery_notify !== false,
                 message_template: row.message_template || '',
@@ -970,7 +1010,31 @@ const CustomSQLPage = defineComponent({
             }
             return parsed;
         }
+        function normalizeCustomSQLTriggerAction(action = {}) {
+            return {
+                name: action.name || '',
+                type: action.type || 'command',
+                command: action.command || '',
+                url: action.url || '',
+                method: action.method || 'GET',
+                headers_json: action.headers_json || '{}',
+                body: action.body || '',
+                timeout_sec: action.timeout_sec || 30,
+                notify_max_chars: action.notify_max_chars || 2000,
+                enabled: action.enabled !== false,
+            };
+        }
+        function parseCustomSQLTriggerActions(raw) {
+            if (Array.isArray(raw)) return raw.map(normalizeCustomSQLTriggerAction);
+            try {
+                const parsed = JSON.parse(raw || '[]');
+                return Array.isArray(parsed) ? parsed.map(normalizeCustomSQLTriggerAction) : [];
+            } catch { return []; }
+        }
         function customSQLPayload() {
+            const actions = (form.trigger_actions || []).map(normalizeCustomSQLTriggerAction).filter(a =>
+                a.name || a.command || a.url
+            );
             const rules = (form.alert_rules || []).map(normalizeCustomSQLAlertRule);
             const firstRule = rules[0] || normalizeCustomSQLAlertRule({
                 result_field: form.result_field,
@@ -991,6 +1055,7 @@ const CustomSQLPage = defineComponent({
                 alert_delta_value: firstRule.alert_delta_value || '',
                 alert_delta_percent: firstRule.alert_delta_percent || '',
                 alert_consecutive: firstRule.alert_consecutive || 1,
+                trigger_actions: JSON.stringify(actions),
                 notify_enabled: !!form.notify_enabled,
                 recovery_notify: !!form.recovery_notify,
                 message_template: form.message_template || '',
@@ -1013,6 +1078,7 @@ const CustomSQLPage = defineComponent({
                 alert_delta_percent: row.alert_delta_percent || '',
                 alert_consecutive: row.alert_consecutive || 1,
                 alert_rules: row.alert_rules || '[]',
+                trigger_actions: row.trigger_actions || '[]',
                 notify_enabled: row.notify_enabled !== false,
                 recovery_notify: row.recovery_notify !== false,
                 message_template: row.message_template || '',
@@ -1064,6 +1130,9 @@ const CustomSQLPage = defineComponent({
             let alertRules = item.alert_rules;
             if (Array.isArray(alertRules)) alertRules = JSON.stringify(alertRules.map(normalizeCustomSQLAlertRule));
             if (typeof alertRules !== 'string') alertRules = '[]';
+            let triggerActions = item.trigger_actions;
+            if (Array.isArray(triggerActions)) triggerActions = JSON.stringify(triggerActions.map(normalizeCustomSQLTriggerAction));
+            if (typeof triggerActions !== 'string') triggerActions = '[]';
             const rules = parseCustomSQLAlertRules(alertRules, item);
             const firstRule = rules[0] || normalizeCustomSQLAlertRule(item);
             return {
@@ -1081,6 +1150,7 @@ const CustomSQLPage = defineComponent({
                 alert_delta_percent: item.alert_delta_percent || firstRule.alert_delta_percent || '',
                 alert_consecutive: item.alert_consecutive || firstRule.alert_consecutive || 1,
                 alert_rules: JSON.stringify(rules),
+                trigger_actions: JSON.stringify(parseCustomSQLTriggerActions(triggerActions)),
                 notify_enabled: item.notify_enabled !== false,
                 recovery_notify: item.recovery_notify !== false,
                 message_template: item.message_template || '',
@@ -1130,6 +1200,16 @@ const CustomSQLPage = defineComponent({
         function removeCustomSQLAlertRule(index) {
             form.alert_rules.splice(index, 1);
         }
+        function addCustomSQLTriggerAction(type = 'command') {
+            form.trigger_actions.push(normalizeCustomSQLTriggerAction({
+                name: type === 'http' ? '抓取诊断接口' : '执行诊断命令',
+                type,
+                timeout_sec: 30,
+            }));
+        }
+        function removeCustomSQLTriggerAction(index) {
+            form.trigger_actions.splice(index, 1);
+        }
         function formatCustomSQLRule(rule) {
             const normalized = normalizeCustomSQLAlertRule(rule);
             const field = normalized.result_field || '第一列';
@@ -1151,6 +1231,43 @@ const CustomSQLPage = defineComponent({
             if (normalized.expected_value) text += ' ' + normalized.expected_value;
             if (normalized.alert_strategy === 'sustained') text += ' / 连续 ' + (normalized.alert_consecutive || 1) + ' 次';
             return text;
+        }
+        function customSQLTriggerActionFields() {
+            return h(NFormItem, { label: '触发操作' }, () => h('div', { style: 'width:100%;display:flex;flex-direction:column;gap:10px' }, [
+                h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, [
+                    h(NButton, { size: 'small', secondary: true, onClick: () => addCustomSQLTriggerAction('command') }, () => '+ 命令'),
+                    h(NButton, { size: 'small', secondary: true, onClick: () => addCustomSQLTriggerAction('http') }, () => '+ HTTP'),
+                ]),
+                (form.trigger_actions || []).length === 0 ? h(NText, { depth: 3, style: 'font-size:12px' }, () => '异常首次命中时执行；恢复后再次异常会重新执行。') : null,
+                ...(form.trigger_actions || []).map((action, index) => h('div', { style: 'border:1px solid rgba(128,128,128,.22);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:8px' }, [
+                    h('div', { style: 'display:flex;justify-content:space-between;align-items:flex-end;gap:10px;flex-wrap:wrap' }, [
+                        h('div', { style: _isMobile.value ? 'display:flex;flex-direction:column;gap:8px;flex:1 1 100%;min-width:0' : 'display:grid;grid-template-columns:minmax(150px,1fr) 132px 118px 150px;gap:8px;align-items:end;flex:1 1 auto;min-width:0' }, [
+                            h(NInput, { value: action.name, 'onUpdate:value': v => action.name = v, placeholder: '动作名称' }),
+                            h(NSelect, { value: action.type, 'onUpdate:value': v => action.type = v, options: triggerActionTypeOptions }),
+                            h('div', { style: 'display:flex;flex-direction:column;gap:4px;min-width:0' }, [
+                                h(NText, { depth: 3, style: 'font-size:12px;line-height:1' }, () => '超时(秒)'),
+                                h(NInputNumber, { value: action.timeout_sec, 'onUpdate:value': v => action.timeout_sec = v, min: 1, max: 300, style: 'width:100%' }),
+                            ]),
+                            h('div', { style: 'display:flex;flex-direction:column;gap:4px;min-width:0' }, [
+                                h(NText, { depth: 3, style: 'font-size:12px;line-height:1' }, () => '通知截断字数'),
+                                h(NInputNumber, { value: action.notify_max_chars, 'onUpdate:value': v => action.notify_max_chars = v, min: 100, max: 50000, step: 100, style: 'width:100%' }),
+                            ]),
+                        ]),
+                        h('div', { style: 'display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:0 0 auto;padding-bottom:2px' }, [
+                            h(NSwitch, { value: action.enabled !== false, 'onUpdate:value': v => action.enabled = v, size: 'small' }),
+                            h(NButton, { size: 'tiny', secondary: true, type: 'error', onClick: () => removeCustomSQLTriggerAction(index) }, () => '删除'),
+                        ]),
+                    ]),
+                    action.type === 'http' ? h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, [
+                        h(NInputGroup, null, () => [
+                            h(NSelect, { value: action.method || 'GET', 'onUpdate:value': v => action.method = v, options: triggerHTTPMethodOptions, style: 'width:110px' }),
+                            h(NInput, { value: action.url, 'onUpdate:value': v => action.url = v, placeholder: 'http://host/path' }),
+                        ]),
+                        h(NInput, { type: 'textarea', value: action.headers_json || '{}', 'onUpdate:value': v => action.headers_json = v, placeholder: '请求头 JSON', rows: 2 }),
+                        action.method !== 'GET' && action.method !== 'HEAD' ? h(NInput, { type: 'textarea', value: action.body || '', 'onUpdate:value': v => action.body = v, placeholder: '请求体', rows: 2 }) : null,
+                    ]) : h(NInput, { type: 'textarea', value: action.command, 'onUpdate:value': v => action.command = v, placeholder: '如: mysql -h host -e "SHOW ENGINE INNODB STATUS\\\\G"', rows: 3 }),
+                ])),
+            ]));
         }
         async function toggle(row) {
             try { await api.post('/api/custom-sql/' + row.id + '/toggle'); await load(); } catch (e) { message.error(e.message); }
@@ -1175,6 +1292,10 @@ const CustomSQLPage = defineComponent({
                 if (rules.length > 1) return h(NText, { depth: 3, style: 'font-size:12px;line-height:1.35;white-space:normal' }, () => rules.length + ' 条: ' + rules.map(r => r.name || r.result_field || '第一列').join(' / '));
                 return h(NText, { depth: 3, style: 'font-size:12px;line-height:1.35;white-space:normal' }, () => formatCustomSQLRule(rules[0] || row));
             } },
+            { title: '触发', key: 'trigger_actions', width: 80, _hideOnMobile: true, render: row => {
+                const actions = parseCustomSQLTriggerActions(row.trigger_actions);
+                return actions.length ? h(NTag, { size: 'small', type: 'warning', bordered: false }, () => actions.length + ' 个') : h(NText, { depth: 3 }, () => '-');
+            } },
             { title: 'SQL', key: 'sql_text', width: 360, ellipsis: { tooltip: true }, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.7;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;white-space:nowrap', onClick: () => showSqlDetail({ sql_text: row.sql_text, database_name: row.database_name }) }, truncate(row.sql_text, _isMobile.value ? 36 : 90)) },
             { title: '状态', key: 'status', width: 90, render: row => row.running ? h(NTag, { type: 'success', size: 'small' }, () => '运行中') : row.enabled ? h(NTag, { type: 'warning', size: 'small' }, () => '已启用') : h(NTag, { size: 'small' }, () => '已禁用') },
             { title: '操作', key: 'actions', width: _isMobile.value ? 160 : 330, fixed: _isMobile.value ? undefined : 'right', render: row => h(NSpace, { size: 'small', wrap: false }, () => [
@@ -1196,7 +1317,7 @@ const CustomSQLPage = defineComponent({
                     h(NButton, { type: 'primary', onClick: openAdd, size: _isMobile.value ? 'small' : 'medium' }, () => '+ 添加'),
                 ]),
             ]),
-            h(NDataTable, { columns: columns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 620 : 1590 }),
+            h(NDataTable, { columns: columns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 620 : 1670 }),
             h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑自定义SQL' : '添加自定义SQL', style: _isMobile.value ? 'width:95vw' : 'width:1120px;max-width:96vw', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 120 }, [
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '名称' }, () => h(NInput, { value: form.name, 'onUpdate:value': v => form.name = v, placeholder: '如: 待处理订单数量' }))),
@@ -1239,6 +1360,7 @@ const CustomSQLPage = defineComponent({
                         ]),
                     ])),
                 ])),
+                customSQLTriggerActionFields(),
                 h(NFormItem, { label: '通知' }, () => h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 12, yGap: 8, style: 'width:100%' }, () => [
                     h(NGi, null, () => h('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid rgba(128,128,128,.18);border-radius:6px;padding:10px 12px' }, [
                         h('div', null, [
@@ -1333,7 +1455,7 @@ const CustomSQLLogsPage = defineComponent({
             { title: '规则', key: 'check_name', width: 140 },
             { title: '数据库', key: 'database_name', width: 110, _hideOnMobile: true },
             { title: '状态', key: 'status', width: 80, render: row => row.status === 'alert' ? h(NTag, { type: 'error', size: 'small' }, () => '告警') : row.status === 'error' ? h(NTag, { type: 'warning', size: 'small' }, () => '错误') : h(NTag, { type: 'success', size: 'small' }, () => '正常') },
-            { title: '当前值', key: 'value', width: 120, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:12px' }, row.value || '') },
+            { title: '当前值', key: 'value', width: 300, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;word-break:break-word;line-height:1.55' }, String(row.value || '').replace(/;\s*/g, ';\n')) },
             { title: '条件', key: 'condition', width: 130, _hideOnMobile: true, render: row => (row.condition || '') + (row.expected_value ? ' ' + row.expected_value : '') },
             { title: '结果', key: 'message', ellipsis: { tooltip: true }, render: row => row.error || row.message },
             { title: '耗时', key: 'duration_ms', width: 80, _hideOnMobile: true, render: row => row.duration_ms + 'ms' },
@@ -1361,6 +1483,735 @@ const CustomSQLLogsPage = defineComponent({
             data.value.total_pages > 1 ? h('div', { style: 'margin-top:16px;display:flex;justify-content:center' }, [
                 h(NPagination, { page: page.value, 'onUpdate:page': v => page.value = v, pageCount: data.value.total_pages, size: 'small' }),
             ]) : null,
+        ]);
+    }
+});
+
+// --- Cloud Logging ---
+const CloudLoggingPage = defineComponent({
+    setup() {
+        const route = VueRouter.useRoute();
+        const configs = ref([]);
+        const checks = ref([]);
+        const alertLogs = ref([]);
+        const alertTotal = ref(0);
+        const alertPage = ref(1);
+        const pageSize = 50;
+        const loading = ref(true);
+        const queryLoading = ref(false);
+        const queryEntries = ref([]);
+        const effectiveFilter = ref('');
+        const queryStats = ref(null);
+        const showQueryFilterEditor = ref(false);
+        const showEffectiveFilterPanel = ref(false);
+        const showEntryDetail = ref(false);
+        const entryDetail = ref(null);
+        const showConfigModal = ref(false);
+        const showCheckModal = ref(false);
+        const editingConfigId = ref(null);
+        const editingCheckId = ref(null);
+        const configForm = reactive({ name: '', project_id: '', resource_names: '', credentials_file: '', default_filter: '', interval_sec: 60, enabled: true });
+        const checkForm = reactive({ config_id: null, name: '', filter: 'severity>=ERROR', metric_type: 'count', lookback_minutes: 5, threshold_count: 0, interval_sec: 60, notify_enabled: true, recovery_notify: true, enabled: true });
+        const queryForm = reactive({ config_id: null, filter: 'severity>=ERROR', content_keyword: '', lookback_minutes: 30, limit: 50 });
+        const queryDimensionKeys = ref([]);
+        const queryPresetKey = ref('error');
+        const checkDimensionKeys = ref([]);
+        const checkPresetKey = ref('');
+        const saving = ref(false);
+        const message = useMessage();
+        const { connected, messages, stop } = useWebSocket('/ws/cloud-logging-logs');
+        onUnmounted(stop);
+
+        async function load() {
+            loading.value = true;
+            try {
+                configs.value = await api.get('/api/cloud-logging/configs');
+                checks.value = await api.get('/api/cloud-logging/checks');
+                if (!queryForm.config_id && configs.value.length) queryForm.config_id = configs.value[0].id;
+                if (!checkForm.config_id && configs.value.length) checkForm.config_id = configs.value[0].id;
+                await loadAlertLogs();
+            } catch (e) {
+                message.error(e.message || '加载失败');
+            }
+            loading.value = false;
+        }
+        async function loadAlertLogs() {
+            const res = await api.get('/api/cloud-logging/logs?page=' + alertPage.value);
+            alertLogs.value = res.data || [];
+            alertTotal.value = res.total || 0;
+        }
+        onMounted(load);
+        watch(alertPage, loadAlertLogs);
+        watch(() => messages.value.length, () => {
+            const latest = messages.value[messages.value.length - 1];
+            if (latest && ['cloud_logging_alert', 'cloud_logging_recovery', 'cloud_logging_error'].includes(latest.type) && alertPage.value === 1) {
+                loadAlertLogs();
+            }
+        });
+
+        const configOptions = computed(() => configs.value.map(c => ({ label: c.name + (c.project_id ? ' (' + c.project_id + ')' : ''), value: c.id })));
+        const cloudMetricOptions = [
+            { label: '日志数量', value: 'count' },
+            { label: '接口最大并发', value: 'peak_concurrency' },
+        ];
+        const cloudLogDimensions = [
+            {
+                key: 'api_requests',
+                label: '接口请求',
+                name: 'HTTP 接口请求',
+                filter: `(
+  resource.type="http_load_balancer"
+  OR logName:"requests"
+)`,
+            },
+            {
+                key: 'nginx',
+                label: 'Nginx',
+                name: 'Nginx / 负载均衡日志',
+                filter: `(
+  resource.type="http_load_balancer"
+  OR logName:"nginx"
+  OR textPayload:"nginx"
+  OR jsonPayload.message:"nginx"
+  OR resource.labels.container_name:"nginx"
+)`,
+            },
+            {
+                key: 'golang',
+                label: 'Golang 容器',
+                name: 'Golang 容器日志',
+                filter: `(
+  logName:"main_log"
+  OR logName:"queue_log"
+  OR resource.labels.container_name:"golang"
+  OR resource.labels.container_name:"ttpos-saas-golang"
+  OR textPayload:"ttpos-saas-golang"
+  OR jsonPayload.message:"ttpos-saas-golang"
+)`,
+            },
+            {
+                key: 'ttpos',
+                label: 'TTPOS 日志文件',
+                name: 'TTPOS 日志文件',
+                filter: `(
+  logName:"main_log"
+  OR logName:"queue_log"
+  OR logName:"mysql_slow"
+  OR textPayload:"ttpos"
+  OR jsonPayload.msg:"ttpos"
+  OR jsonPayload.message:"ttpos"
+)`,
+            },
+        ];
+        const cloudTimeRangeOptions = [
+            { label: '最近 5 分钟', value: 5 },
+            { label: '最近 15 分钟', value: 15 },
+            { label: '最近 30 分钟', value: 30 },
+            { label: '最近 1 小时', value: 60 },
+            { label: '最近 3 小时', value: 180 },
+            { label: '最近 6 小时', value: 360 },
+            { label: '最近 12 小时', value: 720 },
+            { label: '最近 24 小时', value: 1440 },
+            { label: '最近 2 天', value: 2880 },
+            { label: '最近 3 天', value: 4320 },
+            { label: '最近 7 天', value: 10080 },
+        ];
+        const cloudErrorPresetFilter = `(
+  severity>=ERROR
+  OR jsonPayload.level="error"
+  OR jsonPayload.level="fatal"
+  OR jsonPayload.level="panic"
+  OR textPayload:"\\"level\\":\\"error\\""
+  OR textPayload:"\\"level\\":\\"fatal\\""
+  OR textPayload:"\\"level\\":\\"panic\\""
+)`;
+        const cloudWarningPresetFilter = `(
+  severity>=WARNING
+  OR jsonPayload.level="warn"
+  OR jsonPayload.level="warning"
+  OR jsonPayload.level="error"
+  OR jsonPayload.level="fatal"
+  OR jsonPayload.level="panic"
+  OR textPayload:"\\"level\\":\\"warn\\""
+  OR textPayload:"\\"level\\":\\"warning\\""
+  OR textPayload:"\\"level\\":\\"error\\""
+  OR textPayload:"\\"level\\":\\"fatal\\""
+  OR textPayload:"\\"level\\":\\"panic\\""
+)`;
+        const queryPresets = [
+            { key: 'error', label: '错误日志', filter: cloudErrorPresetFilter },
+            { key: 'warning', label: '警告以上', filter: cloudWarningPresetFilter },
+            { key: 'cloud_run_5xx', label: 'Cloud Run 5xx', filter: 'resource.type="cloud_run_revision"\nhttpRequest.status>=500' },
+            { key: 'gke_error', label: 'GKE 错误', filter: 'resource.type="k8s_container"\nseverity>=ERROR' },
+        ];
+        const routeMode = computed(() => {
+            const key = route.path.replace('/', '') || 'cloud-logging-configs';
+            if (key === 'cloud-logging-configs') return 'configs';
+            if (key === 'cloud-logging-checks') return 'checks';
+            if (key === 'cloud-logging-logs') return 'logs';
+            return 'query';
+        });
+        const pageTitle = computed(() => ({
+            query: 'Cloud Logging 查询',
+            checks: 'Cloud Logging 监控',
+            configs: 'Cloud Logging 配置',
+            logs: 'Cloud Logging 告警日志',
+        }[routeMode.value]));
+        function resetConfigForm() {
+            editingConfigId.value = null;
+            Object.assign(configForm, { name: '', project_id: '', resource_names: '', credentials_file: '', default_filter: '', interval_sec: 60, enabled: true });
+        }
+        function openConfig(row) {
+            if (row) {
+                editingConfigId.value = row.id;
+                Object.assign(configForm, {
+                    name: row.name || '', project_id: row.project_id || '', resource_names: row.resource_names || '',
+                    credentials_file: row.credentials_file || '', default_filter: row.default_filter || '',
+                    interval_sec: row.interval_sec || 60, enabled: row.enabled !== false,
+                });
+            } else {
+                resetConfigForm();
+            }
+            showConfigModal.value = true;
+        }
+        async function saveConfig() {
+            saving.value = true;
+            try {
+                const payload = { ...configForm };
+                if (editingConfigId.value) {
+                    await api.put('/api/cloud-logging/configs/' + editingConfigId.value, payload);
+                    message.success('配置已保存');
+                } else {
+                    await api.post('/api/cloud-logging/configs', payload);
+                    message.success('配置已创建');
+                }
+                showConfigModal.value = false;
+                await load();
+            } catch (e) {
+                message.error(e.message || '保存失败');
+            }
+            saving.value = false;
+        }
+        async function toggleConfig(row) {
+            try {
+                await api.post('/api/cloud-logging/configs/' + row.id + '/toggle');
+                await load();
+            } catch (e) {
+                message.error(e.message || '操作失败');
+            }
+        }
+        async function testConfig(row) {
+            try {
+                const res = await api.post('/api/cloud-logging/configs/' + row.id + '/test');
+                res.ok ? message.success(res.message) : message.error(res.message);
+            } catch (e) {
+                message.error(e.message || '测试失败');
+            }
+        }
+        async function deleteConfig(row) {
+            try {
+                await api.del('/api/cloud-logging/configs/' + row.id);
+                await load();
+            } catch (e) {
+                message.error(e.message || '删除失败');
+            }
+        }
+        function resetCheckForm() {
+            editingCheckId.value = null;
+            checkDimensionKeys.value = [];
+            checkPresetKey.value = 'error';
+            Object.assign(checkForm, { config_id: queryForm.config_id || (configs.value[0] && configs.value[0].id) || null, name: '', filter: 'severity>=ERROR', metric_type: 'count', lookback_minutes: 5, threshold_count: 0, interval_sec: 60, notify_enabled: true, recovery_notify: true, enabled: true });
+        }
+        function openCheck(row) {
+            checkDimensionKeys.value = [];
+            checkPresetKey.value = '';
+            if (row) {
+                editingCheckId.value = row.id;
+                Object.assign(checkForm, {
+                    config_id: row.config_id, name: row.name || '', filter: row.filter || '',
+                    metric_type: row.metric_type || 'count',
+                    lookback_minutes: row.lookback_minutes || 5, threshold_count: row.threshold_count || 0,
+                    interval_sec: row.interval_sec || 60, notify_enabled: row.notify_enabled !== false,
+                    recovery_notify: row.recovery_notify !== false, enabled: row.enabled !== false,
+                });
+            } else {
+                resetCheckForm();
+            }
+            showCheckModal.value = true;
+        }
+        async function saveCheck() {
+            saving.value = true;
+            try {
+                const payload = { ...checkForm };
+                if (editingCheckId.value) {
+                    await api.put('/api/cloud-logging/checks/' + editingCheckId.value, payload);
+                    message.success('监控已保存');
+                } else {
+                    await api.post('/api/cloud-logging/checks', payload);
+                    message.success('监控已创建');
+                }
+                showCheckModal.value = false;
+                await load();
+            } catch (e) {
+                message.error(e.message || '保存失败');
+            }
+            saving.value = false;
+        }
+        async function toggleCheck(row) {
+            try {
+                await api.post('/api/cloud-logging/checks/' + row.id + '/toggle');
+                await load();
+            } catch (e) {
+                message.error(e.message || '操作失败');
+            }
+        }
+        async function testCheck(row) {
+            try {
+                const res = await api.post('/api/cloud-logging/checks/' + row.id + '/test');
+                res.ok ? message.success(res.message) : message.error(res.message);
+            } catch (e) {
+                message.error(e.message || '测试失败');
+            }
+        }
+        async function deleteCheck(row) {
+            try {
+                await api.del('/api/cloud-logging/checks/' + row.id);
+                await load();
+            } catch (e) {
+                message.error(e.message || '删除失败');
+            }
+        }
+        async function runQuery() {
+            queryLoading.value = true;
+            try {
+                const res = await api.post('/api/cloud-logging/query', {
+                    config_id: queryForm.config_id,
+                    filter: buildCloudQueryFilter(),
+                    lookback_minutes: queryForm.lookback_minutes,
+                    limit: queryForm.limit,
+                });
+                queryEntries.value = res.entries || [];
+                effectiveFilter.value = res.effective_filter || '';
+                queryStats.value = res.stats || null;
+                showEffectiveFilterPanel.value = false;
+                const totalText = queryStats.value ? formatCloudStatNumber(queryStats.value.total, queryStats.value.truncated) : queryEntries.value.length;
+                message.success('查询完成：' + totalText + ' 条');
+            } catch (e) {
+                queryStats.value = null;
+                message.error(e.message || '查询失败');
+            }
+            queryLoading.value = false;
+        }
+        function statusTag(status) {
+            const type = status === 'alert' || status === 'error' ? 'error' : status === 'recovery' ? 'success' : 'default';
+            return h(NTag, { type, size: 'small', bordered: false }, () => ({ alert: '告警', recovery: '恢复', error: '错误' }[status] || status || '-'));
+        }
+        function openCloudEntryDetail(row) {
+            entryDetail.value = row;
+            showEntryDetail.value = true;
+        }
+        function prettyCloudJSON(value) {
+            if (value == null || value === '') return '';
+            if (typeof value !== 'string') {
+                try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+            }
+            try { return JSON.stringify(JSON.parse(value), null, 2); } catch { return value; }
+        }
+        function renderCloudClickableText(text, row, maxLen, multiline = false) {
+            const value = text || '-';
+            return h('code', {
+                style: 'font-family:var(--font-mono);font-size:11px;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;' + (multiline ? 'white-space:pre-wrap' : 'white-space:nowrap'),
+                onClick: () => openCloudEntryDetail(row),
+            }, truncate(value, maxLen));
+        }
+        function renderCloudEntryDetail() {
+            const row = entryDetail.value;
+            if (!row) return null;
+            const payload = row.payload || '';
+            const labels = prettyCloudJSON(row.resource_labels || {});
+            const raw = prettyCloudJSON(row.raw || row);
+            return h('div', { style: 'display:flex;flex-direction:column;gap:14px' }, [
+                h(NDescriptions, { bordered: true, column: _isMobile.value ? 1 : 2, labelPlacement: 'top', size: 'small' }, () => [
+                    h(NDescriptionsItem, { label: '时间' }, () => formatTime(row.timestamp)),
+                    h(NDescriptionsItem, { label: '级别' }, () => h(NTag, { type: ['ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY'].includes(row.severity) ? 'error' : row.severity === 'WARNING' ? 'warning' : 'default', size: 'small', bordered: false }, () => row.severity || 'DEFAULT')),
+                    h(NDescriptionsItem, { label: '资源' }, () => row.resource_type || '-'),
+                    h(NDescriptionsItem, { label: '日志' }, () => h('code', { style: 'font-family:var(--font-mono);font-size:12px;word-break:break-all' }, row.log_name || '-')),
+                ]),
+                h('div', { class: 'sql-detail-block' }, [
+                    h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px' }, [
+                        h(NText, { depth: 3, style: 'font-size:12px' }, () => '内容'),
+                        h(NButton, { size: 'tiny', secondary: true, onClick: () => copyText(payload || raw) }, () => '复制'),
+                    ]),
+                    h('pre', { class: 'sql-detail-code', style: 'max-height:260px' }, payload || '-'),
+                ]),
+                h('div', { class: 'sql-detail-block' }, [
+                    h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px' }, [
+                        h(NText, { depth: 3, style: 'font-size:12px' }, () => '资源标签'),
+                        h(NButton, { size: 'tiny', secondary: true, onClick: () => copyText(labels) }, () => '复制'),
+                    ]),
+                    h('pre', { class: 'sql-detail-code', style: 'max-height:180px' }, labels || '{}'),
+                ]),
+                h('div', { class: 'sql-detail-block' }, [
+                    h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px' }, [
+                        h(NText, { depth: 3, style: 'font-size:12px' }, () => '原始 JSON'),
+                        h(NButton, { size: 'tiny', secondary: true, onClick: () => copyText(raw) }, () => '复制'),
+                    ]),
+                    h('pre', { class: 'sql-detail-code', style: 'max-height:360px' }, raw || '-'),
+                ]),
+            ]);
+        }
+        function formatCloudStatNumber(value, approximate = false) {
+            const n = Number(value || 0);
+            return (approximate ? '≥ ' : '') + n.toLocaleString('en-US');
+        }
+        function formatCloudDuration(ms) {
+            const n = Number(ms || 0);
+            if (!n) return '-';
+            if (n < 1000) return n + 'ms';
+            return (n / 1000).toFixed(n >= 10000 ? 1 : 2).replace(/\.0+$/, '') + 's';
+        }
+        function cloudMetricLabel(metricType) {
+            return metricType === 'peak_concurrency' ? '接口最大并发' : '日志数量';
+        }
+        function updateCloudCheckMetricType(value) {
+            checkForm.metric_type = value || 'count';
+            if (checkForm.metric_type === 'peak_concurrency') {
+                checkForm.lookback_minutes = checkForm.lookback_minutes || 5;
+                if (!String(checkForm.name || '').trim()) checkForm.name = '接口最大并发';
+            }
+        }
+        function renderCloudStatCard(label, value, hint, tone = 'default') {
+            return h('div', { class: 'cloud-stat-card cloud-stat-card-' + tone }, [
+                h('div', { class: 'cloud-stat-label' }, label),
+                h('div', { class: 'cloud-stat-value' }, value),
+                hint ? h('div', { class: 'cloud-stat-hint' }, hint) : null,
+            ]);
+        }
+        function renderCloudQueryStats() {
+            if (!queryStats.value) return null;
+            const stats = queryStats.value;
+            const totalHint = stats.truncated
+                ? '达到统计上限 ' + formatCloudStatNumber(stats.stats_limit)
+                : '当前条件完整统计';
+            return h('div', { class: 'cloud-result-stats' }, [
+                renderCloudStatCard('总数', formatCloudStatNumber(stats.total, stats.truncated), totalHint, stats.truncated ? 'warning' : 'primary'),
+                renderCloudStatCard('返回', formatCloudStatNumber(stats.returned), '列表展示条数'),
+                renderCloudStatCard('每秒峰值', formatCloudStatNumber(stats.peak_concurrency), stats.with_latency ? '每秒内最大并发' : '无 latency 数据', 'success'),
+                renderCloudStatCard('峰值秒', stats.peak_at ? formatTime(stats.peak_at) : '-', '按请求开始时间'),
+                renderCloudStatCard('平均耗时', formatCloudDuration(stats.avg_latency_ms), '有 latency 的日志'),
+                renderCloudStatCard('5xx', formatCloudStatNumber(stats.status_5xx), 'HTTP 错误响应', stats.status_5xx ? 'danger' : 'default'),
+            ]);
+        }
+        const configColumns = useColumns([
+            { title: '名称', key: 'name', width: 160 },
+            { title: 'Project', key: 'project_id', width: 180, ellipsis: { tooltip: true } },
+            { title: '资源', key: 'resource_names', _hideOnMobile: true, ellipsis: { tooltip: true }, render: row => row.resource_names || (row.project_id ? 'projects/' + row.project_id : '-') },
+            { title: '运行规则', key: 'running_checks', width: 90, render: row => row.running_checks || 0 },
+            { title: '状态', key: 'enabled', width: 70, render: row => h(NTag, { type: row.enabled ? 'success' : 'default', size: 'small' }, () => row.enabled ? '启用' : '禁用') },
+            { title: '操作', key: 'actions', width: 260, render: row => h(NSpace, { size: 'small' }, () => [
+                h(NButton, { size: 'small', secondary: true, onClick: () => toggleConfig(row) }, () => row.enabled ? '禁用' : '启用'),
+                h(NButton, { size: 'small', secondary: true, onClick: () => openConfig(row) }, () => '编辑'),
+                !_isMobile.value ? h(NButton, { size: 'small', secondary: true, onClick: () => testConfig(row) }, () => '测试') : null,
+                h(NPopconfirm, { onPositiveClick: () => deleteConfig(row) }, { trigger: () => h(NButton, { size: 'small', secondary: true, type: 'error' }, () => '删除'), default: () => '确定删除？' }),
+            ].filter(Boolean)) },
+        ]);
+        const checkColumns = useColumns([
+            { title: '名称', key: 'name', width: 170 },
+            { title: '配置', key: 'config_name', width: 140 },
+            { title: '指标', key: 'metric_type', width: 110, render: row => cloudMetricLabel(row.metric_type) },
+            { title: 'Filter', key: 'filter', ellipsis: { tooltip: true }, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:.75' }, truncate(row.filter || '-', 80)) },
+            { title: '窗口', key: 'lookback_minutes', width: 80, _hideOnMobile: true, render: row => row.lookback_minutes + 'm' },
+            { title: '阈值', key: 'threshold_count', width: 100, render: row => cloudMetricLabel(row.metric_type) + ' > ' + row.threshold_count },
+            { title: '状态', key: 'enabled', width: 80, render: row => row.running ? h(NTag, { type: 'success', size: 'small' }, () => '运行') : h(NTag, { size: 'small' }, () => row.enabled ? '待运行' : '禁用') },
+            { title: '操作', key: 'actions', width: 280, render: row => h(NSpace, { size: 'small' }, () => [
+                h(NButton, { size: 'small', secondary: true, onClick: () => toggleCheck(row) }, () => row.enabled ? '禁用' : '启用'),
+                h(NButton, { size: 'small', secondary: true, onClick: () => openCheck(row) }, () => '编辑'),
+                !_isMobile.value ? h(NButton, { size: 'small', secondary: true, onClick: () => testCheck(row) }, () => '测试') : null,
+                h(NPopconfirm, { onPositiveClick: () => deleteCheck(row) }, { trigger: () => h(NButton, { size: 'small', secondary: true, type: 'error' }, () => '删除'), default: () => '确定删除？' }),
+            ].filter(Boolean)) },
+        ]);
+        const entryColumns = useColumns([
+            { title: '时间', key: 'timestamp', width: 170, render: row => formatTime(row.timestamp) },
+            { title: '级别', key: 'severity', width: 90, render: row => h(NTag, { type: ['ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY'].includes(row.severity) ? 'error' : row.severity === 'WARNING' ? 'warning' : 'default', size: 'small' }, () => row.severity || 'DEFAULT') },
+            { title: '资源', key: 'resource_type', width: 160, _hideOnMobile: true, ellipsis: { tooltip: true } },
+            { title: '内容', key: 'payload', ellipsis: { tooltip: true }, render: row => renderCloudClickableText(row.payload || row.raw || '-', row, _isMobile.value ? 80 : 180, true) },
+            { title: '日志', key: 'log_name', width: 220, _hideOnMobile: true, ellipsis: { tooltip: true }, render: row => renderCloudClickableText(row.log_name || '-', row, 80) },
+        ]);
+        const logColumns = useColumns([
+            { title: '时间', key: 'detected_at', width: 150, render: row => formatTime(row.detected_at) },
+            { title: '规则', key: 'check_name', width: 160 },
+            { title: '状态', key: 'status', width: 80, render: row => statusTag(row.status) },
+            { title: '命中', key: 'match_count', width: 80, render: row => row.match_count + ' / >' + row.threshold_count },
+            { title: 'Filter', key: 'filter', ellipsis: { tooltip: true }, _hideOnMobile: true, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:.7' }, truncate(row.filter || '-', 120)) },
+            { title: '错误/样例', key: 'sample', ellipsis: { tooltip: true }, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;white-space:pre-wrap' }, truncate(row.error || row.sample || '-', _isMobile.value ? 80 : 160)) },
+        ]);
+        function cloudFilterTarget(target) {
+            return target === 'check'
+                ? { form: checkForm, dimensionKeys: checkDimensionKeys, presetKey: checkPresetKey }
+                : { form: queryForm, dimensionKeys: queryDimensionKeys, presetKey: queryPresetKey };
+        }
+        function cloudPresetByKey(key) {
+            return queryPresets.find(p => p.key === key) || null;
+        }
+        function buildCloudCombinedFilter(dimensionKeys, preset) {
+            const dimensionFilters = dimensionKeys
+                .map(key => cloudLogDimensions.find(dim => dim.key === key))
+                .filter(Boolean)
+                .map(dim => stringsTrim(dim.filter));
+            const parts = [];
+            if (dimensionFilters.length === 1) {
+                parts.push(dimensionFilters[0]);
+            } else if (dimensionFilters.length > 1) {
+                parts.push('(\n' + dimensionFilters.join('\nOR\n') + '\n)');
+            }
+            if (preset && stringsTrim(preset.filter)) {
+                parts.push(stringsTrim(preset.filter));
+            }
+            return parts.join('\nAND\n');
+        }
+        function gcpLogString(value) {
+            return '"' + String(value || '').trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, ' ') + '"';
+        }
+        function cloudContentKeywordFilter(keyword) {
+            const term = String(keyword || '').trim();
+            if (!term) return '';
+            const quoted = gcpLogString(term);
+            return `(
+  ${quoted}
+  OR textPayload:${quoted}
+  OR jsonPayload.message:${quoted}
+  OR jsonPayload.msg:${quoted}
+  OR jsonPayload.caller:${quoted}
+  OR protoPayload.methodName:${quoted}
+  OR protoPayload.serviceName:${quoted}
+  OR protoPayload.resourceName:${quoted}
+  OR protoPayload.status.message:${quoted}
+)`;
+        }
+        function buildCloudQueryFilter() {
+            const parts = [];
+            const baseFilter = stringsTrim(queryForm.filter);
+            const keywordFilter = cloudContentKeywordFilter(queryForm.content_keyword);
+            if (baseFilter) parts.push(baseFilter);
+            if (keywordFilter) parts.push(keywordFilter);
+            return parts.join('\nAND\n');
+        }
+        function stringsTrim(value) {
+            return String(value || '').trim();
+        }
+        function applyCloudFilterSelection(target = 'query') {
+            const state = cloudFilterTarget(target);
+            const preset = cloudPresetByKey(state.presetKey.value);
+            const combinedFilter = buildCloudCombinedFilter(state.dimensionKeys.value, preset);
+            if (combinedFilter) {
+                state.form.filter = combinedFilter;
+            } else if (preset && !preset.keepFilter) {
+                state.form.filter = preset.filter || '';
+            } else if (!preset && state.dimensionKeys.value.length === 0) {
+                state.form.filter = '';
+            }
+        }
+        function isCloudDimensionActive(dim, target) {
+            return cloudFilterTarget(target).dimensionKeys.value.includes(dim.key);
+        }
+        function isCloudPresetActive(preset, target) {
+            return cloudFilterTarget(target).presetKey.value === preset.key;
+        }
+        function toggleCloudLogDimension(dim, target = 'query') {
+            const state = cloudFilterTarget(target);
+            const set = new Set(state.dimensionKeys.value);
+            if (set.has(dim.key)) {
+                set.delete(dim.key);
+            } else {
+                set.add(dim.key);
+                if (target === 'check' && !String(checkForm.name || '').trim()) {
+                    checkForm.name = dim.name;
+                }
+            }
+            state.dimensionKeys.value = Array.from(set);
+            applyCloudFilterSelection(target);
+        }
+        function applyQueryPreset(preset, target = 'query') {
+            const state = cloudFilterTarget(target);
+            state.presetKey.value = state.presetKey.value === preset.key ? '' : preset.key;
+            applyCloudFilterSelection(target);
+        }
+        function clearCloudFilterSelection(target = 'query') {
+            const state = cloudFilterTarget(target);
+            state.dimensionKeys.value = [];
+            state.presetKey.value = '';
+        }
+        function renderCloudDimensionButtons(target = 'query') {
+            return h('div', { class: 'cloud-query-dimensions' }, [
+                h('span', { class: 'cloud-query-dimension-label' }, '日志维度'),
+                ...cloudLogDimensions.map(dim =>
+                    h(NButton, {
+                        size: 'tiny',
+                        secondary: !isCloudDimensionActive(dim, target),
+                        type: isCloudDimensionActive(dim, target) ? 'primary' : 'default',
+                        onClick: () => toggleCloudLogDimension(dim, target),
+                    }, () => dim.label)
+                ),
+            ]);
+        }
+        function renderCloudPresetButtons(target = 'query') {
+            return h('div', { class: 'cloud-query-presets' }, [
+                h('span', { class: 'cloud-query-dimension-label' }, '条件预设'),
+                ...queryPresets.map(p =>
+                    h(NButton, {
+                        size: 'tiny',
+                        secondary: !isCloudPresetActive(p, target),
+                        type: isCloudPresetActive(p, target) ? 'primary' : 'default',
+                        onClick: () => applyQueryPreset(p, target),
+                    }, () => p.label)
+                ),
+            ]);
+        }
+        function renderQuery() {
+            return h('div', { class: 'cloud-query-page' }, [
+                h('div', { class: 'cloud-query-workbench' }, [
+                    configs.value.length === 0 ? h(NAlert, { type: 'warning', showIcon: false, style: 'margin-bottom:14px' }, () => '暂无 Cloud Logging 配置') : null,
+                    h('div', { class: 'cloud-query-toolbar' }, [
+                        h('div', { class: 'cloud-query-field cloud-query-config-field' }, [
+                            h('label', '配置'),
+                            h(NSelect, { value: queryForm.config_id, 'onUpdate:value': v => queryForm.config_id = v, options: configOptions.value, placeholder: '选择配置', clearable: true }),
+                        ]),
+                        h('div', { class: 'cloud-query-field' }, [
+                            h('label', '时间范围'),
+                            h(NSelect, { value: queryForm.lookback_minutes, 'onUpdate:value': v => queryForm.lookback_minutes = v, options: cloudTimeRangeOptions, style: 'width:100%' }),
+                        ]),
+                        h('div', { class: 'cloud-query-field' }, [
+                            h('label', '条数'),
+                            h(NInputNumber, { value: queryForm.limit, 'onUpdate:value': v => queryForm.limit = v, min: 1, max: 1000, style: 'width:100%' }),
+                        ]),
+                        h('div', { class: 'cloud-query-field' }, [
+                            h('label', '内容包含'),
+                            h(NInput, {
+                                value: queryForm.content_keyword,
+                                'onUpdate:value': v => queryForm.content_keyword = v,
+                                clearable: true,
+                                placeholder: '输入文本模糊匹配内容',
+                                onKeyup: e => e.key === 'Enter' && queryForm.config_id && runQuery(),
+                            }),
+                        ]),
+                        h(NButton, { type: 'primary', block: true, loading: queryLoading.value, disabled: !queryForm.config_id, onClick: runQuery }, () => '查询'),
+                    ]),
+                    h('div', { class: 'cloud-query-editor' }, [
+                        h('div', { class: 'cloud-query-editor-head' }, [
+	                            h('div', { class: 'cloud-query-title-row' }, [
+	                                h('div', null, [
+	                                    h('div', { class: 'cloud-query-section-title' }, 'Filter'),
+	                                ]),
+	                                h(NButton, { size: 'tiny', secondary: true, onClick: () => showQueryFilterEditor.value = !showQueryFilterEditor.value }, () => showQueryFilterEditor.value ? '收起' : '展开'),
+	                            ]),
+                            h('div', { class: 'cloud-query-head-actions' }, [
+                                renderCloudDimensionButtons('query'),
+                                renderCloudPresetButtons('query'),
+                            ]),
+                        ]),
+                        showQueryFilterEditor.value
+                            ? h(NInput, { value: queryForm.filter, 'onUpdate:value': v => { queryForm.filter = v; clearCloudFilterSelection('query'); }, type: 'textarea', autosize: { minRows: 5, maxRows: 12 }, placeholder: 'severity>=ERROR\nresource.type="cloud_run_revision"' })
+                            : h('div', { class: 'cloud-collapsed-filter-preview' }, truncate(queryForm.filter || '未设置 Filter', 220)),
+                    ]),
+	                    effectiveFilter.value ? h('div', { class: 'cloud-effective-filter' }, [
+	                        h('div', { class: 'cloud-query-title-row' }, [
+	                            h('div', { class: 'cloud-query-section-title' }, '最终查询'),
+	                            h(NButton, { size: 'tiny', secondary: true, onClick: () => showEffectiveFilterPanel.value = !showEffectiveFilterPanel.value }, () => showEffectiveFilterPanel.value ? '收起' : '展开'),
+	                        ]),
+                        showEffectiveFilterPanel.value
+                            ? h('pre', null, effectiveFilter.value)
+                            : h('div', { class: 'cloud-collapsed-filter-preview' }, truncate(effectiveFilter.value, 220)),
+                    ]) : null,
+                ]),
+                h('div', { class: 'cloud-result-shell' }, [
+                    h('div', { class: 'cloud-result-head' }, [
+                        h('div', null, [
+                            h('div', { class: 'cloud-query-section-title' }, '查询结果'),
+                            h('div', { class: 'cloud-query-muted' }, queryStats.value ? '按时间倒序，统计按当前 Filter 聚合' : (queryEntries.value.length ? '按时间倒序' : '暂无数据')),
+                        ]),
+                        h(NTag, { size: 'small', bordered: false, type: queryEntries.value.length ? 'info' : 'default' }, () => {
+                            if (queryStats.value) return formatCloudStatNumber(queryStats.value.total, queryStats.value.truncated) + ' 条';
+                            return queryEntries.value.length + ' 条';
+                        }),
+                    ]),
+                    renderCloudQueryStats(),
+                    h(NDataTable, { columns: entryColumns.value, data: queryEntries.value, bordered: false, size: 'small', loading: queryLoading.value, maxHeight: 'calc(100vh - 520px)', scrollX: _isMobile.value ? 680 : undefined, rowProps: row => ({ style: 'cursor:pointer', onClick: () => openCloudEntryDetail(row) }) }),
+                ]),
+            ]);
+        }
+        function renderConfigs() {
+            return h('div', null, [
+                h('div', { style: 'display:flex;justify-content:flex-end;margin-bottom:12px' }, h(NButton, { type: 'primary', onClick: () => openConfig(null) }, () => '+ 添加配置')),
+                h(NDataTable, { columns: configColumns.value, data: configs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 250px)', scrollX: _isMobile.value ? 680 : undefined }),
+            ]);
+        }
+        function renderChecks() {
+            return h('div', null, [
+                h('div', { style: 'display:flex;justify-content:flex-end;margin-bottom:12px' }, h(NButton, { type: 'primary', onClick: () => openCheck(null), disabled: configs.value.length === 0 }, () => '+ 添加监控')),
+                h(NDataTable, { columns: checkColumns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 250px)', scrollX: _isMobile.value ? 860 : undefined }),
+            ]);
+        }
+        function renderLogs() {
+            return h('div', null, [
+                h(NDataTable, { columns: logColumns.value, data: alertLogs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 250px)', scrollX: _isMobile.value ? 680 : undefined }),
+                alertTotal.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
+                    h(NPagination, { page: alertPage.value, pageSize, itemCount: alertTotal.value, onUpdatePage: p => alertPage.value = p })
+                ) : null,
+            ]);
+        }
+        return () => h('div', { class: 'page-body' }, [
+            h('div', { class: 'page-header' }, [
+                h('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:' + (_isMobile.value ? '10px' : '0') }, [
+                    h('h3', { class: 'page-title' }, pageTitle.value),
+                    h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
+                        h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
+                        connected.value ? '实时' : '离线',
+                    ]),
+                ]),
+            ]),
+            routeMode.value === 'query' ? renderQuery() : routeMode.value === 'configs' ? renderConfigs() : routeMode.value === 'checks' ? renderChecks() : renderLogs(),
+            h(NModal, { show: showEntryDetail.value, 'onUpdate:show': v => showEntryDetail.value = v, preset: 'card', title: '日志详情', style: _isMobile.value ? 'width:95vw' : 'width:1180px;max-width:94vw', segmented: true }, () => renderCloudEntryDetail()),
+            h(NModal, { show: showConfigModal.value, 'onUpdate:show': v => showConfigModal.value = v, preset: 'card', title: editingConfigId.value ? '编辑 Cloud Logging 配置' : '添加 Cloud Logging 配置', style: _isMobile.value ? 'width:95vw' : 'width:860px', segmented: true }, () =>
+                h(NForm, { labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 110 }, () => [
+                    h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 12 }, () => [
+                        h(NGi, null, () => h(NFormItem, { label: '名称' }, () => h(NInput, { value: configForm.name, 'onUpdate:value': v => configForm.name = v, placeholder: 'prod-logs' }))),
+                        h(NGi, null, () => h(NFormItem, { label: 'Project ID' }, () => h(NInput, { value: configForm.project_id, 'onUpdate:value': v => configForm.project_id = v, placeholder: 'my-gcp-project' }))),
+                    ]),
+                    h(NFormItem, { label: '资源名称' }, () => h(NInput, { value: configForm.resource_names, 'onUpdate:value': v => configForm.resource_names = v, type: 'textarea', autosize: { minRows: 2, maxRows: 4 }, placeholder: '默认使用 projects/{Project ID}；也可每行一个 resourceNames' })),
+                    h(NFormItem, { label: '凭证文件' }, () => h(NInput, { value: configForm.credentials_file, 'onUpdate:value': v => configForm.credentials_file = v, placeholder: '/app/data/gcp-sa.json；留空使用 GOOGLE_APPLICATION_CREDENTIALS/ADC' })),
+                    h(NFormItem, { label: '默认 Filter' }, () => h(NInput, { value: configForm.default_filter, 'onUpdate:value': v => configForm.default_filter = v, type: 'textarea', autosize: { minRows: 3, maxRows: 8 }, placeholder: 'resource.type=\"cloud_run_revision\"' })),
+                    h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 12 }, () => [
+                        h(NGi, null, () => h(NFormItem, { label: '间隔(秒)' }, () => h(NInputNumber, { value: configForm.interval_sec, 'onUpdate:value': v => configForm.interval_sec = v, min: 10, style: 'width:100%' }))),
+                        h(NGi, null, () => h(NFormItem, { label: '启用' }, () => h(NSwitch, { value: configForm.enabled, 'onUpdate:value': v => configForm.enabled = v }))),
+                    ]),
+                    h(NButton, { type: 'primary', block: true, loading: saving.value, onClick: saveConfig }, () => editingConfigId.value ? '保存' : '创建'),
+                ])
+            ),
+            h(NModal, { show: showCheckModal.value, 'onUpdate:show': v => showCheckModal.value = v, preset: 'card', title: editingCheckId.value ? '编辑 Cloud Logging 监控' : '添加 Cloud Logging 监控', style: _isMobile.value ? 'width:95vw' : 'width:860px', segmented: true }, () =>
+                h(NForm, { labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 110 }, () => [
+                    h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 12 }, () => [
+                        h(NGi, null, () => h(NFormItem, { label: '名称' }, () => h(NInput, { value: checkForm.name, 'onUpdate:value': v => checkForm.name = v, placeholder: '错误日志突增' }))),
+                        h(NGi, null, () => h(NFormItem, { label: '配置' }, () => h(NSelect, { value: checkForm.config_id, 'onUpdate:value': v => checkForm.config_id = v, options: configOptions.value }))),
+                    ]),
+                    h(NFormItem, { label: '快捷选择' }, () => h('div', { class: 'cloud-check-filter-picker' }, [
+                        renderCloudDimensionButtons('check'),
+                        renderCloudPresetButtons('check'),
+                    ])),
+                    h(NFormItem, { label: 'Filter' }, () => h(NInput, { value: checkForm.filter, 'onUpdate:value': v => { checkForm.filter = v; clearCloudFilterSelection('check'); }, type: 'textarea', autosize: { minRows: 4, maxRows: 10 }, placeholder: 'severity>=ERROR' })),
+                    h(NGrid, { cols: _isMobile.value ? 1 : 4, xGap: 12 }, () => [
+                        h(NGi, null, () => h(NFormItem, { label: '检测方式' }, () => h(NSelect, { value: checkForm.metric_type, 'onUpdate:value': updateCloudCheckMetricType, options: cloudMetricOptions, style: 'width:100%' }))),
+                        h(NGi, null, () => h(NFormItem, { label: '回看(分钟)' }, () => h(NInputNumber, { value: checkForm.lookback_minutes, 'onUpdate:value': v => checkForm.lookback_minutes = v, min: 1, max: 1440, style: 'width:100%' }))),
+                        h(NGi, null, () => h(NFormItem, { label: checkForm.metric_type === 'peak_concurrency' ? '并发阈值' : '阈值' }, () => h(NInputNumber, { value: checkForm.threshold_count, 'onUpdate:value': v => checkForm.threshold_count = v, min: 0, style: 'width:100%' }))),
+                        h(NGi, null, () => h(NFormItem, { label: '间隔(秒)' }, () => h(NInputNumber, { value: checkForm.interval_sec, 'onUpdate:value': v => checkForm.interval_sec = v, min: 10, style: 'width:100%' }))),
+                    ]),
+                    h(NGrid, { cols: _isMobile.value ? 1 : 3, xGap: 12 }, () => [
+                        h(NGi, null, () => h(NFormItem, { label: '通知' }, () => h(NSwitch, { value: checkForm.notify_enabled, 'onUpdate:value': v => checkForm.notify_enabled = v }))),
+                        h(NGi, null, () => h(NFormItem, { label: '恢复通知' }, () => h(NSwitch, { value: checkForm.recovery_notify, disabled: !checkForm.notify_enabled, 'onUpdate:value': v => checkForm.recovery_notify = v }))),
+                        h(NGi, null, () => h(NFormItem, { label: '启用' }, () => h(NSwitch, { value: checkForm.enabled, 'onUpdate:value': v => checkForm.enabled = v }))),
+                    ]),
+                    h(NButton, { type: 'primary', block: true, loading: saving.value, onClick: saveCheck }, () => editingCheckId.value ? '保存' : '创建'),
+                ])
+            ),
         ]);
     }
 });
@@ -1415,7 +2266,7 @@ const MonitorLogsPage = defineComponent({
         return () => h('div', { class: 'page-body' }, [
             h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px' }, [
-                    h('h3', { class: 'page-title' }, '监控日志'),
+                    h('h3', { class: 'page-title' }, '运行日志'),
                     h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
                         h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
                         connected.value ? '已连接' : '已断开'
@@ -1442,7 +2293,15 @@ const MonitorLogsPage = defineComponent({
 // --- Settings ---
 const SettingsPage = defineComponent({
     setup() {
-        const settings = reactive({ github_client_id: '', github_client_secret: '', github_enabled: '0', password_login_enabled: '1', oauth_public_base_url: '' });
+        const settings = reactive({
+            github_client_id: '',
+            github_client_secret: '',
+            github_enabled: '0',
+            password_login_enabled: '1',
+            oauth_public_base_url: '',
+            show_rocketmq_menu: '1',
+            show_grafana_menu: '1',
+        });
         const users = ref([]);
         const loading = ref(true);
         const saving = ref(false);
@@ -1454,6 +2313,7 @@ const SettingsPage = defineComponent({
             try {
                 const s = await api.get('/api/settings');
                 Object.assign(settings, s);
+                applyUISettings(s);
                 users.value = await api.get('/api/users');
             } catch {}
             loading.value = false;
@@ -1469,7 +2329,10 @@ const SettingsPage = defineComponent({
                     github_enabled: settings.github_enabled,
                     password_login_enabled: settings.password_login_enabled,
                     oauth_public_base_url: settings.oauth_public_base_url,
+                    show_rocketmq_menu: settings.show_rocketmq_menu,
+                    show_grafana_menu: settings.show_grafana_menu,
                 });
+                applyUISettings(settings);
                 message.success('设置已保存');
             } catch (e) { message.error(e.message); }
             saving.value = false;
@@ -1502,6 +2365,11 @@ const SettingsPage = defineComponent({
                 h(NFormItem, { label: 'Client Secret' }, () => h(NInput, { value: settings.github_client_secret, 'onUpdate:value': v => settings.github_client_secret = v, type: 'password', placeholder: '留空不修改' })),
                 h(NFormItem, { label: '启用 GitHub 登录' }, () => h(NSwitch, { value: settings.github_enabled === '1', 'onUpdate:value': v => settings.github_enabled = v ? '1' : '0' })),
                 h(NFormItem, { label: '启用密码登录' }, () => h(NSwitch, { value: settings.password_login_enabled !== '0', 'onUpdate:value': v => settings.password_login_enabled = v ? '1' : '0' })),
+                h(NButton, { type: 'primary', loading: saving.value, onClick: saveSettings }, () => '保存设置'),
+            ])),
+            h(NCard, { title: '界面显示', size: 'small', style: 'margin-bottom:20px' }, () => h(NForm, { model: settings, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 140 }, [
+                h(NFormItem, { label: '显示 RocketMQ' }, () => h(NSwitch, { value: settings.show_rocketmq_menu !== '0', 'onUpdate:value': v => settings.show_rocketmq_menu = v ? '1' : '0' })),
+                h(NFormItem, { label: '显示 Grafana' }, () => h(NSwitch, { value: settings.show_grafana_menu !== '0', 'onUpdate:value': v => settings.show_grafana_menu = v ? '1' : '0' })),
                 h(NButton, { type: 'primary', loading: saving.value, onClick: saveSettings }, () => '保存设置'),
             ])),
             h(NCard, { title: 'GitHub 授权用户', size: 'small' }, () => h('div', [
@@ -2727,19 +3595,21 @@ const AppLayout = defineComponent({
             try { user.value = await api.get('/api/auth/me'); } catch (e) {
                 if (e.message !== 'network_error' && route.path !== '/login') router.push('/login');
             }
+            try { applyUISettings(await api.get('/api/settings')); } catch {}
         });
 
         watch(_isMobile, (mobile) => { siderCollapsed.value = mobile; });
 
-        const menuOptions = [
+        const menuOptions = computed(() => [
             { label: '仪表盘', key: 'dashboard' },
             { label: '健康检查', key: 'g-healthcheck' },
             { label: 'MySQL', key: 'g-mysql' },
-            { label: 'RocketMQ', key: 'g-rocketmq' },
-            { label: 'Grafana', key: 'g-grafana' },
-            { label: '监控日志', key: 'monitor-logs' },
+            { label: 'Cloud Logging', key: 'g-cloud-logging' },
+            isUISettingEnabled('show_rocketmq_menu') ? { label: 'RocketMQ', key: 'g-rocketmq' } : null,
+            isUISettingEnabled('show_grafana_menu') ? { label: 'Grafana', key: 'g-grafana' } : null,
+            { label: '运行日志', key: 'monitor-logs' },
             { label: '系统', key: 'g-system' },
-        ];
+        ].filter(Boolean));
 
         const groupTabs = {
             'g-mysql': [
@@ -2748,6 +3618,12 @@ const AppLayout = defineComponent({
                 { label: '已忽略SQL', key: 'ignored-sql' },
                 { label: '自定义SQL', key: 'custom-sql' },
                 { label: 'SQL结果', key: 'custom-sql-logs' },
+            ],
+            'g-cloud-logging': [
+                { label: '配置', key: 'cloud-logging-configs' },
+                { label: '查询', key: 'cloud-logging-query' },
+                { label: '监控', key: 'cloud-logging-checks' },
+                { label: '告警日志', key: 'cloud-logging-logs' },
             ],
             'g-rocketmq': [
                 { label: 'MQ 配置', key: 'rocketmq' },
@@ -2774,8 +3650,14 @@ const AppLayout = defineComponent({
 
         const routeKey = computed(() => route.path.replace('/', '') || 'dashboard');
         const activeKey = computed(() => routeToGroup[routeKey.value] || routeKey.value);
+        function isGroupVisible(group) {
+            if (group === 'g-rocketmq') return isUISettingEnabled('show_rocketmq_menu');
+            if (group === 'g-grafana') return isUISettingEnabled('show_grafana_menu');
+            return true;
+        }
         const currentTabs = computed(() => {
             const group = routeToGroup[routeKey.value];
+            if (group && !isGroupVisible(group)) return null;
             return group ? groupTabs[group] : null;
         });
 
@@ -2818,7 +3700,7 @@ const AppLayout = defineComponent({
                                 h('div', { class: 'sider-logo' }, 'O'),
                                 h('span', { style: 'font-size:14px;font-weight:600' }, 'Ops Monitor'),
                             ]),
-                            h(NMenu, { value: activeKey.value, options: menuOptions, onUpdateValue: handleMenuUpdate }),
+                            h(NMenu, { value: activeKey.value, options: menuOptions.value, onUpdateValue: handleMenuUpdate }),
                         ])
                     ),
                     h(NLayout, { contentStyle: 'padding:16px;overflow-y:auto' }, () => [
@@ -2856,7 +3738,7 @@ const AppLayout = defineComponent({
                 h(NLayout, { hasSider: true, style: `height:calc(100vh - ${topbarH});overflow:hidden` }, () => [
                     // Left sidebar (menu only)
                     h(NLayoutSider, { bordered: true, width: 180, nativeScrollbar: false }, () => [
-                        h(NMenu, { value: activeKey.value, options: menuOptions, onUpdateValue: handleMenuUpdate }),
+                        h(NMenu, { value: activeKey.value, options: menuOptions.value, onUpdateValue: handleMenuUpdate }),
                     ]),
                     // Sub sidebar (when group has children)
                     currentTabs.value ? h(NLayoutSider, { bordered: true, width: 140, nativeScrollbar: false, contentStyle: 'padding:12px 0;background:var(--content-bg)' }, () => [
@@ -2889,6 +3771,11 @@ const routes = [
     { path: '/ignored-sql', component: IgnoredSQLPage },
     { path: '/custom-sql', component: CustomSQLPage },
     { path: '/custom-sql-logs', component: CustomSQLLogsPage },
+    { path: '/cloud-logging', redirect: '/cloud-logging-configs' },
+    { path: '/cloud-logging-query', component: CloudLoggingPage },
+    { path: '/cloud-logging-checks', component: CloudLoggingPage },
+    { path: '/cloud-logging-configs', component: CloudLoggingPage },
+    { path: '/cloud-logging-logs', component: CloudLoggingPage },
     { path: '/monitor-logs', component: MonitorLogsPage },
     { path: '/rocketmq', component: RocketMQPage },
     { path: '/rocketmq-alerts', component: RocketMQAlertsPage },

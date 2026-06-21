@@ -56,7 +56,7 @@ func GetLongQueries(db *sql.DB, thresholdSec float64) ([]notify.LongQuery, error
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return queries, nil
+	return filterBuiltinIgnoredLongQueries(queries), nil
 }
 
 func FormatNotificationText(name, host string, port int, queries []notify.LongQuery) string {
@@ -87,6 +87,45 @@ func FormatErrorNotificationText(name, host string, port int, err error) string 
 	b.WriteString(fmt.Sprintf("错误信息: %v\n\n", err))
 	b.WriteString("该告警仅发送一次，连接恢复后如再次出现异常将重新通知。")
 	return b.String()
+}
+
+func filterBuiltinIgnoredLongQueries(queries []notify.LongQuery) []notify.LongQuery {
+	if len(queries) == 0 {
+		return queries
+	}
+	filtered := make([]notify.LongQuery, 0, len(queries))
+	for _, q := range queries {
+		if isBuiltinIgnoredLongQuery(q.SQLText) {
+			continue
+		}
+		filtered = append(filtered, q)
+	}
+	return filtered
+}
+
+func isBuiltinIgnoredLongQuery(sqlText string) bool {
+	sqlText = strings.ToLower(strings.Join(strings.Fields(sqlText), " "))
+	if sqlText == "" {
+		return true
+	}
+	inspectionPatterns := []string{
+		"show processlist",
+		"show full processlist",
+		"show engine innodb status",
+		"from information_schema.processlist",
+		"from performance_schema.events_statements_current",
+		"from performance_schema.events_statements_history",
+		"from performance_schema.events_statements_history_long",
+		"from performance_schema.data_lock_waits",
+		"from information_schema.innodb_trx",
+		"from sys.processlist",
+	}
+	for _, pattern := range inspectionPatterns {
+		if strings.Contains(sqlText, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // NotifierDB is the persistence interface for notified PIDs and ignored SQL.

@@ -109,6 +109,8 @@ func shouldSend(c *Client, e monitor.MonitorEvent) bool {
 		return strings.HasPrefix(e.Type, "grafana_")
 	case "custom-sql-logs":
 		return strings.HasPrefix(e.Type, "custom_sql_")
+	case "cloud-logging-logs":
+		return strings.HasPrefix(e.Type, "cloud_logging_")
 	}
 	return false
 }

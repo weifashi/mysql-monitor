@@ -75,6 +75,7 @@ func (d *Dispatcher) SendScopedNotifications(scopeType string, scopeID int64, me
 
 func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, message string) error {
 	var lastErr error
+	successCount := 0
 	for _, cfg := range configs {
 		switch cfg.Type {
 		case "dingtalk":
@@ -90,6 +91,8 @@ func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, messa
 			if err := SendDingTalk(c, message); err != nil {
 				log.Printf("dingtalk send failed: %v", err)
 				lastErr = err
+			} else {
+				successCount++
 			}
 		case "feishu":
 			var c store.FeishuConfig
@@ -109,6 +112,7 @@ func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, messa
 				lastErr = wrappedErr
 			} else {
 				log.Printf("feishu notification sent config_id=%d", cfg.ID)
+				successCount++
 			}
 		case "email":
 			var c store.EmailConfig
@@ -123,6 +127,8 @@ func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, messa
 			if err := SendEmail(c, message); err != nil {
 				log.Printf("email send failed: %v", err)
 				lastErr = err
+			} else {
+				successCount++
 			}
 		case "dootask":
 			var c store.DooTaskConfig
@@ -137,10 +143,18 @@ func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, messa
 			if err := SendDooTask(c, message); err != nil {
 				log.Printf("dootask send failed: %v", err)
 				lastErr = err
+			} else {
+				successCount++
 			}
 		default:
 			log.Printf("notification config id=%d skipped: unknown type=%s", cfg.ID, cfg.Type)
 		}
+	}
+	if successCount > 0 {
+		if lastErr != nil {
+			log.Printf("notification partially failed: success=%d last_error=%v", successCount, lastErr)
+		}
+		return nil
 	}
 	return lastErr
 }

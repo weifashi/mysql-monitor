@@ -148,6 +148,19 @@ func New(dataDir string) (*Store, error) {
 		"ALTER TABLE custom_sql_checks ADD COLUMN alert_delta_percent TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE custom_sql_checks ADD COLUMN alert_consecutive INTEGER NOT NULL DEFAULT 1",
 		"ALTER TABLE custom_sql_checks ADD COLUMN alert_rules TEXT NOT NULL DEFAULT '[]'",
+		"ALTER TABLE custom_sql_checks ADD COLUMN trigger_actions TEXT NOT NULL DEFAULT '[]'",
+		"ALTER TABLE cloud_logging_configs ADD COLUMN resource_names TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE cloud_logging_configs ADD COLUMN credentials_file TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE cloud_logging_configs ADD COLUMN default_filter TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE cloud_logging_configs ADD COLUMN interval_sec INTEGER NOT NULL DEFAULT 60",
+		"ALTER TABLE cloud_logging_configs ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE cloud_logging_checks ADD COLUMN metric_type TEXT NOT NULL DEFAULT 'count'",
+		"ALTER TABLE cloud_logging_checks ADD COLUMN lookback_minutes INTEGER NOT NULL DEFAULT 5",
+		"ALTER TABLE cloud_logging_checks ADD COLUMN threshold_count INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE cloud_logging_checks ADD COLUMN interval_sec INTEGER NOT NULL DEFAULT 60",
+		"ALTER TABLE cloud_logging_checks ADD COLUMN notify_enabled INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE cloud_logging_checks ADD COLUMN recovery_notify INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE cloud_logging_checks ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
 	}
 	// Migrate existing data: database_id not null → scope_type='mysql'
 	db.Exec(`UPDATE notification_configs SET scope_type='mysql' WHERE database_id IS NOT NULL AND scope_type='all'`)
@@ -359,7 +372,7 @@ func (s *Store) GetEffectiveNotifications(databaseID int64) ([]NotificationConfi
 // It returns scope-specific configs first, then global configs. Multiple enabled
 // configs of the same type are all returned so every configured destination is tried.
 func (s *Store) GetScopedNotifications(scopeType string, scopeID int64) ([]NotificationConfig, error) {
-	rows, err := s.db.Query(`SELECT id, database_id, scope_type, type, config_json, enabled, created_at, updated_at FROM notification_configs WHERE enabled=1 AND ((scope_type=? AND database_id=?) OR scope_type='all') ORDER BY CASE WHEN scope_type='all' THEN 1 ELSE 0 END, id`, scopeType, scopeID)
+	rows, err := s.db.Query(`SELECT id, database_id, scope_type, type, config_json, enabled, created_at, updated_at FROM notification_configs WHERE enabled=1 AND ((scope_type=? AND (database_id=? OR database_id IS NULL)) OR scope_type='all') ORDER BY CASE WHEN scope_type='all' THEN 2 WHEN database_id IS NULL THEN 1 ELSE 0 END, id`, scopeType, scopeID)
 	if err != nil {
 		return nil, err
 	}
@@ -974,6 +987,18 @@ func (s *Store) InsertHealthCheckLog(l *HealthCheckLog) {
 		l.CheckID, l.CheckName, l.Status, l.HTTPStatus, l.Response, l.Error, l.DiagnosticOutput, l.LatencyMs)
 }
 
+func (s *Store) LastHealthCheckLogStatus(checkID int64) (string, bool, error) {
+	var status string
+	err := s.db.QueryRow(`SELECT status FROM health_check_logs WHERE check_id=? ORDER BY detected_at DESC LIMIT 1`, checkID).Scan(&status)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return status, true, nil
+}
+
 func (s *Store) ListHealthCheckLogs(checkID *int64, page, pageSize int) ([]HealthCheckLog, int, error) {
 	var total int
 	where := ""
@@ -1202,6 +1227,7 @@ type CustomSQLCheck struct {
 	AlertDeltaPercent string    `json:"alert_delta_percent"`
 	AlertConsecutive  int       `json:"alert_consecutive"`
 	AlertRules        string    `json:"alert_rules"`
+	TriggerActions    string    `json:"trigger_actions"`
 	NotifyEnabled     bool      `json:"notify_enabled"`
 	RecoveryNotify    bool      `json:"recovery_notify"`
 	MessageTemplate   string    `json:"message_template"`
@@ -1227,7 +1253,7 @@ type CustomSQLLog struct {
 }
 
 func (s *Store) ListCustomSQLChecks() ([]CustomSQLCheck, error) {
-	rows, err := s.db.Query(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.result_field, c.interval_sec, c.timeout_sec, c.alert_strategy, c.condition, c.expected_value, c.alert_delta_value, c.alert_delta_percent, c.alert_consecutive, c.alert_rules, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id ORDER BY c.id`)
+	rows, err := s.db.Query(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.result_field, c.interval_sec, c.timeout_sec, c.alert_strategy, c.condition, c.expected_value, c.alert_delta_value, c.alert_delta_percent, c.alert_consecutive, c.alert_rules, c.trigger_actions, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id ORDER BY c.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1236,9 +1262,10 @@ func (s *Store) ListCustomSQLChecks() ([]CustomSQLCheck, error) {
 	for rows.Next() {
 		var c CustomSQLCheck
 		var notifyEnabled, recoveryNotify, enabled int
-		if err := rows.Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.ResultField, &c.IntervalSec, &c.TimeoutSec, &c.AlertStrategy, &c.Condition, &c.ExpectedValue, &c.AlertDeltaValue, &c.AlertDeltaPercent, &c.AlertConsecutive, &c.AlertRules, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.ResultField, &c.IntervalSec, &c.TimeoutSec, &c.AlertStrategy, &c.Condition, &c.ExpectedValue, &c.AlertDeltaValue, &c.AlertDeltaPercent, &c.AlertConsecutive, &c.AlertRules, &c.TriggerActions, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
+		normalizeCustomSQLCheckDefaults(&c)
 		c.NotifyEnabled = notifyEnabled == 1
 		c.RecoveryNotify = recoveryNotify == 1
 		c.Enabled = enabled == 1
@@ -1250,20 +1277,22 @@ func (s *Store) ListCustomSQLChecks() ([]CustomSQLCheck, error) {
 func (s *Store) GetCustomSQLCheck(id int64) (*CustomSQLCheck, error) {
 	var c CustomSQLCheck
 	var notifyEnabled, recoveryNotify, enabled int
-	err := s.db.QueryRow(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.result_field, c.interval_sec, c.timeout_sec, c.alert_strategy, c.condition, c.expected_value, c.alert_delta_value, c.alert_delta_percent, c.alert_consecutive, c.alert_rules, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id WHERE c.id=?`, id).
-		Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.ResultField, &c.IntervalSec, &c.TimeoutSec, &c.AlertStrategy, &c.Condition, &c.ExpectedValue, &c.AlertDeltaValue, &c.AlertDeltaPercent, &c.AlertConsecutive, &c.AlertRules, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt)
+	err := s.db.QueryRow(`SELECT c.id, c.database_id, COALESCE(d.name, ''), c.name, c.db_name, c.sql_text, c.result_field, c.interval_sec, c.timeout_sec, c.alert_strategy, c.condition, c.expected_value, c.alert_delta_value, c.alert_delta_percent, c.alert_consecutive, c.alert_rules, c.trigger_actions, c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at FROM custom_sql_checks c LEFT JOIN databases d ON d.id=c.database_id WHERE c.id=?`, id).
+		Scan(&c.ID, &c.DatabaseID, &c.DatabaseName, &c.Name, &c.DBName, &c.SQLText, &c.ResultField, &c.IntervalSec, &c.TimeoutSec, &c.AlertStrategy, &c.Condition, &c.ExpectedValue, &c.AlertDeltaValue, &c.AlertDeltaPercent, &c.AlertConsecutive, &c.AlertRules, &c.TriggerActions, &notifyEnabled, &recoveryNotify, &c.MessageTemplate, &enabled, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	c.NotifyEnabled = notifyEnabled == 1
 	c.RecoveryNotify = recoveryNotify == 1
 	c.Enabled = enabled == 1
+	normalizeCustomSQLCheckDefaults(&c)
 	return &c, nil
 }
 
 func (s *Store) CreateCustomSQLCheck(c *CustomSQLCheck) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO custom_sql_checks (database_id, name, db_name, sql_text, result_field, interval_sec, timeout_sec, alert_strategy, condition, expected_value, alert_delta_value, alert_delta_percent, alert_consecutive, alert_rules, notify_enabled, recovery_notify, message_template, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.ResultField, c.IntervalSec, c.TimeoutSec, c.AlertStrategy, c.Condition, c.ExpectedValue, c.AlertDeltaValue, c.AlertDeltaPercent, c.AlertConsecutive, c.AlertRules, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled))
+	normalizeCustomSQLCheckDefaults(c)
+	res, err := s.db.Exec(`INSERT INTO custom_sql_checks (database_id, name, db_name, sql_text, result_field, interval_sec, timeout_sec, alert_strategy, condition, expected_value, alert_delta_value, alert_delta_percent, alert_consecutive, alert_rules, trigger_actions, notify_enabled, recovery_notify, message_template, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.ResultField, c.IntervalSec, c.TimeoutSec, c.AlertStrategy, c.Condition, c.ExpectedValue, c.AlertDeltaValue, c.AlertDeltaPercent, c.AlertConsecutive, c.AlertRules, c.TriggerActions, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled))
 	if err != nil {
 		return 0, err
 	}
@@ -1271,9 +1300,28 @@ func (s *Store) CreateCustomSQLCheck(c *CustomSQLCheck) (int64, error) {
 }
 
 func (s *Store) UpdateCustomSQLCheck(c *CustomSQLCheck) error {
-	_, err := s.db.Exec(`UPDATE custom_sql_checks SET database_id=?, name=?, db_name=?, sql_text=?, result_field=?, interval_sec=?, timeout_sec=?, alert_strategy=?, condition=?, expected_value=?, alert_delta_value=?, alert_delta_percent=?, alert_consecutive=?, alert_rules=?, notify_enabled=?, recovery_notify=?, message_template=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
-		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.ResultField, c.IntervalSec, c.TimeoutSec, c.AlertStrategy, c.Condition, c.ExpectedValue, c.AlertDeltaValue, c.AlertDeltaPercent, c.AlertConsecutive, c.AlertRules, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled), c.ID)
+	normalizeCustomSQLCheckDefaults(c)
+	_, err := s.db.Exec(`UPDATE custom_sql_checks SET database_id=?, name=?, db_name=?, sql_text=?, result_field=?, interval_sec=?, timeout_sec=?, alert_strategy=?, condition=?, expected_value=?, alert_delta_value=?, alert_delta_percent=?, alert_consecutive=?, alert_rules=?, trigger_actions=?, notify_enabled=?, recovery_notify=?, message_template=?, enabled=?, updated_at=datetime('now') WHERE id=?`,
+		c.DatabaseID, c.Name, c.DBName, c.SQLText, c.ResultField, c.IntervalSec, c.TimeoutSec, c.AlertStrategy, c.Condition, c.ExpectedValue, c.AlertDeltaValue, c.AlertDeltaPercent, c.AlertConsecutive, c.AlertRules, c.TriggerActions, boolToInt(c.NotifyEnabled), boolToInt(c.RecoveryNotify), c.MessageTemplate, boolToInt(c.Enabled), c.ID)
 	return err
+}
+
+func normalizeCustomSQLCheckDefaults(c *CustomSQLCheck) {
+	if c.AlertStrategy == "" {
+		c.AlertStrategy = "threshold"
+	}
+	if c.Condition == "" {
+		c.Condition = "gt"
+	}
+	if c.AlertConsecutive <= 0 {
+		c.AlertConsecutive = 1
+	}
+	if c.AlertRules == "" {
+		c.AlertRules = "[]"
+	}
+	if c.TriggerActions == "" {
+		c.TriggerActions = "[]"
+	}
 }
 
 func (s *Store) DeleteCustomSQLCheck(id int64) error {
@@ -1293,6 +1341,18 @@ func (s *Store) InsertCustomSQLLog(l *CustomSQLLog) (int64, error) {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+func (s *Store) LastCustomSQLLogStatus(checkID int64) (string, bool, error) {
+	var status string
+	err := s.db.QueryRow(`SELECT status FROM custom_sql_logs WHERE check_id=? ORDER BY detected_at DESC LIMIT 1`, checkID).Scan(&status)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return status, true, nil
 }
 
 func (s *Store) ListCustomSQLLogs(checkID *int64, page, pageSize int) ([]CustomSQLLog, int, error) {
@@ -1546,6 +1606,8 @@ func (s *Store) InitDefaultSettings() {
 	defaults := map[string]string{
 		"password_login_enabled": "1",
 		"github_enabled":         "0",
+		"show_rocketmq_menu":     "1",
+		"show_grafana_menu":      "1",
 	}
 	for k, v := range defaults {
 		if s.GetSetting(k) == "" {

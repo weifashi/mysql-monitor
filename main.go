@@ -134,8 +134,14 @@ func main() {
 		log.Printf("start custom sql monitors: %v", err)
 	}
 
+	// Cloud Logging monitors
+	cloudLoggingMgr := monitor.NewCloudLoggingManager(s, dispatcher, eventBus)
+	if err := cloudLoggingMgr.StartAll(); err != nil {
+		log.Printf("start cloud logging monitors: %v", err)
+	}
+
 	// Web server
-	srv := web.NewServer(s, authStore, mgr, rocketMQMgr, healthCheckMgr, grafanaMgr, customSQLMgr, dispatcher, eventBus, publicBaseURL)
+	srv := web.NewServer(s, authStore, mgr, rocketMQMgr, healthCheckMgr, grafanaMgr, customSQLMgr, cloudLoggingMgr, dispatcher, eventBus, publicBaseURL)
 	httpSrv := &http.Server{
 		Addr:    listenAddr,
 		Handler: srv.Routes(),
@@ -153,6 +159,7 @@ func main() {
 		healthCheckMgr.StopAll()
 		grafanaMgr.StopAll()
 		customSQLMgr.StopAll()
+		cloudLoggingMgr.StopAll()
 		cancel()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()

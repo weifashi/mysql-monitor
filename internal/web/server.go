@@ -16,25 +16,26 @@ import (
 //go:embed static
 var staticFS embed.FS
 
-const defaultAppVersion = "20260619170305"
+const defaultAppVersion = "20260621045056"
 
 type Server struct {
-	store          *store.Store
-	auth           *auth.SessionStore
-	manager        *monitor.Manager
-	rocketMQMgr    *monitor.RocketMQManager
-	healthCheckMgr *monitor.HealthCheckManager
-	grafanaMgr     *monitor.GrafanaManager
-	customSQLMgr   *monitor.CustomSQLManager
-	dispatcher     *notify.Dispatcher
-	hub            *Hub
-	staticHandler  http.Handler
-	appVersion     string
+	store           *store.Store
+	auth            *auth.SessionStore
+	manager         *monitor.Manager
+	rocketMQMgr     *monitor.RocketMQManager
+	healthCheckMgr  *monitor.HealthCheckManager
+	grafanaMgr      *monitor.GrafanaManager
+	customSQLMgr    *monitor.CustomSQLManager
+	cloudLoggingMgr *monitor.CloudLoggingManager
+	dispatcher      *notify.Dispatcher
+	hub             *Hub
+	staticHandler   http.Handler
+	appVersion      string
 	// publicBaseURL 若设置（如 https://app.example.com），OAuth redirect_uri 固定由此拼接，避免反向代理下 r.Host 与公网不一致。
 	publicBaseURL string
 }
 
-func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *monitor.RocketMQManager, hc *monitor.HealthCheckManager, gm *monitor.GrafanaManager, csql *monitor.CustomSQLManager, d *notify.Dispatcher, eb *monitor.EventBus, publicBaseURL string) *Server {
+func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *monitor.RocketMQManager, hc *monitor.HealthCheckManager, gm *monitor.GrafanaManager, csql *monitor.CustomSQLManager, cl *monitor.CloudLoggingManager, d *notify.Dispatcher, eb *monitor.EventBus, publicBaseURL string) *Server {
 	hub := NewHub(eb)
 	go hub.Run()
 	staticSub, _ := fs.Sub(staticFS, "static")
@@ -43,7 +44,7 @@ func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *mo
 		appVersion = defaultAppVersion
 	}
 	return &Server{
-		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, grafanaMgr: gm, customSQLMgr: csql, dispatcher: d, hub: hub,
+		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, grafanaMgr: gm, customSQLMgr: csql, cloudLoggingMgr: cl, dispatcher: d, hub: hub,
 		staticHandler: http.StripPrefix("/", noCacheStaticAssets(http.FileServer(http.FS(staticSub)))),
 		appVersion:    appVersion,
 		publicBaseURL: strings.TrimSpace(strings.TrimSuffix(publicBaseURL, "/")),
@@ -74,6 +75,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /ws/healthcheck-logs", s.wsHandler("healthcheck-logs"))
 	mux.HandleFunc("GET /ws/grafana-logs", s.wsHandler("grafana-logs"))
 	mux.HandleFunc("GET /ws/custom-sql-logs", s.wsHandler("custom-sql-logs"))
+	mux.HandleFunc("GET /ws/cloud-logging-logs", s.wsHandler("cloud-logging-logs"))
 
 	// --- Protected API routes ---
 	api := http.NewServeMux()
@@ -116,6 +118,22 @@ func (s *Server) Routes() http.Handler {
 	api.HandleFunc("POST /api/custom-sql/{id}/test", s.apiCustomSQLTest)
 	api.HandleFunc("GET /api/custom-sql/logs", s.apiCustomSQLLogs)
 	api.HandleFunc("DELETE /api/custom-sql/logs", s.apiCustomSQLLogsClear)
+
+	// Cloud Logging
+	api.HandleFunc("GET /api/cloud-logging/configs", s.apiCloudLoggingConfigList)
+	api.HandleFunc("POST /api/cloud-logging/configs", s.apiCloudLoggingConfigCreate)
+	api.HandleFunc("PUT /api/cloud-logging/configs/{id}", s.apiCloudLoggingConfigUpdate)
+	api.HandleFunc("DELETE /api/cloud-logging/configs/{id}", s.apiCloudLoggingConfigDelete)
+	api.HandleFunc("POST /api/cloud-logging/configs/{id}/toggle", s.apiCloudLoggingConfigToggle)
+	api.HandleFunc("POST /api/cloud-logging/configs/{id}/test", s.apiCloudLoggingConfigTest)
+	api.HandleFunc("GET /api/cloud-logging/checks", s.apiCloudLoggingCheckList)
+	api.HandleFunc("POST /api/cloud-logging/checks", s.apiCloudLoggingCheckCreate)
+	api.HandleFunc("PUT /api/cloud-logging/checks/{id}", s.apiCloudLoggingCheckUpdate)
+	api.HandleFunc("DELETE /api/cloud-logging/checks/{id}", s.apiCloudLoggingCheckDelete)
+	api.HandleFunc("POST /api/cloud-logging/checks/{id}/toggle", s.apiCloudLoggingCheckToggle)
+	api.HandleFunc("POST /api/cloud-logging/checks/{id}/test", s.apiCloudLoggingCheckTest)
+	api.HandleFunc("POST /api/cloud-logging/query", s.apiCloudLoggingQuery)
+	api.HandleFunc("GET /api/cloud-logging/logs", s.apiCloudLoggingLogs)
 
 	// Users
 	api.HandleFunc("GET /api/users", s.apiUsersList)

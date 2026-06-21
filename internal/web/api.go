@@ -238,14 +238,15 @@ func (s *Server) apiGitHubCallback(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiDashboardStats(w http.ResponseWriter, r *http.Request) {
 	var (
-		totalDBs, enabledDBs, todayCount, weekCount int
-		rocketmqConfigs, rocketmqAlertsToday        int
-		healthCheckCount, healthCheckErrorsToday    int
-		grafanaConfigs, grafanaAlertsToday          int
-		recentLogs                                  []store.SlowQueryLog
-		wg                                          sync.WaitGroup
+		totalDBs, enabledDBs, todayCount, weekCount  int
+		rocketmqConfigs, rocketmqAlertsToday         int
+		healthCheckCount, healthCheckErrorsToday     int
+		grafanaConfigs, grafanaAlertsToday           int
+		cloudLoggingConfigs, cloudLoggingAlertsToday int
+		recentLogs                                   []store.SlowQueryLog
+		wg                                           sync.WaitGroup
 	)
-	wg.Add(11)
+	wg.Add(13)
 	go func() { defer wg.Done(); totalDBs, _ = s.store.CountDatabases() }()
 	go func() { defer wg.Done(); enabledDBs, _ = s.store.CountEnabledDatabases() }()
 	go func() { defer wg.Done(); todayCount, _ = s.store.CountSlowQueriesToday() }()
@@ -257,24 +258,29 @@ func (s *Server) apiDashboardStats(w http.ResponseWriter, r *http.Request) {
 	go func() { defer wg.Done(); healthCheckErrorsToday, _ = s.store.CountHealthCheckErrorsToday() }()
 	go func() { defer wg.Done(); grafanaConfigs, _ = s.store.CountGrafanaConfigs() }()
 	go func() { defer wg.Done(); grafanaAlertsToday, _ = s.store.CountGrafanaAlertsToday() }()
+	go func() { defer wg.Done(); cloudLoggingConfigs, _ = s.store.CountCloudLoggingConfigs() }()
+	go func() { defer wg.Done(); cloudLoggingAlertsToday, _ = s.store.CountCloudLoggingAlertsToday() }()
 	wg.Wait()
 
 	jsonOK(w, map[string]any{
-		"total_dbs":                 totalDBs,
-		"enabled_dbs":               enabledDBs,
-		"running_dbs":               s.manager.RunningCount(),
-		"today_count":               todayCount,
-		"week_count":                weekCount,
-		"recent_logs":               recentLogs,
-		"rocketmq_configs":          rocketmqConfigs,
-		"rocketmq_running":          s.rocketMQMgr.RunningCount(),
-		"rocketmq_alerts_today":     rocketmqAlertsToday,
-		"health_checks":             healthCheckCount,
-		"health_checks_running":     s.healthCheckMgr.RunningCount(),
-		"health_check_errors_today": healthCheckErrorsToday,
-		"grafana_configs":           grafanaConfigs,
-		"grafana_running":           s.grafanaMgr.RunningCount(),
-		"grafana_alerts_today":      grafanaAlertsToday,
+		"total_dbs":                  totalDBs,
+		"enabled_dbs":                enabledDBs,
+		"running_dbs":                s.manager.RunningCount(),
+		"today_count":                todayCount,
+		"week_count":                 weekCount,
+		"recent_logs":                recentLogs,
+		"rocketmq_configs":           rocketmqConfigs,
+		"rocketmq_running":           s.rocketMQMgr.RunningCount(),
+		"rocketmq_alerts_today":      rocketmqAlertsToday,
+		"health_checks":              healthCheckCount,
+		"health_checks_running":      s.healthCheckMgr.RunningCount(),
+		"health_check_errors_today":  healthCheckErrorsToday,
+		"grafana_configs":            grafanaConfigs,
+		"grafana_running":            s.grafanaMgr.RunningCount(),
+		"grafana_alerts_today":       grafanaAlertsToday,
+		"cloud_logging_configs":      cloudLoggingConfigs,
+		"cloud_logging_running":      s.cloudLoggingMgr.RunningCount(),
+		"cloud_logging_alerts_today": cloudLoggingAlertsToday,
 	})
 }
 
@@ -549,6 +555,13 @@ func (s *Server) apiNotificationsList(w http.ResponseWriter, r *http.Request) {
 	}
 	nameMap["grafana"] = gfMap
 
+	clList, _ := s.store.ListCloudLoggingChecks()
+	clMap := make(map[int64]string)
+	for _, c := range clList {
+		clMap[c.ID] = c.Name
+	}
+	nameMap["cloud_logging"] = clMap
+
 	type ncDisplay struct {
 		store.NotificationConfig
 		ScopeName     string `json:"scope_name"`
@@ -794,6 +807,13 @@ func (s *Server) apiNotificationScopes(w http.ResponseWriter, r *http.Request) {
 	}
 	result["custom_sql"] = customItems
 
+	cloudLoggingList, _ := s.store.ListCloudLoggingChecks()
+	var cloudLoggingItems []scopeItem
+	for _, c := range cloudLoggingList {
+		cloudLoggingItems = append(cloudLoggingItems, scopeItem{ID: c.ID, Name: c.Name})
+	}
+	result["cloud_logging"] = cloudLoggingItems
+
 	jsonOK(w, result)
 }
 
@@ -953,6 +973,8 @@ func (s *Server) apiSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		"github_enabled":         true,
 		"password_login_enabled": true,
 		"oauth_public_base_url":  true,
+		"show_rocketmq_menu":     true,
+		"show_grafana_menu":      true,
 	}
 	var changed []string
 	for k, v := range req {
@@ -2089,6 +2111,7 @@ func (s *Server) apiCustomSQLCreate(w http.ResponseWriter, r *http.Request) {
 		AlertDeltaPercent string `json:"alert_delta_percent"`
 		AlertConsecutive  int    `json:"alert_consecutive"`
 		AlertRules        string `json:"alert_rules"`
+		TriggerActions    string `json:"trigger_actions"`
 		NotifyEnabled     *bool  `json:"notify_enabled"`
 		RecoveryNotify    *bool  `json:"recovery_notify"`
 		MessageTemplate   string `json:"message_template"`
@@ -2097,7 +2120,7 @@ func (s *Server) apiCustomSQLCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	cfg, ok := s.customSQLFromRequest(w, req.DatabaseID, req.Name, req.DBName, req.SQLText, req.ResultField, req.IntervalSec, req.TimeoutSec, req.AlertStrategy, req.Condition, req.ExpectedValue, req.AlertDeltaValue, req.AlertDeltaPercent, req.AlertConsecutive, req.AlertRules, req.NotifyEnabled, req.RecoveryNotify, req.MessageTemplate)
+	cfg, ok := s.customSQLFromRequest(w, req.DatabaseID, req.Name, req.DBName, req.SQLText, req.ResultField, req.IntervalSec, req.TimeoutSec, req.AlertStrategy, req.Condition, req.ExpectedValue, req.AlertDeltaValue, req.AlertDeltaPercent, req.AlertConsecutive, req.AlertRules, req.TriggerActions, req.NotifyEnabled, req.RecoveryNotify, req.MessageTemplate)
 	if !ok {
 		return
 	}
@@ -2139,6 +2162,7 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 		AlertDeltaPercent *string `json:"alert_delta_percent"`
 		AlertConsecutive  int     `json:"alert_consecutive"`
 		AlertRules        *string `json:"alert_rules"`
+		TriggerActions    *string `json:"trigger_actions"`
 		NotifyEnabled     *bool   `json:"notify_enabled"`
 		RecoveryNotify    *bool   `json:"recovery_notify"`
 		MessageTemplate   *string `json:"message_template"`
@@ -2190,6 +2214,9 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AlertRules != nil {
 		existing.AlertRules = *req.AlertRules
+	}
+	if req.TriggerActions != nil {
+		existing.TriggerActions = *req.TriggerActions
 	}
 	if req.NotifyEnabled != nil {
 		existing.NotifyEnabled = *req.NotifyEnabled
@@ -2244,7 +2271,7 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
-func (s *Server) customSQLFromRequest(w http.ResponseWriter, databaseID int64, name, dbName, sqlText, resultField string, intervalSec, timeoutSec int, alertStrategy, condition, expectedValue, alertDeltaValue, alertDeltaPercent string, alertConsecutive int, alertRules string, notifyEnabled, recoveryNotify *bool, messageTemplate string) (*store.CustomSQLCheck, bool) {
+func (s *Server) customSQLFromRequest(w http.ResponseWriter, databaseID int64, name, dbName, sqlText, resultField string, intervalSec, timeoutSec int, alertStrategy, condition, expectedValue, alertDeltaValue, alertDeltaPercent string, alertConsecutive int, alertRules, triggerActions string, notifyEnabled, recoveryNotify *bool, messageTemplate string) (*store.CustomSQLCheck, bool) {
 	name = strings.TrimSpace(name)
 	sqlText = strings.TrimSpace(sqlText)
 	if databaseID <= 0 || name == "" || sqlText == "" {
@@ -2274,6 +2301,7 @@ func (s *Server) customSQLFromRequest(w http.ResponseWriter, databaseID int64, n
 		AlertDeltaPercent: strings.TrimSpace(alertDeltaPercent),
 		AlertConsecutive:  alertConsecutive,
 		AlertRules:        strings.TrimSpace(alertRules),
+		TriggerActions:    strings.TrimSpace(triggerActions),
 		NotifyEnabled:     true,
 		RecoveryNotify:    true,
 		MessageTemplate:   messageTemplate,
@@ -2306,6 +2334,9 @@ func normalizeCustomSQLDefaults(cfg *store.CustomSQLCheck) {
 	}
 	if cfg.AlertRules == "" {
 		cfg.AlertRules = "[]"
+	}
+	if cfg.TriggerActions == "" {
+		cfg.TriggerActions = "[]"
 	}
 }
 
@@ -2374,6 +2405,7 @@ func (s *Server) clearCustomSQLRuntimeState(id int64) {
 
 func (s *Server) clearCustomSQLAlertState(id int64) {
 	s.store.SetSetting(fmt.Sprintf("custom_sql_alert_%d", id), "")
+	s.store.SetSetting(fmt.Sprintf("custom_sql_action_%d", id), "")
 }
 
 func (s *Server) resetCustomSQLRuntimeStateForDatabase(databaseID int64) {

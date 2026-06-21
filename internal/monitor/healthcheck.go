@@ -203,17 +203,24 @@ func (m *HealthCheckManager) doCheck(cfg *store.HealthCheck) {
 	m.emit("healthcheck_checking", cfg.ID, cfg.Name, "检查中...", nil)
 
 	result := m.executeHealthCheck(cfg)
+	previousStatus, hasPreviousStatus, err := m.store.LastHealthCheckLogStatus(cfg.ID)
+	if err != nil {
+		log.Printf("[HealthCheck %s] load last status failed: %v", cfg.Name, err)
+	}
+	wasDown := m.isDownNotified(cfg.ID) || (hasPreviousStatus && previousStatus != "up")
 
 	if result.Status == "up" {
 		m.store.InsertHealthCheckLog(&result)
 		m.emit("healthcheck_success", cfg.ID, cfg.Name, fmt.Sprintf("服务正常 (HTTP %d, %dms)", result.HTTPStatus, result.LatencyMs), nil)
 
-		if m.isDownNotified(cfg.ID) {
-			m.setDownNotified(cfg.ID, false)
+		if wasDown {
 			recoveryMsg := fmt.Sprintf("服务恢复通知\n\n服务: %s\nURL: %s\n状态: 已恢复正常", cfg.Name, cfg.URL)
 			if sendErr := m.dispatcher.SendScopedNotifications("health", cfg.ID, recoveryMsg); sendErr != nil {
 				log.Printf("[HealthCheck %s] recovery notification failed: %v", cfg.Name, sendErr)
+				m.setDownNotified(cfg.ID, true)
+				m.emit("healthcheck_notify_error", cfg.ID, cfg.Name, fmt.Sprintf("恢复通知发送失败: %v", sendErr), nil)
 			} else {
+				m.setDownNotified(cfg.ID, false)
 				m.emit("healthcheck_notified", cfg.ID, cfg.Name, "已发送恢复通知", nil)
 			}
 		}

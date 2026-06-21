@@ -361,6 +361,186 @@ html, body {
 }
 
 /* ============================================================
+   Cloud Logging Query
+   ============================================================ */
+.cloud-query-page {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: 0;
+}
+.cloud-query-workbench,
+.cloud-result-shell {
+    background: var(--content-bg);
+    border: 1px solid var(--stat-card-border);
+    border-radius: 8px;
+    box-shadow: var(--stat-card-shadow);
+}
+.cloud-query-muted {
+    color: var(--section-title-color);
+    font-size: 12px;
+    opacity: 0.62;
+}
+.cloud-query-workbench {
+    padding: 16px;
+}
+.cloud-query-toolbar {
+    display: grid;
+    grid-template-columns: minmax(220px, 320px) minmax(150px, 220px) minmax(120px, 160px) minmax(260px, 1fr) minmax(140px, 180px);
+    gap: 14px;
+    align-items: end;
+}
+.cloud-query-field {
+    min-width: 0;
+}
+.cloud-query-field > label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--section-title-color);
+    font-size: 12px;
+    font-weight: 600;
+}
+.cloud-query-editor {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--stat-card-border);
+}
+.cloud-query-editor-head,
+.cloud-result-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.cloud-query-section-title {
+    color: var(--page-title-color);
+    font-size: 13px;
+    font-weight: 700;
+}
+.cloud-query-title-row {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.cloud-collapsed-filter-preview {
+    min-height: 34px;
+    padding: 8px 10px;
+    color: var(--section-title-color);
+    background: var(--log-bg);
+    border: 1px solid var(--log-border);
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.cloud-query-presets {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+}
+.cloud-query-head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px 48px;
+    min-width: min(100%, 760px);
+}
+.cloud-query-dimensions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+}
+.cloud-query-dimension-label {
+    color: var(--section-title-color);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+}
+.cloud-check-filter-picker {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+}
+.cloud-check-filter-picker .cloud-query-dimensions,
+.cloud-check-filter-picker .cloud-query-presets {
+    justify-content: flex-start;
+}
+.cloud-effective-filter {
+    margin-top: 14px;
+    padding: 12px;
+    background: var(--log-bg);
+    border: 1px solid var(--log-border);
+    border-radius: 8px;
+}
+.cloud-effective-filter pre {
+    margin: 8px 0 0;
+    color: inherit;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.cloud-result-shell {
+    padding: 14px 16px 16px;
+    min-height: 220px;
+}
+.cloud-result-stats {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 10px;
+    margin: 4px 0 14px;
+}
+.cloud-stat-card {
+    min-width: 0;
+    padding: 10px 12px;
+    background: var(--log-bg);
+    border: 1px solid var(--log-border);
+    border-radius: 8px;
+}
+.cloud-stat-label {
+    color: var(--section-title-color);
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.7;
+}
+.cloud-stat-value {
+    margin-top: 5px;
+    color: var(--page-title-color);
+    font-size: 20px;
+    font-weight: 800;
+    line-height: 1.15;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.cloud-stat-hint {
+    margin-top: 5px;
+    color: var(--section-title-color);
+    font-size: 11px;
+    opacity: 0.62;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.cloud-stat-card-primary .cloud-stat-value { color: #2080f0; }
+.cloud-stat-card-success .cloud-stat-value { color: #18a058; }
+.cloud-stat-card-warning .cloud-stat-value { color: #f0a020; }
+.cloud-stat-card-danger .cloud-stat-value { color: #d03050; }
+
+/* ============================================================
    Monitor Logs Terminal
    ============================================================ */
 .log-container {
@@ -498,6 +678,29 @@ html {
     .stat-grid {
         grid-template-columns: 1fr;
         gap: 12px;
+    }
+    .cloud-query-toolbar {
+        grid-template-columns: 1fr;
+    }
+    .cloud-query-editor-head,
+    .cloud-result-head {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .cloud-query-presets {
+        justify-content: flex-start;
+    }
+    .cloud-query-head-actions,
+    .cloud-query-dimensions {
+        align-items: flex-start;
+        justify-content: flex-start;
+    }
+    .cloud-query-head-actions {
+        flex-direction: column;
+        gap: 8px;
+    }
+    .cloud-result-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .stat-card-value {
         font-size: 1.4rem;

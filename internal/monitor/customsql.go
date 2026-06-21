@@ -188,6 +188,23 @@ func (m *CustomSQLManager) doCheck(cfg *store.CustomSQLCheck) {
 	for _, item := range touched {
 		m.saveMetricState(cfg.ID, item.ruleKey, item.field, item.state)
 	}
+	previousStatus, hasPreviousStatus, err := m.store.LastCustomSQLLogStatus(cfg.ID)
+	if err != nil {
+		log.Printf("[CustomSQL %s] load last status failed: %v", cfg.Name, err)
+	}
+	wasAlert := m.isAlertNotified(cfg.ID) || (hasPreviousStatus && previousStatus != "ok")
+
+	notifyDiagnostics := ""
+	if logEntry.Status == "alert" && !m.isActionTriggered(cfg.ID) {
+		actionSummary, notifyActionSummary := runCustomSQLTriggerActions(cfg)
+		if actionSummary != "" {
+			logEntry.Message = truncateForLog(logEntry.Message, "\n\n触发操作:\n"+actionSummary, 8000)
+			notifyDiagnostics = notifyActionSummary
+			m.setActionTriggered(cfg.ID, true)
+			m.emit("custom_sql_action", cfg.ID, cfg.Name, "已执行异常触发操作", map[string]string{"summary": actionSummary})
+		}
+	}
+
 	logEntry.DetectedAt = time.Now()
 	if id, err := m.store.InsertCustomSQLLog(&logEntry); err == nil {
 		logEntry.ID = id
@@ -198,23 +215,29 @@ func (m *CustomSQLManager) doCheck(cfg *store.CustomSQLCheck) {
 	m.emit("custom_sql_result", cfg.ID, cfg.Name, logEntry.Message, logEntry)
 
 	if logEntry.Status == "alert" {
-		m.notifyAlert(cfg, &logEntry)
+		m.notifyAlert(cfg, &logEntry, notifyDiagnostics)
 		return
 	}
 
-	if logEntry.Status == "ok" && m.isAlertNotified(cfg.ID) {
-		m.setAlertNotified(cfg.ID, false)
-		m.notifyRecovery(cfg, &logEntry)
+	if logEntry.Status == "ok" && wasAlert {
+		if m.notifyRecovery(cfg, &logEntry) {
+			m.setAlertNotified(cfg.ID, false)
+			m.setActionTriggered(cfg.ID, false)
+		} else {
+			m.setAlertNotified(cfg.ID, true)
+		}
+	} else if logEntry.Status == "ok" && m.isActionTriggered(cfg.ID) {
+		m.setActionTriggered(cfg.ID, false)
 	}
 }
 
-func (m *CustomSQLManager) notifyAlert(cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog) {
+func (m *CustomSQLManager) notifyAlert(cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog, diagnostics string) {
 	if !cfg.NotifyEnabled || m.isAlertNotified(cfg.ID) {
 		return
 	}
-	message := customSQLNotificationMessage("SQL 告警", cfg, logEntry, false)
+	message := customSQLNotificationMessage("SQL 告警", cfg, logEntry, false, diagnostics)
 	if strings.TrimSpace(cfg.MessageTemplate) != "" {
-		message = renderCustomSQLMessageTemplate(cfg.MessageTemplate, cfg, logEntry)
+		message = renderCustomSQLMessageTemplate(cfg.MessageTemplate, cfg, logEntry, diagnostics)
 	}
 	if err := m.dispatcher.SendNotifications(cfg.DatabaseID, message); err != nil {
 		log.Printf("[CustomSQL %s] notification send failed: %v", cfg.Name, err)
@@ -225,20 +248,21 @@ func (m *CustomSQLManager) notifyAlert(cfg *store.CustomSQLCheck, logEntry *stor
 	m.emit("custom_sql_notified", cfg.ID, cfg.Name, "已发送 SQL 告警通知", logEntry)
 }
 
-func (m *CustomSQLManager) notifyRecovery(cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog) {
+func (m *CustomSQLManager) notifyRecovery(cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog) bool {
 	if !cfg.NotifyEnabled || !cfg.RecoveryNotify {
-		return
+		return true
 	}
-	message := customSQLNotificationMessage("SQL 恢复通知", cfg, logEntry, true)
+	message := customSQLNotificationMessage("SQL 恢复通知", cfg, logEntry, true, "")
 	if err := m.dispatcher.SendNotifications(cfg.DatabaseID, message); err != nil {
 		log.Printf("[CustomSQL %s] recovery notification send failed: %v", cfg.Name, err)
 		m.emit("custom_sql_notify_error", cfg.ID, cfg.Name, fmt.Sprintf("恢复通知发送失败: %v", err), logEntry)
-		return
+		return false
 	}
 	m.emit("custom_sql_notified", cfg.ID, cfg.Name, "已发送 SQL 恢复通知", logEntry)
+	return true
 }
 
-func customSQLNotificationMessage(title string, cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog, recovery bool) string {
+func customSQLNotificationMessage(title string, cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog, recovery bool, diagnostics string) string {
 	var b strings.Builder
 	b.WriteString(title)
 	b.WriteString("\n\n")
@@ -278,8 +302,8 @@ func customSQLNotificationMessage(title string, cfg *store.CustomSQLCheck, logEn
 	b.WriteString("\n结果: ")
 	if recovery {
 		b.WriteString("已恢复正常")
-	} else if logEntry.Message != "" {
-		b.WriteString(logEntry.Message)
+	} else if msg := customSQLPrimaryMessage(logEntry.Message); msg != "" {
+		b.WriteString(msg)
 	} else if logEntry.Error != "" {
 		b.WriteString(logEntry.Error)
 	} else {
@@ -288,13 +312,18 @@ func customSQLNotificationMessage(title string, cfg *store.CustomSQLCheck, logEn
 	b.WriteString("\n耗时: ")
 	b.WriteString(strconv.FormatInt(logEntry.DurationMs, 10))
 	b.WriteString("ms")
+	if !recovery && strings.TrimSpace(diagnostics) != "" {
+		b.WriteString("\n\n诊断输出:\n")
+		b.WriteString(strings.TrimSpace(diagnostics))
+	}
 	if !recovery {
 		b.WriteString("\n\n该告警仅发送一次，恢复后如再次异常将重新通知。")
 	}
 	return b.String()
 }
 
-func renderCustomSQLMessageTemplate(tpl string, cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog) string {
+func renderCustomSQLMessageTemplate(tpl string, cfg *store.CustomSQLCheck, logEntry *store.CustomSQLLog, diagnostics string) string {
+	hasDiagnosticsPlaceholder := strings.Contains(tpl, "{{diagnostics}}")
 	replacements := map[string]string{
 		"{{name}}":           cfg.Name,
 		"{{database}}":       logEntry.DatabaseName,
@@ -304,9 +333,11 @@ func renderCustomSQLMessageTemplate(tpl string, cfg *store.CustomSQLCheck, logEn
 		"{{value}}":          logEntry.Value,
 		"{{expected}}":       logEntry.ExpectedValue,
 		"{{condition}}":      logEntry.Condition,
-		"{{message}}":        logEntry.Message,
+		"{{message}}":        customSQLPrimaryMessage(logEntry.Message),
+		"{{log_message}}":    logEntry.Message,
 		"{{sql}}":            "[SQL 已省略，请在页面查看配置]",
 		"{{duration_ms}}":    strconv.FormatInt(logEntry.DurationMs, 10),
+		"{{diagnostics}}":    strings.TrimSpace(diagnostics),
 	}
 	if replacements["{{database}}"] == "" {
 		replacements["{{database}}"] = cfg.DatabaseName
@@ -324,7 +355,28 @@ func renderCustomSQLMessageTemplate(tpl string, cfg *store.CustomSQLCheck, logEn
 	if !strings.Contains(out, "\n") {
 		out = "SQL 告警\n\n" + out
 	}
+	if strings.TrimSpace(diagnostics) != "" && !hasDiagnosticsPlaceholder {
+		out += "\n\n诊断输出:\n" + strings.TrimSpace(diagnostics)
+	}
 	return out
+}
+
+func runCustomSQLTriggerActions(cfg *store.CustomSQLCheck) (string, string) {
+	return runHealthTriggerActions(&store.HealthCheck{
+		TriggerActions: cfg.TriggerActions,
+		TimeoutSec:     cfg.TimeoutSec,
+	})
+}
+
+func customSQLPrimaryMessage(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return ""
+	}
+	if idx := strings.Index(message, "\n\n触发操作:\n"); idx >= 0 {
+		return strings.TrimSpace(message[:idx])
+	}
+	return message
 }
 
 func (m *CustomSQLManager) metricState(id int64, ruleKey, field string) *healthMetricState {
@@ -389,6 +441,10 @@ func (m *CustomSQLManager) settingKey(id int64) string {
 	return fmt.Sprintf("custom_sql_alert_%d", id)
 }
 
+func (m *CustomSQLManager) actionSettingKey(id int64) string {
+	return fmt.Sprintf("custom_sql_action_%d", id)
+}
+
 func (m *CustomSQLManager) isAlertNotified(id int64) bool {
 	return m.store.GetSetting(m.settingKey(id)) == "1"
 }
@@ -398,6 +454,18 @@ func (m *CustomSQLManager) setAlertNotified(id int64, v bool) {
 		m.store.SetSetting(m.settingKey(id), "1")
 	} else {
 		m.store.SetSetting(m.settingKey(id), "")
+	}
+}
+
+func (m *CustomSQLManager) isActionTriggered(id int64) bool {
+	return m.store.GetSetting(m.actionSettingKey(id)) == "1"
+}
+
+func (m *CustomSQLManager) setActionTriggered(id int64, v bool) {
+	if v {
+		m.store.SetSetting(m.actionSettingKey(id), "1")
+	} else {
+		m.store.SetSetting(m.actionSettingKey(id), "")
 	}
 }
 

@@ -211,6 +211,57 @@ CREATE INDEX IF NOT EXISTS idx_grafana_alert_detected ON grafana_alert_logs(dete
 CREATE INDEX IF NOT EXISTS idx_grafana_alert_config ON grafana_alert_logs(config_id, detected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_grafana_alert_fingerprint ON grafana_alert_logs(fingerprint);
 
+CREATE TABLE IF NOT EXISTS cloud_logging_configs (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    name             TEXT    NOT NULL,
+    project_id       TEXT    NOT NULL DEFAULT '',
+    resource_names   TEXT    NOT NULL DEFAULT '',
+    credentials_file TEXT    NOT NULL DEFAULT '',
+    default_filter   TEXT    NOT NULL DEFAULT '',
+    interval_sec     INTEGER NOT NULL DEFAULT 60,
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    created_at       DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at       DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS cloud_logging_checks (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    config_id        INTEGER NOT NULL,
+    name             TEXT    NOT NULL,
+    filter           TEXT    NOT NULL DEFAULT '',
+    metric_type      TEXT    NOT NULL DEFAULT 'count',
+    lookback_minutes INTEGER NOT NULL DEFAULT 5,
+    threshold_count  INTEGER NOT NULL DEFAULT 0,
+    interval_sec     INTEGER NOT NULL DEFAULT 60,
+    notify_enabled   INTEGER NOT NULL DEFAULT 1,
+    recovery_notify  INTEGER NOT NULL DEFAULT 1,
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    created_at       DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at       DATETIME NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (config_id) REFERENCES cloud_logging_configs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS cloud_logging_alert_logs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_id        INTEGER NOT NULL,
+    check_name      TEXT    NOT NULL DEFAULT '',
+    config_id       INTEGER NOT NULL,
+    config_name     TEXT    NOT NULL DEFAULT '',
+    status          TEXT    NOT NULL DEFAULT '',
+    match_count     INTEGER NOT NULL DEFAULT 0,
+    threshold_count INTEGER NOT NULL DEFAULT 0,
+    filter          TEXT    NOT NULL DEFAULT '',
+    sample          TEXT    NOT NULL DEFAULT '',
+    error           TEXT    NOT NULL DEFAULT '',
+    duration_ms     INTEGER NOT NULL DEFAULT 0,
+    detected_at     DATETIME NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (check_id) REFERENCES cloud_logging_checks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_cloud_logging_checks_config ON cloud_logging_checks(config_id);
+CREATE INDEX IF NOT EXISTS idx_cloud_logging_alert_detected ON cloud_logging_alert_logs(detected_at);
+CREATE INDEX IF NOT EXISTS idx_cloud_logging_alert_check ON cloud_logging_alert_logs(check_id, detected_at DESC);
+
 CREATE TABLE IF NOT EXISTS custom_sql_checks (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     database_id      INTEGER NOT NULL,
@@ -227,6 +278,7 @@ CREATE TABLE IF NOT EXISTS custom_sql_checks (
     alert_delta_percent TEXT NOT NULL DEFAULT '',
     alert_consecutive INTEGER NOT NULL DEFAULT 1,
     alert_rules      TEXT    NOT NULL DEFAULT '[]',
+    trigger_actions  TEXT    NOT NULL DEFAULT '[]',
     notify_enabled   INTEGER NOT NULL DEFAULT 1,
     recovery_notify  INTEGER NOT NULL DEFAULT 1,
     message_template TEXT    NOT NULL DEFAULT '',
