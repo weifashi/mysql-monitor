@@ -1506,13 +1506,15 @@ const CloudLoggingPage = defineComponent({
         const showEffectiveFilterPanel = ref(false);
         const showEntryDetail = ref(false);
         const entryDetail = ref(null);
+        const showAlertLogDetail = ref(false);
+        const alertLogDetail = ref(null);
         const showConfigModal = ref(false);
         const showCheckModal = ref(false);
         const editingConfigId = ref(null);
         const editingCheckId = ref(null);
         const configForm = reactive({ name: '', project_id: '', resource_names: '', credentials_file: '', default_filter: '', interval_sec: 60, enabled: true });
-        const checkForm = reactive({ config_id: null, name: '', filter: 'severity>=ERROR', metric_type: 'count', lookback_minutes: 5, threshold_count: 0, interval_sec: 60, notify_enabled: true, recovery_notify: true, enabled: true });
-        const queryForm = reactive({ config_id: null, filter: 'severity>=ERROR', content_keyword: '', lookback_minutes: 30, limit: 50 });
+        const checkForm = reactive({ config_id: null, name: '', filter: 'severity>=ERROR', content_keyword: '', exclude_keyword: '', metric_type: 'count', lookback_minutes: 5, threshold_count: 0, interval_sec: 60, notify_enabled: true, recovery_notify: true, enabled: true });
+        const queryForm = reactive({ config_id: null, filter: 'severity>=ERROR', content_keyword: '', exclude_keyword: '', lookback_minutes: 30, limit: 50 });
         const queryDimensionKeys = ref([]);
         const queryPresetKey = ref('error');
         const checkDimensionKeys = ref([]);
@@ -1552,7 +1554,7 @@ const CloudLoggingPage = defineComponent({
         const configOptions = computed(() => configs.value.map(c => ({ label: c.name + (c.project_id ? ' (' + c.project_id + ')' : ''), value: c.id })));
         const cloudMetricOptions = [
             { label: '日志数量', value: 'count' },
-            { label: '接口最大并发', value: 'peak_concurrency' },
+            { label: '最大并发', value: 'peak_concurrency' },
         ];
         const cloudLogDimensions = [
             {
@@ -1720,7 +1722,7 @@ const CloudLoggingPage = defineComponent({
             editingCheckId.value = null;
             checkDimensionKeys.value = [];
             checkPresetKey.value = 'error';
-            Object.assign(checkForm, { config_id: queryForm.config_id || (configs.value[0] && configs.value[0].id) || null, name: '', filter: 'severity>=ERROR', metric_type: 'count', lookback_minutes: 5, threshold_count: 0, interval_sec: 60, notify_enabled: true, recovery_notify: true, enabled: true });
+            Object.assign(checkForm, { config_id: queryForm.config_id || (configs.value[0] && configs.value[0].id) || null, name: '', filter: 'severity>=ERROR', content_keyword: '', exclude_keyword: '', metric_type: 'count', lookback_minutes: 5, threshold_count: 0, interval_sec: 60, notify_enabled: true, recovery_notify: true, enabled: true });
         }
         function openCheck(row) {
             checkDimensionKeys.value = [];
@@ -1728,7 +1730,7 @@ const CloudLoggingPage = defineComponent({
             if (row) {
                 editingCheckId.value = row.id;
                 Object.assign(checkForm, {
-                    config_id: row.config_id, name: row.name || '', filter: row.filter || '',
+                    config_id: row.config_id, name: row.name || '', filter: row.filter || '', content_keyword: '', exclude_keyword: '',
                     metric_type: row.metric_type || 'count',
                     lookback_minutes: row.lookback_minutes || 5, threshold_count: row.threshold_count || 0,
                     interval_sec: row.interval_sec || 60, notify_enabled: row.notify_enabled !== false,
@@ -1742,7 +1744,9 @@ const CloudLoggingPage = defineComponent({
         async function saveCheck() {
             saving.value = true;
             try {
-                const payload = { ...checkForm };
+                const payload = { ...checkForm, filter: buildCloudCheckFilterForSave() };
+                delete payload.content_keyword;
+                delete payload.exclude_keyword;
                 if (editingCheckId.value) {
                     await api.put('/api/cloud-logging/checks/' + editingCheckId.value, payload);
                     message.success('监控已保存');
@@ -1810,6 +1814,10 @@ const CloudLoggingPage = defineComponent({
             entryDetail.value = row;
             showEntryDetail.value = true;
         }
+        function openCloudAlertLogDetail(row) {
+            alertLogDetail.value = row;
+            showAlertLogDetail.value = true;
+        }
         function prettyCloudJSON(value) {
             if (value == null || value === '') return '';
             if (typeof value !== 'string') {
@@ -1860,6 +1868,44 @@ const CloudLoggingPage = defineComponent({
                 ]),
             ]);
         }
+        function renderCloudAlertLogDetail() {
+            const row = alertLogDetail.value;
+            if (!row) return null;
+            const sample = prettyCloudJSON(row.sample || '');
+            const filter = row.filter || '';
+            const error = row.error || '';
+            return h('div', { style: 'display:flex;flex-direction:column;gap:14px' }, [
+                h(NDescriptions, { bordered: true, column: _isMobile.value ? 1 : 3, labelPlacement: 'top', size: 'small' }, () => [
+                    h(NDescriptionsItem, { label: '时间' }, () => formatTime(row.detected_at)),
+                    h(NDescriptionsItem, { label: '规则' }, () => row.check_name || '-'),
+                    h(NDescriptionsItem, { label: '状态' }, () => statusTag(row.status)),
+                    h(NDescriptionsItem, { label: '命中' }, () => (row.match_count || 0) + ' / >' + (row.threshold_count || 0)),
+                    h(NDescriptionsItem, { label: '配置' }, () => row.config_name || '-'),
+                    h(NDescriptionsItem, { label: '耗时' }, () => (row.duration_ms || 0) + 'ms'),
+                ]),
+                h('div', { class: 'sql-detail-block' }, [
+                    h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px' }, [
+                        h(NText, { depth: 3, style: 'font-size:12px' }, () => 'Filter'),
+                        h(NButton, { size: 'tiny', secondary: true, disabled: !filter, onClick: () => copyText(filter) }, () => '复制'),
+                    ]),
+                    h('pre', { class: 'sql-detail-code', style: 'max-height:220px' }, filter || '-'),
+                ]),
+                error ? h('div', { class: 'sql-detail-block' }, [
+                    h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px' }, [
+                        h(NText, { depth: 3, style: 'font-size:12px' }, () => '错误'),
+                        h(NButton, { size: 'tiny', secondary: true, onClick: () => copyText(error) }, () => '复制'),
+                    ]),
+                    h('pre', { class: 'sql-detail-code', style: 'max-height:260px' }, error),
+                ]) : null,
+                h('div', { class: 'sql-detail-block' }, [
+                    h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px' }, [
+                        h(NText, { depth: 3, style: 'font-size:12px' }, () => '样例'),
+                        h(NButton, { size: 'tiny', secondary: true, disabled: !sample, onClick: () => copyText(sample) }, () => '复制'),
+                    ]),
+                    h('pre', { class: 'sql-detail-code', style: 'max-height:460px' }, sample || '[]'),
+                ]),
+            ]);
+        }
         function formatCloudStatNumber(value, approximate = false) {
             const n = Number(value || 0);
             return (approximate ? '≥ ' : '') + n.toLocaleString('en-US');
@@ -1871,13 +1917,16 @@ const CloudLoggingPage = defineComponent({
             return (n / 1000).toFixed(n >= 10000 ? 1 : 2).replace(/\.0+$/, '') + 's';
         }
         function cloudMetricLabel(metricType) {
-            return metricType === 'peak_concurrency' ? '接口最大并发' : '日志数量';
+            return metricType === 'peak_concurrency' ? '最大并发' : '日志数量';
         }
         function updateCloudCheckMetricType(value) {
             checkForm.metric_type = value || 'count';
             if (checkForm.metric_type === 'peak_concurrency') {
-                checkForm.lookback_minutes = checkForm.lookback_minutes || 5;
+                checkForm.lookback_minutes = 5;
                 if (!String(checkForm.name || '').trim()) checkForm.name = '接口最大并发';
+                checkDimensionKeys.value = ['api_requests'];
+                checkPresetKey.value = '';
+                applyCloudFilterSelection('check');
             }
         }
         function renderCloudStatCard(label, value, hint, tone = 'default') {
@@ -1943,7 +1992,10 @@ const CloudLoggingPage = defineComponent({
             { title: '状态', key: 'status', width: 80, render: row => statusTag(row.status) },
             { title: '命中', key: 'match_count', width: 80, render: row => row.match_count + ' / >' + row.threshold_count },
             { title: 'Filter', key: 'filter', ellipsis: { tooltip: true }, _hideOnMobile: true, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:.7' }, truncate(row.filter || '-', 120)) },
-            { title: '错误/样例', key: 'sample', ellipsis: { tooltip: true }, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;white-space:pre-wrap' }, truncate(row.error || row.sample || '-', _isMobile.value ? 80 : 160)) },
+            { title: '错误/样例', key: 'sample', ellipsis: { tooltip: true }, render: row => h('code', {
+                style: 'display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:11px;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;',
+                onClick: () => openCloudAlertLogDetail(row),
+            }, String(row.error || row.sample || '-').replace(/\s+/g, ' ')) },
         ]);
         function cloudFilterTarget(target) {
             return target === 'check'
@@ -1972,9 +2024,10 @@ const CloudLoggingPage = defineComponent({
         function gcpLogString(value) {
             return '"' + String(value || '').trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, ' ') + '"';
         }
-        function cloudContentKeywordFilter(keyword) {
-            const term = String(keyword || '').trim();
-            if (!term) return '';
+        function cloudContentTerms(keyword) {
+            return String(keyword || '').split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+        }
+        function cloudSingleContentKeywordFilter(term) {
             const quoted = gcpLogString(term);
             return `(
   ${quoted}
@@ -1988,12 +2041,36 @@ const CloudLoggingPage = defineComponent({
   OR protoPayload.status.message:${quoted}
 )`;
         }
+        function cloudContentKeywordFilter(keyword) {
+            const filters = cloudContentTerms(keyword).map(cloudSingleContentKeywordFilter);
+            if (filters.length === 0) return '';
+            if (filters.length === 1) return filters[0];
+            return `(
+${filters.join('\nOR\n')}
+)`;
+        }
+        function cloudExcludeKeywordFilter(keyword) {
+            const includeFilter = cloudContentKeywordFilter(keyword);
+            return includeFilter ? 'NOT ' + includeFilter : '';
+        }
         function buildCloudQueryFilter() {
             const parts = [];
             const baseFilter = stringsTrim(queryForm.filter);
             const keywordFilter = cloudContentKeywordFilter(queryForm.content_keyword);
+            const excludeFilter = cloudExcludeKeywordFilter(queryForm.exclude_keyword);
             if (baseFilter) parts.push(baseFilter);
             if (keywordFilter) parts.push(keywordFilter);
+            if (excludeFilter) parts.push(excludeFilter);
+            return parts.join('\nAND\n');
+        }
+        function buildCloudCheckFilterForSave() {
+            const parts = [];
+            const baseFilter = stringsTrim(checkForm.filter);
+            const keywordFilter = cloudContentKeywordFilter(checkForm.content_keyword);
+            const excludeFilter = cloudExcludeKeywordFilter(checkForm.exclude_keyword);
+            if (baseFilter) parts.push(baseFilter);
+            if (keywordFilter) parts.push(keywordFilter);
+            if (excludeFilter) parts.push(excludeFilter);
             return parts.join('\nAND\n');
         }
         function stringsTrim(value) {
@@ -2089,9 +2166,23 @@ const CloudLoggingPage = defineComponent({
                             h(NInput, {
                                 value: queryForm.content_keyword,
                                 'onUpdate:value': v => queryForm.content_keyword = v,
+                                type: 'textarea',
+                                autosize: { minRows: 1, maxRows: 4 },
                                 clearable: true,
-                                placeholder: '输入文本模糊匹配内容',
-                                onKeyup: e => e.key === 'Enter' && queryForm.config_id && runQuery(),
+                                placeholder: '每行一个需要匹配的文本',
+                                onKeyup: e => (e.ctrlKey || e.metaKey) && e.key === 'Enter' && queryForm.config_id && runQuery(),
+                            }),
+                        ]),
+                        h('div', { class: 'cloud-query-field' }, [
+                            h('label', '内容不包含'),
+                            h(NInput, {
+                                value: queryForm.exclude_keyword,
+                                'onUpdate:value': v => queryForm.exclude_keyword = v,
+                                type: 'textarea',
+                                autosize: { minRows: 1, maxRows: 4 },
+                                clearable: true,
+                                placeholder: '每行一个需要排除的文本',
+                                onKeyup: e => (e.ctrlKey || e.metaKey) && e.key === 'Enter' && queryForm.config_id && runQuery(),
                             }),
                         ]),
                         h(NButton, { type: 'primary', block: true, loading: queryLoading.value, disabled: !queryForm.config_id, onClick: runQuery }, () => '查询'),
@@ -2153,7 +2244,7 @@ const CloudLoggingPage = defineComponent({
         }
         function renderLogs() {
             return h('div', null, [
-                h(NDataTable, { columns: logColumns.value, data: alertLogs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 250px)', scrollX: _isMobile.value ? 680 : undefined }),
+                h(NDataTable, { columns: logColumns.value, data: alertLogs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 250px)', scrollX: _isMobile.value ? 680 : undefined, rowProps: row => ({ style: 'cursor:pointer', onClick: () => openCloudAlertLogDetail(row) }) }),
                 alertTotal.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
                     h(NPagination, { page: alertPage.value, pageSize, itemCount: alertTotal.value, onUpdatePage: p => alertPage.value = p })
                 ) : null,
@@ -2171,6 +2262,7 @@ const CloudLoggingPage = defineComponent({
             ]),
             routeMode.value === 'query' ? renderQuery() : routeMode.value === 'configs' ? renderConfigs() : routeMode.value === 'checks' ? renderChecks() : renderLogs(),
             h(NModal, { show: showEntryDetail.value, 'onUpdate:show': v => showEntryDetail.value = v, preset: 'card', title: '日志详情', style: _isMobile.value ? 'width:95vw' : 'width:1180px;max-width:94vw', segmented: true }, () => renderCloudEntryDetail()),
+            h(NModal, { show: showAlertLogDetail.value, 'onUpdate:show': v => showAlertLogDetail.value = v, preset: 'card', title: '告警日志详情', style: _isMobile.value ? 'width:95vw' : 'width:1180px;max-width:94vw', segmented: true }, () => renderCloudAlertLogDetail()),
             h(NModal, { show: showConfigModal.value, 'onUpdate:show': v => showConfigModal.value = v, preset: 'card', title: editingConfigId.value ? '编辑 Cloud Logging 配置' : '添加 Cloud Logging 配置', style: _isMobile.value ? 'width:95vw' : 'width:860px', segmented: true }, () =>
                 h(NForm, { labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 110 }, () => [
                     h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 12 }, () => [
@@ -2197,12 +2289,16 @@ const CloudLoggingPage = defineComponent({
                         renderCloudDimensionButtons('check'),
                         renderCloudPresetButtons('check'),
                     ])),
+                    h(NGrid, { cols: _isMobile.value ? 1 : 2, xGap: 12 }, () => [
+                        h(NGi, null, () => h(NFormItem, { label: '内容包含' }, () => h(NInput, { value: checkForm.content_keyword, 'onUpdate:value': v => checkForm.content_keyword = v, type: 'textarea', autosize: { minRows: 1, maxRows: 4 }, clearable: true, placeholder: '每行一个需要匹配的文本' }))),
+                        h(NGi, null, () => h(NFormItem, { label: '内容不包含' }, () => h(NInput, { value: checkForm.exclude_keyword, 'onUpdate:value': v => checkForm.exclude_keyword = v, type: 'textarea', autosize: { minRows: 1, maxRows: 4 }, clearable: true, placeholder: '每行一个需要排除的文本' }))),
+                    ]),
                     h(NFormItem, { label: 'Filter' }, () => h(NInput, { value: checkForm.filter, 'onUpdate:value': v => { checkForm.filter = v; clearCloudFilterSelection('check'); }, type: 'textarea', autosize: { minRows: 4, maxRows: 10 }, placeholder: 'severity>=ERROR' })),
                     h(NGrid, { cols: _isMobile.value ? 1 : 4, xGap: 12 }, () => [
-                        h(NGi, null, () => h(NFormItem, { label: '检测方式' }, () => h(NSelect, { value: checkForm.metric_type, 'onUpdate:value': updateCloudCheckMetricType, options: cloudMetricOptions, style: 'width:100%' }))),
-                        h(NGi, null, () => h(NFormItem, { label: '回看(分钟)' }, () => h(NInputNumber, { value: checkForm.lookback_minutes, 'onUpdate:value': v => checkForm.lookback_minutes = v, min: 1, max: 1440, style: 'width:100%' }))),
-                        h(NGi, null, () => h(NFormItem, { label: checkForm.metric_type === 'peak_concurrency' ? '并发阈值' : '阈值' }, () => h(NInputNumber, { value: checkForm.threshold_count, 'onUpdate:value': v => checkForm.threshold_count = v, min: 0, style: 'width:100%' }))),
-                        h(NGi, null, () => h(NFormItem, { label: '间隔(秒)' }, () => h(NInputNumber, { value: checkForm.interval_sec, 'onUpdate:value': v => checkForm.interval_sec = v, min: 10, style: 'width:100%' }))),
+                        h(NGi, null, () => h(NFormItem, { label: '检测方式', labelPlacement: 'top' }, () => h(NSelect, { value: checkForm.metric_type, 'onUpdate:value': updateCloudCheckMetricType, options: cloudMetricOptions, style: 'width:100%' }))),
+                        h(NGi, null, () => h(NFormItem, { label: '回看(分钟)', labelPlacement: 'top' }, () => h(NInputNumber, { value: checkForm.lookback_minutes, 'onUpdate:value': v => checkForm.lookback_minutes = v, min: 1, max: 1440, style: 'width:100%' }))),
+                        h(NGi, null, () => h(NFormItem, { label: checkForm.metric_type === 'peak_concurrency' ? '并发阈值' : '阈值', labelPlacement: 'top' }, () => h(NInputNumber, { value: checkForm.threshold_count, 'onUpdate:value': v => checkForm.threshold_count = v, min: 0, style: 'width:100%' }))),
+                        h(NGi, null, () => h(NFormItem, { label: '间隔(秒)', labelPlacement: 'top' }, () => h(NInputNumber, { value: checkForm.interval_sec, 'onUpdate:value': v => checkForm.interval_sec = v, min: 10, style: 'width:100%' }))),
                     ]),
                     h(NGrid, { cols: _isMobile.value ? 1 : 3, xGap: 12 }, () => [
                         h(NGi, null, () => h(NFormItem, { label: '通知' }, () => h(NSwitch, { value: checkForm.notify_enabled, 'onUpdate:value': v => checkForm.notify_enabled = v }))),

@@ -386,7 +386,7 @@ html, body {
 }
 .cloud-query-toolbar {
     display: grid;
-    grid-template-columns: minmax(220px, 320px) minmax(150px, 220px) minmax(120px, 160px) minmax(260px, 1fr) minmax(140px, 180px);
+    grid-template-columns: minmax(220px, 300px) minmax(140px, 190px) minmax(110px, 150px) minmax(220px, 1fr) minmax(220px, 1fr) minmax(120px, 160px);
     gap: 14px;
     align-items: end;
 }
