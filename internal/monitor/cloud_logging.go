@@ -337,8 +337,9 @@ func (m *CloudLoggingManager) handleCloudLoggingAlert(cfg *store.CloudLoggingCon
 		return
 	}
 
-	msg := fmt.Sprintf("Cloud Logging 告警\n\n规则: %s\n配置: %s\n资源: %s\n指标: %s\n当前值: %d\n阈值: > %d\n回看窗口: %d 分钟\n\n该告警仅发送一次，恢复后如再次命中将重新通知。",
-		check.Name, cfg.Name, strings.Join(result.ResourceNames, ", "), metricLabel, value, check.ThresholdCount, check.LookbackMinutes)
+	notificationSample := cloudLoggingNotificationSampleJSON(result.Entries)
+	msg := fmt.Sprintf("Cloud Logging 告警\n\n规则: %s\n配置: %s\n资源: %s\n指标: %s\n当前值: %d\n阈值: > %d\n回看窗口: %d 分钟\n\n样例摘要:\n%s\n\n该告警仅发送一次，恢复后如再次命中将重新通知。",
+		check.Name, cfg.Name, strings.Join(result.ResourceNames, ", "), metricLabel, value, check.ThresholdCount, check.LookbackMinutes, notificationSample)
 	if err := m.dispatcher.SendScopedNotifications("cloud_logging", check.ID, msg); err != nil {
 		log.Printf("[CloudLogging %s] alert notification failed: %v", check.Name, err)
 		m.emit("cloud_logging_notify_error", check.ID, check.Name, "通知发送失败: "+err.Error(), nil)
@@ -679,6 +680,33 @@ func cloudLoggingSampleJSON(entries []CloudLoggingEntry, max int) string {
 	data, err := json.MarshalIndent(entries[:max], "", "  ")
 	if err != nil {
 		return "[]"
+	}
+	return string(data)
+}
+
+func cloudLoggingNotificationSampleJSON(entries []CloudLoggingEntry) string {
+	if len(entries) == 0 {
+		return "{}"
+	}
+	entry := entries[0]
+	sample := struct {
+		Timestamp      string            `json:"timestamp"`
+		Severity       string            `json:"severity"`
+		LogName        string            `json:"log_name"`
+		ResourceType   string            `json:"resource_type"`
+		ResourceLabels map[string]string `json:"resource_labels,omitempty"`
+		Payload        string            `json:"payload"`
+	}{
+		Timestamp:      entry.Timestamp,
+		Severity:       entry.Severity,
+		LogName:        entry.LogName,
+		ResourceType:   entry.ResourceType,
+		ResourceLabels: entry.ResourceLabels,
+		Payload:        entry.Payload,
+	}
+	data, err := json.MarshalIndent(sample, "", "  ")
+	if err != nil {
+		return "{}"
 	}
 	return string(data)
 }
