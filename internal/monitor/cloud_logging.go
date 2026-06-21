@@ -337,8 +337,8 @@ func (m *CloudLoggingManager) handleCloudLoggingAlert(cfg *store.CloudLoggingCon
 		return
 	}
 
-	msg := fmt.Sprintf("Cloud Logging 告警\n\n规则: %s\n配置: %s\n资源: %s\n指标: %s\n当前值: %d\n阈值: > %d\n回看窗口: %d 分钟\n\nFilter:\n%s\n\n样例:\n%s\n\n该告警仅发送一次，恢复后如再次命中将重新通知。",
-		check.Name, cfg.Name, strings.Join(result.ResourceNames, ", "), metricLabel, value, check.ThresholdCount, check.LookbackMinutes, result.EffectiveFilter, sample)
+	msg := fmt.Sprintf("Cloud Logging 告警\n\n规则: %s\n配置: %s\n资源: %s\n指标: %s\n当前值: %d\n阈值: > %d\n回看窗口: %d 分钟\n\n该告警仅发送一次，恢复后如再次命中将重新通知。",
+		check.Name, cfg.Name, strings.Join(result.ResourceNames, ", "), metricLabel, value, check.ThresholdCount, check.LookbackMinutes)
 	if err := m.dispatcher.SendScopedNotifications("cloud_logging", check.ID, msg); err != nil {
 		log.Printf("[CloudLogging %s] alert notification failed: %v", check.Name, err)
 		m.emit("cloud_logging_notify_error", check.ID, check.Name, "通知发送失败: "+err.Error(), nil)
