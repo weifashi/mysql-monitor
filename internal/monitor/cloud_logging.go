@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -57,22 +58,29 @@ type CloudLoggingHTTPRequest struct {
 }
 
 type CloudLoggingQueryStats struct {
-	Total           int            `json:"total"`
-	Returned        int            `json:"returned"`
-	StatsLimit      int            `json:"stats_limit"`
-	Truncated       bool           `json:"truncated"`
-	WithLatency     int            `json:"with_latency"`
-	PeakConcurrency int            `json:"peak_concurrency"`
-	PeakAt          string         `json:"peak_at"`
-	AvgLatencyMs    int64          `json:"avg_latency_ms"`
-	MaxLatencyMs    int64          `json:"max_latency_ms"`
-	Status2xx       int            `json:"status_2xx"`
-	Status3xx       int            `json:"status_3xx"`
-	Status4xx       int            `json:"status_4xx"`
-	Status5xx       int            `json:"status_5xx"`
-	StatusOther     int            `json:"status_other"`
-	SeverityCounts  map[string]int `json:"severity_counts,omitempty"`
-	ResourceCounts  map[string]int `json:"resource_counts,omitempty"`
+	Total                     int                                    `json:"total"`
+	Returned                  int                                    `json:"returned"`
+	StatsLimit                int                                    `json:"stats_limit"`
+	Truncated                 bool                                   `json:"truncated"`
+	WithLatency               int                                    `json:"with_latency"`
+	PeakConcurrency           int                                    `json:"peak_concurrency"`
+	PeakAt                    string                                 `json:"peak_at"`
+	AvgLatencyMs              int64                                  `json:"avg_latency_ms"`
+	MaxLatencyMs              int64                                  `json:"max_latency_ms"`
+	Status2xx                 int                                    `json:"status_2xx"`
+	Status3xx                 int                                    `json:"status_3xx"`
+	Status4xx                 int                                    `json:"status_4xx"`
+	Status5xx                 int                                    `json:"status_5xx"`
+	StatusOther               int                                    `json:"status_other"`
+	SeverityCounts            map[string]int                         `json:"severity_counts,omitempty"`
+	ResourceCounts            map[string]int                         `json:"resource_counts,omitempty"`
+	PeakEndpointContributions []CloudLoggingPeakEndpointContribution `json:"peak_endpoint_contributions,omitempty"`
+}
+
+type CloudLoggingPeakEndpointContribution struct {
+	Endpoint     string `json:"endpoint"`
+	ActiveAtPeak int    `json:"active_at_peak"`
+	RequestCount int    `json:"request_count"`
 }
 
 type CloudLoggingQueryResult struct {
@@ -337,9 +345,7 @@ func (m *CloudLoggingManager) handleCloudLoggingAlert(cfg *store.CloudLoggingCon
 		return
 	}
 
-	notificationSample := cloudLoggingNotificationSampleJSON(result.Entries)
-	msg := fmt.Sprintf("Cloud Logging 告警\n\n规则: %s\n配置: %s\n资源: %s\n指标: %s\n当前值: %d\n阈值: > %d\n回看窗口: %d 分钟\n\n样例摘要:\n%s\n\n该告警仅发送一次，恢复后如再次命中将重新通知。",
-		check.Name, cfg.Name, strings.Join(result.ResourceNames, ", "), metricLabel, value, check.ThresholdCount, check.LookbackMinutes, notificationSample)
+	msg := cloudLoggingAlertNotificationMessage(cfg, check, result, value, metricLabel)
 	if err := m.dispatcher.SendScopedNotifications("cloud_logging", check.ID, msg); err != nil {
 		log.Printf("[CloudLogging %s] alert notification failed: %v", check.Name, err)
 		m.emit("cloud_logging_notify_error", check.ID, check.Name, "通知发送失败: "+err.Error(), nil)
@@ -398,6 +404,7 @@ func queryCloudLogging(ctx context.Context, cfg *store.CloudLoggingConfig, filte
 	entries := make([]CloudLoggingEntry, 0, limit)
 	var stats *CloudLoggingQueryStats
 	var events []cloudLoggingConcurrencyEvent
+	var requests []cloudLoggingConcurrencyRequest
 	if collectStats {
 		stats = &CloudLoggingQueryStats{
 			StatsLimit:     statsLimit,
@@ -416,12 +423,12 @@ func queryCloudLogging(ctx context.Context, cfg *store.CloudLoggingConfig, filte
 				entries = append(entries, cloudLoggingEntryFromAPI(entry))
 			}
 			if collectStats && include {
-				collectCloudLoggingStats(stats, &events, entry)
+				collectCloudLoggingStats(stats, &events, &requests, entry)
 				if stats.Total >= statsLimit {
 					if resp.NextPageToken != "" {
 						stats.Truncated = true
 					}
-					finalizeCloudLoggingStats(stats, events, len(entries))
+					finalizeCloudLoggingStats(stats, events, requests, len(entries))
 					return &CloudLoggingQueryResult{Entries: entries, EffectiveFilter: effectiveFilter, ResourceNames: resourceNames, Stats: stats}, nil
 				}
 			}
@@ -432,7 +439,7 @@ func queryCloudLogging(ctx context.Context, cfg *store.CloudLoggingConfig, filte
 		req.PageToken = resp.NextPageToken
 	}
 	if collectStats {
-		finalizeCloudLoggingStats(stats, events, len(entries))
+		finalizeCloudLoggingStats(stats, events, requests, len(entries))
 	}
 	return &CloudLoggingQueryResult{Entries: entries, EffectiveFilter: effectiveFilter, ResourceNames: resourceNames, Stats: stats}, nil
 }
@@ -527,6 +534,12 @@ type cloudLoggingConcurrencyEvent struct {
 	delta int
 }
 
+type cloudLoggingConcurrencyRequest struct {
+	start    time.Time
+	end      time.Time
+	endpoint string
+}
+
 func cloudLoggingStatsTimeInWindow(entry *logging.LogEntry, windowStart, windowEnd time.Time) bool {
 	at, ok := cloudLoggingStatsTime(entry)
 	if !ok {
@@ -549,7 +562,7 @@ func cloudLoggingStatsTime(entry *logging.LogEntry) (time.Time, bool) {
 	return end, true
 }
 
-func collectCloudLoggingStats(stats *CloudLoggingQueryStats, events *[]cloudLoggingConcurrencyEvent, entry *logging.LogEntry) {
+func collectCloudLoggingStats(stats *CloudLoggingQueryStats, events *[]cloudLoggingConcurrencyEvent, requests *[]cloudLoggingConcurrencyRequest, entry *logging.LogEntry) {
 	stats.Total++
 	severity := strings.TrimSpace(entry.Severity)
 	if severity == "" {
@@ -587,6 +600,11 @@ func collectCloudLoggingStats(stats *CloudLoggingQueryStats, events *[]cloudLogg
 		cloudLoggingConcurrencyEvent{at: start, delta: 1},
 		cloudLoggingConcurrencyEvent{at: end, delta: -1},
 	)
+	*requests = append(*requests, cloudLoggingConcurrencyRequest{
+		start:    start,
+		end:      end,
+		endpoint: cloudLoggingEndpointKey(entry.HttpRequest),
+	})
 	stats.WithLatency++
 	ms := latency.Milliseconds()
 	stats.AvgLatencyMs += ms
@@ -595,7 +613,7 @@ func collectCloudLoggingStats(stats *CloudLoggingQueryStats, events *[]cloudLogg
 	}
 }
 
-func finalizeCloudLoggingStats(stats *CloudLoggingQueryStats, events []cloudLoggingConcurrencyEvent, returned int) {
+func finalizeCloudLoggingStats(stats *CloudLoggingQueryStats, events []cloudLoggingConcurrencyEvent, requests []cloudLoggingConcurrencyRequest, returned int) {
 	if stats == nil {
 		return
 	}
@@ -611,23 +629,95 @@ func finalizeCloudLoggingStats(stats *CloudLoggingQueryStats, events []cloudLogg
 	})
 	current := 0
 	perSecondPeak := make(map[time.Time]int)
+	perSecondPeakAt := make(map[time.Time]time.Time)
 	for _, event := range events {
 		current += event.delta
 		second := event.at.UTC().Truncate(time.Second)
 		if current > perSecondPeak[second] {
 			perSecondPeak[second] = current
+			perSecondPeakAt[second] = event.at
 		}
 	}
 	var peakAt time.Time
+	var peakMoment time.Time
 	for second, value := range perSecondPeak {
 		if value > stats.PeakConcurrency || (value == stats.PeakConcurrency && (peakAt.IsZero() || second.Before(peakAt))) {
 			stats.PeakConcurrency = value
 			peakAt = second
+			peakMoment = perSecondPeakAt[second]
 		}
 	}
 	if !peakAt.IsZero() {
 		stats.PeakAt = peakAt.Format(time.RFC3339Nano)
 	}
+	stats.PeakEndpointContributions = cloudLoggingPeakEndpointContributions(requests, peakMoment)
+}
+
+func cloudLoggingPeakEndpointContributions(requests []cloudLoggingConcurrencyRequest, peakMoment time.Time) []CloudLoggingPeakEndpointContribution {
+	if peakMoment.IsZero() {
+		return nil
+	}
+	counts := make(map[string]int)
+	active := make(map[string]int)
+	for _, req := range requests {
+		endpoint := strings.TrimSpace(req.endpoint)
+		if endpoint == "" {
+			endpoint = "-"
+		}
+		counts[endpoint]++
+		if !req.start.After(peakMoment) && peakMoment.Before(req.end) {
+			active[endpoint]++
+		}
+	}
+	rows := make([]CloudLoggingPeakEndpointContribution, 0, len(active))
+	for endpoint, activeCount := range active {
+		rows = append(rows, CloudLoggingPeakEndpointContribution{
+			Endpoint:     endpoint,
+			ActiveAtPeak: activeCount,
+			RequestCount: counts[endpoint],
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].ActiveAtPeak == rows[j].ActiveAtPeak {
+			if rows[i].RequestCount == rows[j].RequestCount {
+				return rows[i].Endpoint < rows[j].Endpoint
+			}
+			return rows[i].RequestCount > rows[j].RequestCount
+		}
+		return rows[i].ActiveAtPeak > rows[j].ActiveAtPeak
+	})
+	return rows
+}
+
+func cloudLoggingEndpointKey(req *logging.HttpRequest) string {
+	if req == nil {
+		return "-"
+	}
+	method := strings.TrimSpace(req.RequestMethod)
+	path := cloudLoggingRequestPath(req.RequestUrl)
+	key := strings.TrimSpace(strings.TrimSpace(method) + " " + path)
+	if key == "" {
+		return "-"
+	}
+	return key
+}
+
+func cloudLoggingRequestPath(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return "-"
+	}
+	u, err := url.Parse(rawURL)
+	if err == nil && u.Path != "" {
+		return u.Path
+	}
+	if idx := strings.Index(rawURL, "?"); idx >= 0 {
+		rawURL = rawURL[:idx]
+	}
+	if rawURL == "" {
+		return "-"
+	}
+	return rawURL
 }
 
 func parseCloudLoggingLatency(value string) (time.Duration, bool) {
@@ -640,6 +730,51 @@ func parseCloudLoggingLatency(value string) (time.Duration, bool) {
 		return 0, false
 	}
 	return d, true
+}
+
+func cloudLoggingAlertNotificationMessage(cfg *store.CloudLoggingConfig, check *store.CloudLoggingCheck, result *CloudLoggingQueryResult, value int, metricLabel string) string {
+	base := fmt.Sprintf("Cloud Logging 告警\n\n规则: %s\n配置: %s\n资源: %s\n指标: %s\n当前值: %d\n阈值: > %d\n回看窗口: %d 分钟",
+		check.Name, cfg.Name, strings.Join(result.ResourceNames, ", "), metricLabel, value, check.ThresholdCount, check.LookbackMinutes)
+
+	if check.MetricType == store.CloudLoggingMetricPeakConcurrency {
+		return base + "\n\n" + cloudLoggingPeakEndpointNotification(result.Stats, check.LookbackMinutes) + "\n\n该告警仅发送一次，恢复后如再次命中将重新通知。"
+	}
+
+	notificationSample := cloudLoggingNotificationSampleJSON(result.Entries)
+	return base + fmt.Sprintf("\n\n样例摘要:\n%s\n\n该告警仅发送一次，恢复后如再次命中将重新通知。", notificationSample)
+}
+
+func cloudLoggingPeakEndpointNotification(stats *CloudLoggingQueryStats, lookbackMinutes int) string {
+	if stats == nil {
+		return "峰值接口贡献:\n暂无统计数据"
+	}
+	var b strings.Builder
+	if strings.TrimSpace(stats.PeakAt) != "" {
+		fmt.Fprintf(&b, "峰值时间: %s\n\n", stats.PeakAt)
+	}
+	b.WriteString("峰值接口贡献:\n")
+	b.WriteString("接口 | 峰值那一刻活跃并发 | ")
+	if lookbackMinutes > 0 {
+		fmt.Fprintf(&b, "%d分钟请求数\n", lookbackMinutes)
+	} else {
+		b.WriteString("窗口请求数\n")
+	}
+	if len(stats.PeakEndpointContributions) == 0 {
+		b.WriteString("暂无接口贡献数据")
+		return b.String()
+	}
+	limit := len(stats.PeakEndpointContributions)
+	if limit > 5 {
+		limit = 5
+	}
+	for i := 0; i < limit; i++ {
+		row := stats.PeakEndpointContributions[i]
+		fmt.Fprintf(&b, "%s | %d | %d\n", row.Endpoint, row.ActiveAtPeak, row.RequestCount)
+	}
+	if stats.Truncated {
+		b.WriteString("\n提示: 本次统计达到 Cloud Logging 拉取上限，接口请求数可能不是完整窗口总数。")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func cloudLoggingEntryPayload(entry *logging.LogEntry) string {
