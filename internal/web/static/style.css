@@ -384,6 +384,46 @@ html, body {
 .cloud-query-workbench {
     padding: 16px;
 }
+
+/* Log pages keep scrolling inside their table/panel, not on the app shell. */
+.log-page-fit,
+.health-log-page {
+    height: calc(100vh - 136px);
+    height: calc(100dvh - 136px);
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.log-page-header,
+.health-log-header {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.log-page-table,
+.health-log-table {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.log-page-pagination,
+.health-log-pagination {
+    flex: 0 0 auto;
+    margin-top: 16px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.log-page-pagination.center {
+    justify-content: center;
+}
+
 .cloud-query-toolbar {
     display: grid;
     grid-template-columns: minmax(220px, 300px) minmax(140px, 190px) minmax(110px, 150px) minmax(220px, 1fr) minmax(220px, 1fr) minmax(120px, 160px);
@@ -554,6 +594,11 @@ html, body {
     height: calc(100vh - 200px);
     overflow-y: auto;
 }
+.log-container-fit {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+}
 .log-entry { white-space: nowrap; }
 .log-time { color: var(--log-time); }
 .log-db { color: var(--log-db); font-weight: 600; }
@@ -667,6 +712,9 @@ html {
         font-size: 12px;
         padding: 12px;
         border-radius: 10px;
+    }
+    .log-container-fit {
+        height: auto;
     }
     .log-entry {
         white-space: pre-wrap;

@@ -723,8 +723,8 @@ const SlowQueriesPage = defineComponent({
             { title: 'KILL', key: 'kill', width: 100, _hideOnMobile: true, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:11px;opacity:0.5' }, 'KILL ' + row.process_id + ';') },
         ]);
 
-        return () => h('div', { class: 'page-body' }, [
-            h('div', { style: _isMobile.value ? 'margin-bottom:12px' : 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+        return () => h('div', { class: 'page-body log-page-fit' }, [
+            h('div', { class: 'log-page-header', style: _isMobile.value ? 'display:block;margin-bottom:12px' : undefined }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:' + (_isMobile.value ? '8px' : '0') }, [
                     h('h3', { class: 'page-title' }, '慢SQL日志'),
                     h(NText, { depth: 3 }, () => '共 ' + data.value.total + ' 条'),
@@ -741,8 +741,10 @@ const SlowQueriesPage = defineComponent({
                     h(NSelect, { value: filterDB.value, 'onUpdate:value': v => { filterDB.value = v; page.value = 1; }, options: dbOptions.value, style: _isMobile.value ? 'flex:1;min-width:0' : 'width:180px', placeholder: '筛选数据库', clearable: true, size: 'small' }),
                 ]),
             ]),
-            h(NDataTable, { columns: columns.value, data: data.value.logs || [], bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 500 : undefined }),
-            data.value.total_pages > 1 ? h('div', { style: 'margin-top:16px;display:flex;justify-content:center' }, [
+            h('div', { class: 'log-page-table' }, [
+                h(NDataTable, { columns: columns.value, data: data.value.logs || [], bordered: false, size: 'small', loading: loading.value, flexHeight: true, style: 'height:100%', scrollX: _isMobile.value ? 500 : undefined }),
+            ]),
+            data.value.total_pages > 1 ? h('div', { class: 'log-page-pagination center' }, [
                 h(NPagination, { page: page.value, 'onUpdate:page': v => page.value = v, pageCount: data.value.total_pages, size: 'small' }),
             ]) : null,
         ]);
@@ -1461,8 +1463,8 @@ const CustomSQLLogsPage = defineComponent({
             { title: '耗时', key: 'duration_ms', width: 80, _hideOnMobile: true, render: row => row.duration_ms + 'ms' },
         ]);
 
-        return () => h('div', { class: 'page-body' }, [
-            h('div', { style: _isMobile.value ? 'margin-bottom:12px' : 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+        return () => h('div', { class: 'page-body log-page-fit' }, [
+            h('div', { class: 'log-page-header', style: _isMobile.value ? 'display:block;margin-bottom:12px' : undefined }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:' + (_isMobile.value ? '8px' : '0') }, [
                     h('h3', { class: 'page-title' }, 'SQL结果日志'),
                     h(NText, { depth: 3 }, () => '共 ' + data.value.total + ' 条'),
@@ -1479,8 +1481,10 @@ const CustomSQLLogsPage = defineComponent({
                     h(NSelect, { value: filterCheck.value, 'onUpdate:value': v => { filterCheck.value = v; page.value = 1; }, options: checkOptions.value, style: _isMobile.value ? 'flex:1;min-width:0' : 'width:220px', placeholder: '筛选规则', clearable: true, size: 'small' }),
                 ]),
             ]),
-            h(NDataTable, { columns: columns.value, data: data.value.data || [], bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 620 : undefined }),
-            data.value.total_pages > 1 ? h('div', { style: 'margin-top:16px;display:flex;justify-content:center' }, [
+            h('div', { class: 'log-page-table' }, [
+                h(NDataTable, { columns: columns.value, data: data.value.data || [], bordered: false, size: 'small', loading: loading.value, flexHeight: true, style: 'height:100%', scrollX: _isMobile.value ? 620 : undefined }),
+            ]),
+            data.value.total_pages > 1 ? h('div', { class: 'log-page-pagination center' }, [
                 h(NPagination, { page: page.value, 'onUpdate:page': v => page.value = v, pageCount: data.value.total_pages, size: 'small' }),
             ]) : null,
         ]);
@@ -2243,14 +2247,16 @@ ${filters.join('\nOR\n')}
             ]);
         }
         function renderLogs() {
-            return h('div', null, [
-                h(NDataTable, { columns: logColumns.value, data: alertLogs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 250px)', scrollX: _isMobile.value ? 680 : undefined, rowProps: row => ({ style: 'cursor:pointer', onClick: () => openCloudAlertLogDetail(row) }) }),
-                alertTotal.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
+            return h('div', { class: 'log-page-table', style: 'display:flex;flex-direction:column' }, [
+                h('div', { class: 'log-page-table' }, [
+                    h(NDataTable, { columns: logColumns.value, data: alertLogs.value, bordered: false, size: 'small', loading: loading.value, flexHeight: true, style: 'height:100%', scrollX: _isMobile.value ? 680 : undefined, rowProps: row => ({ style: 'cursor:pointer', onClick: () => openCloudAlertLogDetail(row) }) }),
+                ]),
+                alertTotal.value > pageSize ? h('div', { class: 'log-page-pagination' },
                     h(NPagination, { page: alertPage.value, pageSize, itemCount: alertTotal.value, onUpdatePage: p => alertPage.value = p })
                 ) : null,
             ]);
         }
-        return () => h('div', { class: 'page-body' }, [
+        return () => h('div', { class: routeMode.value === 'logs' ? 'page-body log-page-fit' : 'page-body' }, [
             h('div', { class: 'page-header' }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:' + (_isMobile.value ? '10px' : '0') }, [
                     h('h3', { class: 'page-title' }, pageTitle.value),
@@ -2359,8 +2365,8 @@ const MonitorLogsPage = defineComponent({
             }
         }
 
-        return () => h('div', { class: 'page-body' }, [
-            h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+        return () => h('div', { class: 'page-body log-page-fit' }, [
+            h('div', { class: 'log-page-header' }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px' }, [
                     h('h3', { class: 'page-title' }, '运行日志'),
                     h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
@@ -2373,7 +2379,7 @@ const MonitorLogsPage = defineComponent({
                     h(NButton, { size: 'small', secondary: true, onClick: clearLogs }, () => '清除'),
                 ]),
             ]),
-            h('div', { id: 'log-scroll', class: 'log-container' },
+            h('div', { id: 'log-scroll', class: 'log-container log-container-fit' },
                 logEntries.value.length === 0
                     ? h('div', { class: 'log-entry', style: 'opacity:0.4' }, '等待监控事件...')
                     : logEntries.value.map((entry, i) => h('div', { class: 'log-entry', key: i }, [
@@ -2722,8 +2728,8 @@ const RocketMQAlertsPage = defineComponent({
 
         const rowProps = (row) => ({ style: 'cursor:pointer', onClick: () => onRowClick(row) });
 
-        return () => h('div', { class: 'page-body' }, [
-            h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+        return () => h('div', { class: 'page-body log-page-fit' }, [
+            h('div', { class: 'log-page-header' }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px' }, [
                     h('h3', { class: 'page-title' }, 'MQ 告警记录'),
                     h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
@@ -2732,8 +2738,10 @@ const RocketMQAlertsPage = defineComponent({
                     ]),
                 ]),
             ]),
-            h(NDataTable, { columns: columns.value, data: alerts.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 400 : undefined, rowProps }),
-            total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
+            h('div', { class: 'log-page-table' }, [
+                h(NDataTable, { columns: columns.value, data: alerts.value, bordered: false, size: 'small', loading: loading.value, flexHeight: true, style: 'height:100%', scrollX: _isMobile.value ? 400 : undefined, rowProps }),
+            ]),
+            total.value > pageSize ? h('div', { class: 'log-page-pagination' },
                 h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
             ) : null,
             // Detail modal
@@ -2788,10 +2796,14 @@ const AuditLogsPage = defineComponent({
             { title: 'IP', key: 'ip', width: 130, _hideOnMobile: true },
         ]);
 
-        return () => h('div', { class: 'page-body' }, [
-            h('h3', { class: 'page-title', style: 'margin-bottom:16px' }, '操作记录'),
-            h(NDataTable, { columns: columns.value, data: logs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 500 : undefined }),
-            total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
+        return () => h('div', { class: 'page-body log-page-fit' }, [
+            h('div', { class: 'log-page-header' }, [
+                h('h3', { class: 'page-title' }, '操作记录'),
+            ]),
+            h('div', { class: 'log-page-table' }, [
+                h(NDataTable, { columns: columns.value, data: logs.value, bordered: false, size: 'small', loading: loading.value, flexHeight: true, style: 'height:100%', scrollX: _isMobile.value ? 500 : undefined }),
+            ]),
+            total.value > pageSize ? h('div', { class: 'log-page-pagination' },
                 h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
             ) : null,
         ]);
@@ -3450,8 +3462,8 @@ const HealthCheckLogsPage = defineComponent({
             { title: '错误', key: 'error', ellipsis: { tooltip: true }, _hideOnMobile: true, render: row => row.error ? h('span', { style: 'cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px', onClick: e => { e.stopPropagation(); openDetail(row); } }, truncate(row.error.replace(/\n/g, ' / '), 120)) : h(NText, { depth: 3 }, () => '-') },
         ]);
 
-        return () => h('div', { class: 'page-body' }, [
-            h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+        return () => h('div', { class: 'page-body log-page-fit' }, [
+            h('div', { class: 'log-page-header' }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px' }, [
                     h('h3', { class: 'page-title' }, '检查日志'),
                     h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
@@ -3460,8 +3472,10 @@ const HealthCheckLogsPage = defineComponent({
                     ]),
                 ]),
             ]),
-            h(NDataTable, { columns: columns.value, data: logs.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 400 : undefined, rowProps }),
-            total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
+            h('div', { class: 'log-page-table' }, [
+                h(NDataTable, { columns: columns.value, data: logs.value, bordered: false, size: 'small', loading: loading.value, flexHeight: true, style: 'height:100%', scrollX: _isMobile.value ? 400 : undefined, rowProps }),
+            ]),
+            total.value > pageSize ? h('div', { class: 'log-page-pagination' },
                 h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
             ) : null,
             h(NModal, { show: showDetail.value, 'onUpdate:show': v => showDetail.value = v, preset: 'card', title: '检查日志详情', style: _isMobile.value ? 'width:95vw' : 'width:1280px;max-width:94vw', segmented: true }, () => renderDetail()),
@@ -3659,8 +3673,8 @@ const GrafanaAlertsPage = defineComponent({
             { title: '摘要', key: 'summary', ellipsis: { tooltip: true }, _hideOnMobile: true },
         ]);
 
-        return () => h('div', { class: 'page-body' }, [
-            h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
+        return () => h('div', { class: 'page-body log-page-fit' }, [
+            h('div', { class: 'log-page-header' }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px' }, [
                     h('h3', { class: 'page-title' }, 'Grafana 告警记录'),
                     h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
@@ -3669,8 +3683,10 @@ const GrafanaAlertsPage = defineComponent({
                     ]),
                 ]),
             ]),
-            h(NDataTable, { columns: columns.value, data: alerts.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 400 : undefined }),
-            total.value > pageSize ? h('div', { style: 'margin-top:16px;display:flex;justify-content:flex-end' },
+            h('div', { class: 'log-page-table' }, [
+                h(NDataTable, { columns: columns.value, data: alerts.value, bordered: false, size: 'small', loading: loading.value, flexHeight: true, style: 'height:100%', scrollX: _isMobile.value ? 400 : undefined }),
+            ]),
+            total.value > pageSize ? h('div', { class: 'log-page-pagination' },
                 h(NPagination, { page: page.value, pageSize, itemCount: total.value, onUpdatePage: p => page.value = p })
             ) : null,
         ]);
