@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ops-sentinel/internal/store"
 )
 
 func TestFinalizeCloudLoggingStatsBuildsPeakEndpointContributions(t *testing.T) {
@@ -59,6 +61,53 @@ func TestCloudLoggingPeakEndpointNotificationUsesRequestedColumns(t *testing.T) 
 		"峰值时间: 2026-06-23T15:09:49Z",
 		"接口 | 峰值那一刻活跃并发 | 5分钟请求数",
 		"POST /api/v1/cashier/usb/printer/report | 433 | 3579",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected notification to contain %q, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestCloudLoggingPeakAlertNotificationIncludesSampleSummary(t *testing.T) {
+	cfg := &store.CloudLoggingConfig{Name: "diyl-407103"}
+	check := &store.CloudLoggingCheck{
+		Name:            "接口最大并发",
+		MetricType:      store.CloudLoggingMetricPeakConcurrency,
+		LookbackMinutes: 5,
+		ThresholdCount:  100,
+	}
+	result := &CloudLoggingQueryResult{
+		ResourceNames: []string{"projects/diyl-407103"},
+		Stats: &CloudLoggingQueryStats{
+			PeakAt: "2026-06-26T12:44:44Z",
+			PeakEndpointContributions: []CloudLoggingPeakEndpointContribution{
+				{Endpoint: "POST /api/v1/shop/product_bom/card/add", ActiveAtPeak: 357, RequestCount: 370},
+			},
+		},
+		Entries: []CloudLoggingEntry{
+			{
+				Timestamp:    "2026-06-26T12:07:12.929000508Z",
+				LogName:      "projects/diyl-407103/logs/main_log",
+				ResourceType: "gce_instance",
+				ResourceLabels: map[string]string{
+					"instance_id": "6160442037199944805",
+					"project_id":  "diyl-407103",
+					"zone":        "asia-southeast1-a",
+				},
+				Payload: `{"msg":"HandleAddSalesVolume process, AddActualSaleNum failed","error":"Error 1213 (40001): Deadlock found when trying to get lock"}`,
+			},
+		},
+	}
+
+	got := cloudLoggingAlertNotificationMessage(cfg, check, result, 387, "接口最大并发")
+
+	for _, want := range []string{
+		"峰值接口贡献:",
+		"POST /api/v1/shop/product_bom/card/add | 357 | 370",
+		"样例摘要:",
+		"projects/diyl-407103/logs/main_log",
+		"gce_instance",
+		"HandleAddSalesVolume process, AddActualSaleNum failed",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected notification to contain %q, got:\n%s", want, got)

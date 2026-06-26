@@ -735,12 +735,12 @@ func parseCloudLoggingLatency(value string) (time.Duration, bool) {
 func cloudLoggingAlertNotificationMessage(cfg *store.CloudLoggingConfig, check *store.CloudLoggingCheck, result *CloudLoggingQueryResult, value int, metricLabel string) string {
 	base := fmt.Sprintf("Cloud Logging 告警\n\n规则: %s\n配置: %s\n资源: %s\n指标: %s\n当前值: %d\n阈值: > %d\n回看窗口: %d 分钟",
 		check.Name, cfg.Name, strings.Join(result.ResourceNames, ", "), metricLabel, value, check.ThresholdCount, check.LookbackMinutes)
+	notificationSample := cloudLoggingNotificationSampleJSON(result.Entries)
 
 	if check.MetricType == store.CloudLoggingMetricPeakConcurrency {
-		return base + "\n\n" + cloudLoggingPeakEndpointNotification(result.Stats, check.LookbackMinutes) + "\n\n该告警仅发送一次，恢复后如再次命中将重新通知。"
+		return base + "\n\n" + cloudLoggingPeakEndpointNotification(result.Stats, check.LookbackMinutes) + fmt.Sprintf("\n\n样例摘要:\n%s\n\n该告警仅发送一次，恢复后如再次命中将重新通知。", notificationSample)
 	}
 
-	notificationSample := cloudLoggingNotificationSampleJSON(result.Entries)
 	return base + fmt.Sprintf("\n\n样例摘要:\n%s\n\n该告警仅发送一次，恢复后如再次命中将重新通知。", notificationSample)
 }
 
