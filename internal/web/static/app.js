@@ -809,6 +809,209 @@ const IgnoredSQLPage = defineComponent({
 });
 
 // --- Custom SQL Checks ---
+
+// ============================================================
+// 自定义 SQL 预置模板
+// 维度 C（数据库深度）与维度 H（配置漂移）不需要新采集器，
+// 用 custom_sql 配 SQL 即可覆盖。这里把常用的固化成模板，
+// 省去查 performance_schema / information_schema 字段名的功夫。
+// ============================================================
+const CUSTOM_SQL_TEMPLATES = [
+    {
+        group: 'C · 数据库深度（InnoDB 与连接）',
+        items: [
+            {
+                name: 'InnoDB 缓冲池命中率 < 99%',
+                sql_text: "SELECT ROUND(100 - (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_reads') * 100 / NULLIF((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_read_requests'), 0), 4) AS hit_ratio",
+                result_field: 'hit_ratio',
+                condition: 'lt', expected_value: '99', alert_strategy: 'threshold',
+                interval_sec: 60,
+                message_template: '缓冲池命中率降至 {{value}}%，低于 99% 说明热数据放不下，磁盘读会显著增加',
+            },
+            {
+                name: '缓冲池使用率 > 98%（容量已满）',
+                sql_text: "SELECT ROUND((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_pages_data') * 100 / NULLIF((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_pages_total'), 0), 2) AS used_pct",
+                result_field: 'used_pct',
+                condition: 'gt', expected_value: '98', alert_strategy: 'sustained', alert_consecutive: 5,
+                interval_sec: 60,
+                message_template: '缓冲池使用率 {{value}}%，已在持续淘汰页面，考虑扩容 innodb_buffer_pool_size',
+            },
+            {
+                name: '连接数占 max_connections 超 70%',
+                sql_text: "SELECT ROUND((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Threads_connected') * 100 / @@max_connections, 2) AS conn_pct",
+                result_field: 'conn_pct',
+                condition: 'gt', expected_value: '70', alert_strategy: 'sustained', alert_consecutive: 3,
+                interval_sec: 30,
+                message_template: '连接数已占 max_connections 的 {{value}}%，接近上限会开始拒绝新连接',
+            },
+            {
+                name: '连接被拒绝数增长（Aborted_connects）',
+                sql_text: "SELECT VARIABLE_VALUE AS aborted FROM performance_schema.global_status WHERE VARIABLE_NAME='Aborted_connects'",
+                result_field: 'aborted',
+                alert_strategy: 'increase', alert_delta_value: '10',
+                interval_sec: 60,
+                message_template: '连接被拒绝数增加，可能是达到连接上限或认证失败',
+            },
+            {
+                name: '慢查询计数增长',
+                sql_text: "SELECT VARIABLE_VALUE AS slow FROM performance_schema.global_status WHERE VARIABLE_NAME='Slow_queries'",
+                result_field: 'slow',
+                alert_strategy: 'increase', alert_delta_value: '20',
+                interval_sec: 60,
+                message_template: '慢查询数量增长 {{value}}，检查是否有新的低效 SQL 上线',
+            },
+            {
+                name: '行锁等待数增长',
+                sql_text: "SELECT VARIABLE_VALUE AS lock_waits FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_row_lock_waits'",
+                result_field: 'lock_waits',
+                alert_strategy: 'increase', alert_delta_value: '50',
+                interval_sec: 60,
+                message_template: '行锁等待增加，可能存在长事务或热点行竞争',
+            },
+            {
+                name: '平均行锁等待时长 > 200ms',
+                sql_text: "SELECT VARIABLE_VALUE AS avg_ms FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_row_lock_time_avg'",
+                result_field: 'avg_ms',
+                condition: 'gt', expected_value: '200', alert_strategy: 'sustained', alert_consecutive: 3,
+                interval_sec: 60,
+                message_template: '平均行锁等待 {{value}}ms，事务在互相阻塞',
+            },
+            {
+                name: '正在运行超过 60 秒的事务',
+                sql_text: "SELECT COUNT(*) AS long_trx FROM information_schema.innodb_trx WHERE trx_started < NOW() - INTERVAL 60 SECOND",
+                result_field: 'long_trx',
+                condition: 'gt', expected_value: '0', alert_strategy: 'sustained', alert_consecutive: 2,
+                interval_sec: 30,
+                message_template: '有 {{value}} 个事务运行超过 60 秒，长事务会阻塞 purge 并撑大 undo',
+            },
+        ],
+    },
+    {
+        group: 'C · 复制与集群',
+        items: [
+            {
+                name: '组复制在线成员数 < 3',
+                sql_text: "SELECT COUNT(*) AS online_members FROM performance_schema.replication_group_members WHERE MEMBER_STATE='ONLINE'",
+                result_field: 'online_members',
+                condition: 'lt', expected_value: '3', alert_strategy: 'threshold',
+                interval_sec: 30,
+                message_template: '组复制在线成员仅 {{value}} 个，掉到 2 个以下将失去多数派、集群不可写',
+            },
+            {
+                name: '本节点不是 ONLINE 状态',
+                sql_text: "SELECT COUNT(*) AS not_online FROM performance_schema.replication_group_members WHERE MEMBER_ID=@@server_uuid AND MEMBER_STATE<>'ONLINE'",
+                result_field: 'not_online',
+                condition: 'gt', expected_value: '0', alert_strategy: 'threshold',
+                interval_sec: 30,
+                message_template: '本节点已脱离组复制集群',
+            },
+            {
+                name: '主从延迟 > 30 秒',
+                sql_text: "SELECT IFNULL(MAX(TIMESTAMPDIFF(SECOND, LAST_APPLIED_TRANSACTION_ORIGINAL_COMMIT_TIMESTAMP, LAST_APPLIED_TRANSACTION_END_APPLY_TIMESTAMP)), 0) AS lag_sec FROM performance_schema.replication_applier_status_by_worker",
+                result_field: 'lag_sec',
+                condition: 'gt', expected_value: '30', alert_strategy: 'sustained', alert_consecutive: 3,
+                interval_sec: 30,
+                message_template: '复制延迟 {{value}} 秒，从库数据落后于主库',
+            },
+        ],
+    },
+    {
+        group: 'C · 容量与增长',
+        items: [
+            {
+                name: '数据库总容量（GB）',
+                sql_text: "SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024 / 1024, 2) AS size_gb FROM information_schema.tables WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys')",
+                result_field: 'size_gb',
+                alert_strategy: 'increase', alert_delta_value: '5',
+                interval_sec: 3600,
+                message_template: '数据库容量单轮增长超过 5GB，检查是否有异常写入',
+            },
+            {
+                name: 'undo 表空间异常增长',
+                sql_text: "SELECT ROUND(SUM(FILE_SIZE) / 1024 / 1024 / 1024, 2) AS undo_gb FROM information_schema.innodb_tablespaces WHERE SPACE_TYPE='Undo'",
+                result_field: 'undo_gb',
+                condition: 'gt', expected_value: '10', alert_strategy: 'threshold',
+                interval_sec: 300,
+                message_template: 'undo 表空间已达 {{value}}GB，通常由长事务阻塞 purge 导致',
+            },
+        ],
+    },
+    {
+        group: 'H · 配置漂移检测',
+        items: [
+            {
+                name: 'innodb_flush_method 偏离 O_DIRECT',
+                sql_text: "SELECT CASE WHEN @@innodb_flush_method IN ('O_DIRECT','O_DIRECT_NO_FSYNC') THEN 0 ELSE 1 END AS drift",
+                result_field: 'drift',
+                condition: 'gt', expected_value: '0', alert_strategy: 'threshold',
+                interval_sec: 3600,
+                message_template: 'innodb_flush_method 不是 O_DIRECT，会与 InnoDB 缓冲池形成双重缓存、浪费内存',
+            },
+            {
+                name: 'max_connections 被改小到 200 以下',
+                sql_text: "SELECT @@max_connections AS max_conn",
+                result_field: 'max_conn',
+                condition: 'lt', expected_value: '200', alert_strategy: 'threshold',
+                interval_sec: 3600,
+                message_template: 'max_connections 当前为 {{value}}，低于应用连接池的聚合需求',
+            },
+            {
+                name: 'read_only 被意外打开（主库）',
+                sql_text: "SELECT CASE WHEN @@read_only = 1 OR @@super_read_only = 1 THEN 1 ELSE 0 END AS ro",
+                result_field: 'ro',
+                condition: 'gt', expected_value: '0', alert_strategy: 'threshold',
+                interval_sec: 60,
+                message_template: '本节点处于只读状态，若它应为主库则写入会全部失败',
+            },
+            {
+                name: 'binlog 或 GTID 被关闭',
+                sql_text: "SELECT CASE WHEN @@log_bin = 0 OR @@gtid_mode <> 'ON' THEN 1 ELSE 0 END AS drift",
+                result_field: 'drift',
+                condition: 'gt', expected_value: '0', alert_strategy: 'threshold',
+                interval_sec: 3600,
+                message_template: 'binlog 或 GTID 已关闭，组复制与主从复制的前提被破坏',
+            },
+            {
+                name: '慢查询日志未开启',
+                sql_text: "SELECT CASE WHEN @@slow_query_log = 1 THEN 0 ELSE 1 END AS drift",
+                result_field: 'drift',
+                condition: 'gt', expected_value: '0', alert_strategy: 'threshold',
+                interval_sec: 3600,
+                message_template: '慢查询日志未开启，无法从数据库侧定位慢 SQL',
+            },
+            {
+                name: 'buffer pool 配置被改小',
+                sql_text: "SELECT ROUND(@@innodb_buffer_pool_size / 1024 / 1024 / 1024, 2) AS pool_gb",
+                result_field: 'pool_gb',
+                condition: 'lt', expected_value: '8', alert_strategy: 'threshold',
+                interval_sec: 3600,
+                message_template: 'innodb_buffer_pool_size 当前 {{value}}GB，低于预期配置',
+            },
+        ],
+    },
+    {
+        group: 'C · 权限与错误（排查用）',
+        items: [
+            {
+                name: '账号可访问的 schema 数量',
+                sql_text: "SELECT COUNT(DISTINCT table_schema) AS visible_schemas FROM information_schema.tables WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys')",
+                result_field: 'visible_schemas',
+                condition: 'lt', expected_value: '10', alert_strategy: 'threshold',
+                interval_sec: 3600,
+                message_template: '当前账号只能看到 {{value}} 个业务库，可能存在授权缺失',
+            },
+            {
+                name: '当前活跃连接数',
+                sql_text: "SELECT COUNT(*) AS active FROM information_schema.processlist WHERE command <> 'Sleep'",
+                result_field: 'active',
+                condition: 'gt', expected_value: '50', alert_strategy: 'sustained', alert_consecutive: 3,
+                interval_sec: 30,
+                message_template: '活跃连接 {{value}} 个，可能有查询堆积',
+            },
+        ],
+    },
+];
+
 const CustomSQLPage = defineComponent({
     setup() {
         const checks = ref([]);
@@ -1309,6 +1512,31 @@ const CustomSQLPage = defineComponent({
             ].filter(Boolean)) },
         ]);
 
+        // 套用预置模板：只填规则内容，数据库连接仍由用户选
+        const sqlTemplateOptions = CUSTOM_SQL_TEMPLATES.map(g => ({
+            type: 'group', label: g.group, key: g.group,
+            children: g.items.map((it, i) => ({ label: it.name, key: g.group + '::' + i })),
+        }));
+        function applySQLTemplate(key) {
+            const sep = key.lastIndexOf('::');
+            const g = CUSTOM_SQL_TEMPLATES.find(x => x.group === key.slice(0, sep));
+            const tpl = g && g.items[Number(key.slice(sep + 2))];
+            if (!tpl) return;
+            form.name = tpl.name;
+            form.sql_text = tpl.sql_text;
+            form.result_field = tpl.result_field || '';
+            form.interval_sec = tpl.interval_sec || 60;
+            form.alert_strategy = tpl.alert_strategy || 'threshold';
+            form.condition = tpl.condition || 'gt';
+            form.expected_value = tpl.expected_value || '';
+            form.alert_delta_value = tpl.alert_delta_value || '';
+            form.alert_delta_percent = tpl.alert_delta_percent || '';
+            form.alert_consecutive = tpl.alert_consecutive || 1;
+            form.message_template = tpl.message_template || '';
+            if (Array.isArray(form.alert_rules)) form.alert_rules = [];
+            message.success('已套用模板：' + tpl.name);
+        }
+
         return () => h('div', { class: 'page-body' }, [
             h('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:16px' }, [
                 h('h3', { class: 'page-title' }, '自定义SQL监控'),
@@ -1322,6 +1550,11 @@ const CustomSQLPage = defineComponent({
             h(NDataTable, { columns: columns.value, data: checks.value, bordered: false, size: 'small', loading: loading.value, maxHeight: 'calc(100vh - 200px)', scrollX: _isMobile.value ? 620 : 1670 }),
             h(NModal, { show: showModal.value, 'onUpdate:show': v => showModal.value = v, preset: 'card', title: editingId.value ? '编辑自定义SQL' : '添加自定义SQL', style: _isMobile.value ? 'width:95vw' : 'width:1120px;max-width:96vw', segmented: true }, () => h(NForm, { model: form, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 120 }, [
                 h(NGrid, { cols: gridCols.value, xGap: 12 }, () => [
+                editingId.value ? null : h(NGi, { span: 2 }, () => h(NFormItem, { label: '预置模板' }, () => h('div', { style: 'width:100%;display:flex;align-items:center;gap:10px' }, [
+                    h(NDropdown, { trigger: 'click', options: sqlTemplateOptions, onSelect: applySQLTemplate },
+                        () => h(NButton, { size: 'small', secondary: true, type: 'info' }, () => '从模板套用 ▾')),
+                    h(NText, { depth: 3, style: 'font-size:12px' }, () => '覆盖数据库深度指标与配置漂移检测，选中后仍需指定数据库连接'),
+                ]))),
                     h(NGi, null, () => h(NFormItem, { label: '名称' }, () => h(NInput, { value: form.name, 'onUpdate:value': v => form.name = v, placeholder: '如: 待处理订单数量' }))),
                     h(NGi, null, () => h(NFormItem, { label: '数据库连接' }, () => h(NSelect, { value: form.database_id, 'onUpdate:value': v => form.database_id = v, options: dbOptions.value, placeholder: '选择数据库' }))),
                 ]),
@@ -2393,6 +2626,784 @@ const MonitorLogsPage = defineComponent({
 });
 
 // --- Settings ---
+
+// ============================================================
+// 指标监控（Prometheus 端点）
+// 一套采集器覆盖主机 / 容器 / 中间件 / 应用 / 业务五个维度
+// ============================================================
+
+const PROM_DIMENSIONS = [
+    { label: '主机资源', value: 'host' },
+    { label: '容器', value: 'container' },
+    { label: '数据库', value: 'database' },
+    { label: '中间件', value: 'middleware' },
+    { label: '应用', value: 'app' },
+    { label: '业务', value: 'business' },
+    { label: '自定义', value: 'custom' },
+];
+
+const PROM_TARGET_KINDS = [
+    { label: 'node_exporter（主机）', value: 'node' },
+    { label: 'cAdvisor（容器）', value: 'cadvisor' },
+    { label: '应用 /metrics', value: 'app' },
+    { label: 'redis_exporter', value: 'redis' },
+    { label: 'Nacos', value: 'nacos' },
+    { label: 'MySQL Router', value: 'router' },
+    { label: '自定义', value: 'custom' },
+];
+
+const PROM_AGGREGATES = [
+    { label: '最后一个样本 last', value: 'last' },
+    { label: '求和 sum', value: 'sum' },
+    { label: '平均 avg', value: 'avg' },
+    { label: '最大 max', value: 'max' },
+    { label: '最小 min', value: 'min' },
+    { label: '样本数 count', value: 'count' },
+];
+
+const PROM_EXPR_KINDS = [
+    { label: '直接取值', value: 'raw' },
+    { label: '比率 = 指标 / 分母 × 100', value: 'ratio' },
+    { label: '使用率 = (1 - 指标/分母) × 100', value: 'available_ratio' },
+];
+
+const PROM_STRATEGIES = [
+    { label: '阈值：越界即告警', value: 'threshold' },
+    { label: '持续：连续 N 次才告警', value: 'sustained' },
+    { label: '增长：变化量或变化率超标', value: 'increase' },
+];
+
+const PROM_CONDITIONS = [
+    { label: '> 大于', value: 'gt' },
+    { label: '>= 大于等于', value: 'gte' },
+    { label: '< 小于', value: 'lt' },
+    { label: '<= 小于等于', value: 'lte' },
+    { label: '== 等于', value: 'eq' },
+    { label: '!= 不等于', value: 'ne' },
+];
+
+const PROM_SEVERITIES = [
+    { label: '提示 info', value: 'info' },
+    { label: '警告 warning', value: 'warning' },
+    { label: '严重 critical', value: 'critical' },
+];
+
+// 开箱即用的规则模板。每条都对应一类常见故障，
+// 用户挑一个即可，不用自己去查指标名。
+const PROM_RULE_TEMPLATES = [
+    {
+        group: '主机资源（node_exporter）',
+        items: [
+            { name: 'Swap 使用率 > 10%', dimension: 'host', metric: 'node_memory_SwapFree_bytes', expr_kind: 'available_ratio', expr_denominator: 'node_memory_SwapTotal_bytes', alert_strategy: 'sustained', alert_condition: 'gt', alert_value: '10', alert_consecutive: 3, severity: 'critical' },
+            { name: '内存使用率 > 90%', dimension: 'host', metric: 'node_memory_MemAvailable_bytes', expr_kind: 'available_ratio', expr_denominator: 'node_memory_MemTotal_bytes', alert_strategy: 'sustained', alert_condition: 'gt', alert_value: '90', alert_consecutive: 3, severity: 'warning' },
+            { name: '磁盘使用率 > 80%', dimension: 'host', metric: 'node_filesystem_avail_bytes', label_filter: 'mountpoint="/"', expr_kind: 'available_ratio', expr_denominator: 'node_filesystem_size_bytes', alert_condition: 'gt', alert_value: '80', severity: 'warning' },
+            { name: '文件描述符使用率 > 80%', dimension: 'host', metric: 'process_open_fds', expr_kind: 'ratio', expr_denominator: 'process_max_fds', alert_condition: 'gt', alert_value: '80', severity: 'critical' },
+            { name: '换页速率持续 > 0', dimension: 'host', metric: 'node_vmstat_pswpout', alert_strategy: 'increase', alert_delta_value: '1', severity: 'warning' },
+            { name: '系统负载 > 核心数', dimension: 'host', metric: 'node_load5', alert_strategy: 'sustained', alert_condition: 'gt', alert_value: '8', alert_consecutive: 3, severity: 'warning' },
+        ],
+    },
+    {
+        group: '容器（cAdvisor）',
+        items: [
+            { name: '容器重启次数增加', dimension: 'container', metric: 'container_start_time_seconds', alert_strategy: 'increase', alert_delta_value: '1', severity: 'warning' },
+            { name: '容器内存接近上限', dimension: 'container', metric: 'container_memory_usage_bytes', expr_kind: 'ratio', expr_denominator: 'container_spec_memory_limit_bytes', alert_condition: 'gt', alert_value: '90', severity: 'warning' },
+        ],
+    },
+    {
+        group: '应用 RED 与连接池',
+        items: [
+            { name: '连接池等待次数增长', dimension: 'app', metric: 'ttpos_db_pool_wait_total', alert_strategy: 'increase', alert_delta_value: '10', severity: 'warning' },
+            { name: '连接池使用率 > 80%', dimension: 'app', metric: 'ttpos_db_pool_in_use_connections', expr_kind: 'ratio', expr_denominator: 'ttpos_db_pool_max_open_connections', alert_condition: 'gt', alert_value: '80', severity: 'warning' },
+            { name: '连接因存活到期被关闭', dimension: 'app', metric: 'ttpos_db_pool_max_lifetime_closed_total', alert_strategy: 'increase', alert_delta_value: '100', severity: 'info' },
+            { name: '5xx 请求数增长', dimension: 'app', metric: 'http_requests_total', label_filter: 'status="500"', alert_strategy: 'increase', alert_delta_value: '10', severity: 'critical' },
+        ],
+    },
+    {
+        group: '业务指标',
+        items: [
+            { name: '订单量长时间无增长', dimension: 'business', metric: 'orders_total', alert_strategy: 'sustained', alert_condition: 'eq', alert_value: '0', alert_consecutive: 10, severity: 'warning' },
+            { name: '支付量长时间无增长', dimension: 'business', metric: 'payments_total', alert_strategy: 'sustained', alert_condition: 'eq', alert_value: '0', alert_consecutive: 10, severity: 'warning' },
+        ],
+    },
+];
+
+function promDimensionLabel(v) {
+    const d = PROM_DIMENSIONS.find(x => x.value === v);
+    return d ? d.label : (v || '自定义');
+}
+
+function promSeverityType(v) {
+    if (v === 'critical') return 'error';
+    if (v === 'info') return 'info';
+    return 'warning';
+}
+
+// ---------- 采集目标 ----------
+const PromTargetsPage = defineComponent({
+    setup() {
+        const items = ref([]);
+        const loading = ref(true);
+        const showModal = ref(false);
+        const editingId = ref(null);
+        const testing = ref(false);
+        const testResult = ref(null);
+        const message = useMessage();
+
+        const emptyForm = () => ({
+            name: '', url: '', kind: 'node', headers_json: '{}',
+            timeout_sec: 10, interval_sec: 30, labels_json: '{}',
+        });
+        const form = reactive(emptyForm());
+
+        async function load() {
+            loading.value = true;
+            try { items.value = await api.get('/api/prom-targets'); } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+
+        function openAdd() {
+            editingId.value = null;
+            testResult.value = null;
+            Object.assign(form, emptyForm());
+            showModal.value = true;
+        }
+        function openEdit(row) {
+            const t = row.target;
+            editingId.value = t.id;
+            testResult.value = null;
+            Object.assign(form, {
+                name: t.name, url: t.url, kind: t.kind || 'custom',
+                headers_json: t.headers_json || '{}', timeout_sec: t.timeout_sec,
+                interval_sec: t.interval_sec, labels_json: t.labels_json || '{}',
+            });
+            showModal.value = true;
+        }
+
+        async function save() {
+            if (!form.name.trim() || !form.url.trim()) { message.error('名称与 URL 不能为空'); return; }
+            try {
+                if (editingId.value) await api.put('/api/prom-targets/' + editingId.value, { ...form });
+                else await api.post('/api/prom-targets', { ...form });
+                message.success('已保存');
+                showModal.value = false;
+                load();
+            } catch (e) { message.error(String(e.message || e)); }
+        }
+
+        async function doTest() {
+            if (!form.url.trim()) { message.error('请先填写 URL'); return; }
+            testing.value = true;
+            testResult.value = null;
+            try {
+                testResult.value = await api.post('/api/prom-targets/test', { ...form });
+            } catch (e) { message.error(String(e.message || e)); }
+            testing.value = false;
+        }
+
+        async function toggle(row) {
+            try { await api.post('/api/prom-targets/' + row.target.id + '/toggle'); load(); }
+            catch (e) { message.error(String(e.message || e)); }
+        }
+        async function remove(row) {
+            try { await api.del('/api/prom-targets/' + row.target.id); message.success('已删除'); load(); }
+            catch (e) { message.error(String(e.message || e)); }
+        }
+
+        const columns = computed(() => [
+            { title: '名称', key: 'name', render: r => r.target.name },
+            { title: '类型', key: 'kind', width: 130, render: r => h(NTag, { size: 'small', bordered: false }, () => r.target.kind) },
+            { title: '端点', key: 'url', ellipsis: { tooltip: true }, render: r => h('span', { class: 'mono' }, r.target.url) },
+            { title: '规则数', key: 'check_count', width: 80, render: r => r.check_count },
+            { title: '间隔', key: 'interval', width: 80, render: r => r.target.interval_sec + 's' },
+            {
+                title: '状态', key: 'status', width: 90,
+                render: r => h(NTag, { size: 'small', type: r.running ? 'success' : 'default', bordered: false },
+                    () => r.running ? '运行中' : '已停止'),
+            },
+            {
+                title: '操作', key: 'actions', width: 190,
+                render: r => h(NSpace, { size: 4 }, () => [
+                    h(NButton, { size: 'tiny', secondary: true, onClick: () => openEdit(r) }, () => '编辑'),
+                    h(NButton, { size: 'tiny', secondary: true, onClick: () => toggle(r) }, () => r.target.enabled ? '停用' : '启用'),
+                    h(NPopconfirm, { onPositiveClick: () => remove(r) }, {
+                        trigger: () => h(NButton, { size: 'tiny', secondary: true, type: 'error' }, () => '删除'),
+                        default: () => '删除后其下所有规则一并移除，确认？',
+                    }),
+                ]),
+            },
+        ]);
+
+        return () => h('div', null, [
+            h(NSpace, { justify: 'space-between', align: 'center', style: 'margin-bottom:12px' }, () => [
+                h(NText, { depth: 3, style: 'font-size:13px' },
+                    () => '采集 Prometheus 文本端点：node_exporter 给主机、cAdvisor 给容器、应用 /metrics 给 RED 与业务指标'),
+                h(NButton, { type: 'primary', size: 'small', onClick: openAdd }, () => '+ 添加'),
+            ]),
+            h(NDataTable, {
+                columns: columns.value, data: items.value, bordered: false, size: 'small',
+                loading: loading.value, maxHeight: 'calc(100vh - 220px)',
+                scrollX: _isMobile.value ? 700 : undefined,
+            }),
+            h(NModal, {
+                show: showModal.value, 'onUpdate:show': v => showModal.value = v,
+                preset: 'card', title: editingId.value ? '编辑采集目标' : '添加采集目标',
+                style: _isMobile.value ? 'width:95vw' : 'width:680px;max-width:96vw', segmented: true,
+            }, () => h(NForm, { labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 96 }, () => [
+                h(NFormItem, { label: '名称' }, () => h(NInput, {
+                    value: form.name, onUpdateValue: v => form.name = v, placeholder: '如 core-01 主机指标',
+                })),
+                h(NFormItem, { label: '类型' }, () => h(NSelect, {
+                    value: form.kind, onUpdateValue: v => form.kind = v, options: PROM_TARGET_KINDS,
+                })),
+                h(NFormItem, { label: '端点 URL' }, () => h(NInput, {
+                    value: form.url, onUpdateValue: v => form.url = v,
+                    placeholder: 'http://10.70.20.12:9100/metrics',
+                })),
+                h(NGrid, { cols: 2, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '超时(秒)' }, () => h(NInputNumber, {
+                        value: form.timeout_sec, onUpdateValue: v => form.timeout_sec = v,
+                        min: 1, max: 120, style: 'width:100%',
+                    }))),
+                    h(NGi, null, () => h(NFormItem, { label: '间隔(秒)' }, () => h(NInputNumber, {
+                        value: form.interval_sec, onUpdateValue: v => form.interval_sec = v,
+                        min: 5, max: 3600, style: 'width:100%',
+                    }))),
+                ]),
+                h(NFormItem, { label: '请求头' }, () => h(NInput, {
+                    type: 'textarea', rows: 2, value: form.headers_json,
+                    onUpdateValue: v => form.headers_json = v,
+                    placeholder: '{"Authorization": "Bearer token"}',
+                })),
+                testResult.value ? h(NFormItem, { label: '测试结果' }, () => h('div', { style: 'width:100%' }, [
+                    testResult.value.success
+                        ? h(NAlert, { type: 'success', style: 'margin-bottom:8px' },
+                            () => '连接成功，端点共 ' + testResult.value.metric_count + ' 个指标')
+                        : h(NAlert, { type: 'error' }, () => String(testResult.value.error || '连接失败')),
+                    testResult.value.success && testResult.value.metrics
+                        ? h(NScrollbar, { style: 'max-height:180px' },
+                            () => h('div', { class: 'mono', style: 'font-size:12px;line-height:1.7' },
+                                testResult.value.metrics.map(m => h('div', null, m))))
+                        : null,
+                ])) : null,
+                h('div', { style: 'display:flex;justify-content:flex-end;gap:8px;margin-top:8px' }, [
+                    h(NButton, { onClick: doTest, loading: testing.value }, () => '测试连接'),
+                    h(NButton, { onClick: () => showModal.value = false }, () => '取消'),
+                    h(NButton, { type: 'primary', onClick: save }, () => '保存'),
+                ]),
+            ])),
+        ]);
+    },
+});
+
+// ---------- 告警规则 ----------
+const PromChecksPage = defineComponent({
+    setup() {
+        const checks = ref([]);
+        const targets = ref([]);
+        const loading = ref(true);
+        const showModal = ref(false);
+        const editingId = ref(null);
+        const dimFilter = ref('');
+        const testing = ref(false);
+        const testResult = ref(null);
+        const message = useMessage();
+
+        const emptyForm = () => ({
+            target_id: null, name: '', dimension: 'host', metric: '', label_filter: '',
+            aggregate: 'last', expr_kind: 'raw', expr_denominator: '',
+            alert_strategy: 'threshold', alert_condition: 'gt', alert_value: '',
+            alert_delta_value: '', alert_delta_percent: '', alert_consecutive: 1,
+            severity: 'warning', notify_enabled: true, recovery_notify: true, message_template: '',
+        });
+        const form = reactive(emptyForm());
+
+        async function load() {
+            loading.value = true;
+            try {
+                const q = dimFilter.value ? '?dimension=' + dimFilter.value : '';
+                checks.value = await api.get('/api/prom-checks' + q);
+                const t = await api.get('/api/prom-targets');
+                targets.value = t.map(x => ({ label: x.target.name + ' — ' + x.target.url, value: x.target.id }));
+            } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+        watch(dimFilter, load);
+
+        function openAdd() {
+            editingId.value = null;
+            testResult.value = null;
+            Object.assign(form, emptyForm());
+            if (targets.value.length) form.target_id = targets.value[0].value;
+            showModal.value = true;
+        }
+        function openEdit(row) {
+            editingId.value = row.id;
+            testResult.value = null;
+            Object.assign(form, {
+                target_id: row.target_id, name: row.name, dimension: row.dimension,
+                metric: row.metric, label_filter: row.label_filter || '',
+                aggregate: row.aggregate || 'last', expr_kind: row.expr_kind || 'raw',
+                expr_denominator: row.expr_denominator || '',
+                alert_strategy: row.alert_strategy || 'threshold',
+                alert_condition: row.alert_condition || 'gt',
+                alert_value: row.alert_value || '', alert_delta_value: row.alert_delta_value || '',
+                alert_delta_percent: row.alert_delta_percent || '',
+                alert_consecutive: row.alert_consecutive || 1,
+                severity: row.severity || 'warning',
+                notify_enabled: !!row.notify_enabled, recovery_notify: !!row.recovery_notify,
+                message_template: row.message_template || '',
+            });
+            showModal.value = true;
+        }
+
+        // 套用模板：只填规则本身，采集目标仍由用户选
+        function applyTemplate(tpl) {
+            Object.assign(form, emptyForm(), tpl, { target_id: form.target_id });
+            delete form.hint;
+            delete form.group;
+            message.success('已套用模板：' + tpl.name);
+        }
+
+        const templateOptions = computed(() => PROM_RULE_TEMPLATES.map(g => ({
+            type: 'group', label: g.group, key: g.group,
+            children: g.items.map((it, i) => ({ label: it.name, key: g.group + '::' + i })),
+        })));
+
+        function onTemplateSelect(key) {
+            const [group, idx] = key.split('::');
+            const g = PROM_RULE_TEMPLATES.find(x => x.group === group);
+            if (g && g.items[idx]) applyTemplate({ ...g.items[idx] });
+        }
+
+        async function save() {
+            if (!form.target_id) { message.error('请选择采集目标'); return; }
+            if (!form.name.trim() || !form.metric.trim()) { message.error('名称与指标不能为空'); return; }
+            try {
+                if (editingId.value) await api.put('/api/prom-checks/' + editingId.value, { ...form });
+                else await api.post('/api/prom-checks', { ...form });
+                message.success('已保存');
+                showModal.value = false;
+                load();
+            } catch (e) { message.error(String(e.message || e)); }
+        }
+
+        async function doTest() {
+            if (!form.target_id || !form.metric.trim()) { message.error('请先选择目标并填写指标'); return; }
+            testing.value = true;
+            testResult.value = null;
+            try { testResult.value = await api.post('/api/prom-checks/test', { ...form }); }
+            catch (e) { message.error(String(e.message || e)); }
+            testing.value = false;
+        }
+
+        async function toggle(row) {
+            try { await api.post('/api/prom-checks/' + row.id + '/toggle'); load(); }
+            catch (e) { message.error(String(e.message || e)); }
+        }
+        async function remove(row) {
+            try { await api.del('/api/prom-checks/' + row.id); message.success('已删除'); load(); }
+            catch (e) { message.error(String(e.message || e)); }
+        }
+
+        const columns = computed(() => [
+            { title: '名称', key: 'name', ellipsis: { tooltip: true } },
+            {
+                title: '维度', key: 'dimension', width: 100,
+                render: r => h(NTag, { size: 'small', bordered: false }, () => promDimensionLabel(r.dimension)),
+            },
+            { title: '指标', key: 'metric', ellipsis: { tooltip: true }, render: r => h('span', { class: 'mono', style: 'font-size:12px' }, r.metric + (r.label_filter ? '{' + r.label_filter + '}' : '')) },
+            { title: '目标', key: 'target_name', width: 140, ellipsis: { tooltip: true } },
+            {
+                title: '条件', key: 'cond', width: 150,
+                render: r => {
+                    if (r.alert_strategy === 'increase') {
+                        return h('span', { class: 'mono', style: 'font-size:12px' },
+                            '增量 ≥ ' + (r.alert_delta_value || r.alert_delta_percent + '%'));
+                    }
+                    const sym = { gt: '>', gte: '≥', lt: '<', lte: '≤', eq: '=', ne: '≠' }[r.alert_condition] || r.alert_condition;
+                    const suffix = r.alert_strategy === 'sustained' ? ' ×' + r.alert_consecutive : '';
+                    return h('span', { class: 'mono', style: 'font-size:12px' }, sym + ' ' + r.alert_value + suffix);
+                },
+            },
+            {
+                title: '级别', key: 'severity', width: 90,
+                render: r => h(NTag, { size: 'small', type: promSeverityType(r.severity), bordered: false }, () => r.severity),
+            },
+            {
+                title: '状态', key: 'enabled', width: 80,
+                render: r => h(NTag, { size: 'small', type: r.enabled ? 'success' : 'default', bordered: false },
+                    () => r.enabled ? '启用' : '停用'),
+            },
+            {
+                title: '操作', key: 'actions', width: 190,
+                render: r => h(NSpace, { size: 4 }, () => [
+                    h(NButton, { size: 'tiny', secondary: true, onClick: () => openEdit(r) }, () => '编辑'),
+                    h(NButton, { size: 'tiny', secondary: true, onClick: () => toggle(r) }, () => r.enabled ? '停用' : '启用'),
+                    h(NPopconfirm, { onPositiveClick: () => remove(r) }, {
+                        trigger: () => h(NButton, { size: 'tiny', secondary: true, type: 'error' }, () => '删除'),
+                        default: () => '确认删除该规则？',
+                    }),
+                ]),
+            },
+        ]);
+
+        const isIncrease = computed(() => form.alert_strategy === 'increase');
+        const needDenominator = computed(() => form.expr_kind === 'ratio' || form.expr_kind === 'available_ratio');
+
+        return () => h('div', null, [
+            h(NSpace, { justify: 'space-between', align: 'center', style: 'margin-bottom:12px' }, () => [
+                h(NSelect, {
+                    value: dimFilter.value, onUpdateValue: v => dimFilter.value = v,
+                    options: [{ label: '全部维度', value: '' }, ...PROM_DIMENSIONS],
+                    style: 'width:150px', size: 'small',
+                }),
+                h(NButton, { type: 'primary', size: 'small', onClick: openAdd }, () => '+ 添加规则'),
+            ]),
+            h(NDataTable, {
+                columns: columns.value, data: checks.value, bordered: false, size: 'small',
+                loading: loading.value, maxHeight: 'calc(100vh - 220px)',
+                scrollX: _isMobile.value ? 900 : undefined,
+            }),
+            h(NModal, {
+                show: showModal.value, 'onUpdate:show': v => showModal.value = v,
+                preset: 'card', title: editingId.value ? '编辑规则' : '添加规则',
+                style: _isMobile.value ? 'width:95vw' : 'width:860px;max-width:96vw', segmented: true,
+            }, () => h(NForm, { labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 110 }, () => [
+                editingId.value ? null : h(NFormItem, { label: '快速模板' }, () => h(NDropdown, {
+                    trigger: 'click', options: templateOptions.value, onSelect: onTemplateSelect,
+                }, () => h(NButton, { size: 'small', secondary: true, type: 'info' }, () => '从模板套用 ▾'))),
+                h(NGrid, { cols: 2, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '采集目标' }, () => h(NSelect, {
+                        value: form.target_id, onUpdateValue: v => form.target_id = v,
+                        options: targets.value, placeholder: '选择端点',
+                    }))),
+                    h(NGi, null, () => h(NFormItem, { label: '维度' }, () => h(NSelect, {
+                        value: form.dimension, onUpdateValue: v => form.dimension = v, options: PROM_DIMENSIONS,
+                    }))),
+                ]),
+                h(NFormItem, { label: '规则名称' }, () => h(NInput, {
+                    value: form.name, onUpdateValue: v => form.name = v, placeholder: '如 Swap 使用量过高',
+                })),
+                h(NFormItem, { label: '指标名' }, () => h(NInput, {
+                    value: form.metric, onUpdateValue: v => form.metric = v,
+                    placeholder: 'node_memory_SwapFree_bytes',
+                })),
+                h(NGrid, { cols: 2, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '标签过滤' }, () => h(NInput, {
+                        value: form.label_filter, onUpdateValue: v => form.label_filter = v,
+                        placeholder: 'mountpoint="/"，末尾 * 可前缀匹配',
+                    }))),
+                    h(NGi, null, () => h(NFormItem, { label: '聚合' }, () => h(NSelect, {
+                        value: form.aggregate, onUpdateValue: v => form.aggregate = v, options: PROM_AGGREGATES,
+                    }))),
+                ]),
+                h(NFormItem, { label: '表达式' }, () => h(NSelect, {
+                    value: form.expr_kind, onUpdateValue: v => form.expr_kind = v, options: PROM_EXPR_KINDS,
+                })),
+                needDenominator.value ? h(NFormItem, { label: '分母指标' }, () => h(NInput, {
+                    value: form.expr_denominator, onUpdateValue: v => form.expr_denominator = v,
+                    placeholder: 'node_memory_SwapTotal_bytes（结果为百分比，阈值按 % 填）',
+                })) : null,
+                h(NDivider, { style: 'margin:4px 0' }),
+                h(NGrid, { cols: 2, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '告警策略' }, () => h(NSelect, {
+                        value: form.alert_strategy, onUpdateValue: v => form.alert_strategy = v, options: PROM_STRATEGIES,
+                    }))),
+                    h(NGi, null, () => h(NFormItem, { label: '级别' }, () => h(NSelect, {
+                        value: form.severity, onUpdateValue: v => form.severity = v, options: PROM_SEVERITIES,
+                    }))),
+                ]),
+                isIncrease.value
+                    ? h(NGrid, { cols: 2, xGap: 12 }, () => [
+                        h(NGi, null, () => h(NFormItem, { label: '增量阈值' }, () => h(NInput, {
+                            value: form.alert_delta_value, onUpdateValue: v => form.alert_delta_value = v,
+                            placeholder: '相对上次的绝对增量',
+                        }))),
+                        h(NGi, null, () => h(NFormItem, { label: '增幅阈值(%)' }, () => h(NInput, {
+                            value: form.alert_delta_percent, onUpdateValue: v => form.alert_delta_percent = v,
+                            placeholder: '相对上次的百分比',
+                        }))),
+                    ])
+                    : h(NGrid, { cols: 3, xGap: 12 }, () => [
+                        h(NGi, null, () => h(NFormItem, { label: '条件' }, () => h(NSelect, {
+                            value: form.alert_condition, onUpdateValue: v => form.alert_condition = v, options: PROM_CONDITIONS,
+                        }))),
+                        h(NGi, null, () => h(NFormItem, { label: '阈值' }, () => h(NInput, {
+                            value: form.alert_value, onUpdateValue: v => form.alert_value = v, placeholder: '如 80',
+                        }))),
+                        h(NGi, null, () => h(NFormItem, { label: '连续次数' }, () => h(NInputNumber, {
+                            value: form.alert_consecutive, onUpdateValue: v => form.alert_consecutive = v,
+                            min: 1, max: 60, style: 'width:100%',
+                            disabled: form.alert_strategy !== 'sustained',
+                        }))),
+                    ]),
+                h(NGrid, { cols: 2, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '触发通知' }, () => h(NSwitch, {
+                        value: form.notify_enabled, onUpdateValue: v => form.notify_enabled = v,
+                    }))),
+                    h(NGi, null, () => h(NFormItem, { label: '恢复通知' }, () => h(NSwitch, {
+                        value: form.recovery_notify, onUpdateValue: v => form.recovery_notify = v,
+                    }))),
+                ]),
+                h(NFormItem, { label: '消息模板' }, () => h(NInput, {
+                    type: 'textarea', rows: 2, value: form.message_template,
+                    onUpdateValue: v => form.message_template = v,
+                    placeholder: '留空用默认。可用变量：{{target}} {{check}} {{metric}} {{value}} {{threshold}} {{severity}} {{reason}}',
+                })),
+                testResult.value ? h(NFormItem, { label: '测试结果' }, () => (
+                    testResult.value.success
+                        ? h(NAlert, { type: testResult.value.matched ? 'warning' : 'success' }, () =>
+                            '当前值 ' + testResult.value.value + (testResult.value.matched ? ' — 会触发告警' : ' — 不触发') +
+                            '\n' + (testResult.value.reason || ''))
+                        : h(NAlert, { type: 'error' }, () => String(testResult.value.error || '求值失败'))
+                )) : null,
+                h('div', { style: 'display:flex;justify-content:flex-end;gap:8px;margin-top:8px' }, [
+                    h(NButton, { onClick: doTest, loading: testing.value }, () => '测试规则'),
+                    h(NButton, { onClick: () => showModal.value = false }, () => '取消'),
+                    h(NButton, { type: 'primary', onClick: save }, () => '保存'),
+                ]),
+            ])),
+        ]);
+    },
+});
+
+// ---------- 指标告警日志 ----------
+const PromLogsPage = defineComponent({
+    setup() {
+        const logs = ref([]);
+        const total = ref(0);
+        const page = ref(1);
+        const pageSize = ref(50);
+        const dimFilter = ref('');
+        const loading = ref(true);
+
+        async function load() {
+            loading.value = true;
+            try {
+                const params = new URLSearchParams({ page: page.value, page_size: pageSize.value });
+                if (dimFilter.value) params.set('dimension', dimFilter.value);
+                const data = await api.get('/api/prom-checks/logs?' + params.toString());
+                logs.value = data.logs || [];
+                total.value = data.total || 0;
+            } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+        watch([page, dimFilter], load);
+        watch(dimFilter, () => { page.value = 1; });
+
+        const columns = computed(() => [
+            { title: '时间', key: 'detected_at', width: 160, render: r => formatTime(r.detected_at) },
+            {
+                title: '状态', key: 'status', width: 90,
+                render: r => {
+                    const map = { alert: 'error', ok: 'success', error: 'warning', recovered: 'info' };
+                    const label = { alert: '告警', ok: '正常', error: '异常', recovered: '恢复' };
+                    return h(NTag, { size: 'small', type: map[r.status] || 'default', bordered: false },
+                        () => label[r.status] || r.status);
+                },
+            },
+            {
+                title: '维度', key: 'dimension', width: 90,
+                render: r => promDimensionLabel(r.dimension),
+            },
+            { title: '规则', key: 'check_name', ellipsis: { tooltip: true } },
+            { title: '目标', key: 'target_name', width: 130, ellipsis: { tooltip: true } },
+            { title: '指标', key: 'metric', ellipsis: { tooltip: true }, render: r => h('span', { class: 'mono', style: 'font-size:12px' }, r.metric) },
+            { title: '当前值', key: 'value', width: 110, render: r => h('span', { class: 'mono' }, r.value || '-') },
+            { title: '阈值', key: 'threshold', width: 80, render: r => r.threshold || '-' },
+            { title: '说明', key: 'message', ellipsis: { tooltip: true }, render: r => r.error || r.message || '-' },
+        ]);
+
+        return () => h('div', null, [
+            h(NSpace, { justify: 'space-between', align: 'center', style: 'margin-bottom:12px' }, () => [
+                h(NSelect, {
+                    value: dimFilter.value, onUpdateValue: v => dimFilter.value = v,
+                    options: [{ label: '全部维度', value: '' }, ...PROM_DIMENSIONS],
+                    style: 'width:150px', size: 'small',
+                }),
+                h(NButton, { size: 'small', secondary: true, onClick: load }, () => '刷新'),
+            ]),
+            h(NDataTable, {
+                columns: columns.value, data: logs.value, bordered: false, size: 'small',
+                loading: loading.value, maxHeight: 'calc(100vh - 260px)',
+                scrollX: _isMobile.value ? 1100 : undefined,
+            }),
+            h('div', { style: 'display:flex;justify-content:flex-end;margin-top:12px' }, [
+                h(NPagination, {
+                    page: page.value, pageSize: pageSize.value, itemCount: total.value,
+                    onUpdatePage: v => page.value = v,
+                }),
+            ]),
+        ]);
+    },
+});
+
+// ---------- 证书检查 ----------
+const CertChecksPage = defineComponent({
+    setup() {
+        const items = ref([]);
+        const loading = ref(true);
+        const showModal = ref(false);
+        const editingId = ref(null);
+        const testing = ref(false);
+        const testResult = ref(null);
+        const message = useMessage();
+
+        const emptyForm = () => ({
+            name: '', endpoint: '', server_name: '',
+            warn_days: 30, critical_days: 7, interval_sec: 3600, notify_enabled: true,
+        });
+        const form = reactive(emptyForm());
+
+        async function load() {
+            loading.value = true;
+            try { items.value = await api.get('/api/cert-checks'); } catch {}
+            loading.value = false;
+        }
+        onMounted(load);
+
+        function openAdd() {
+            editingId.value = null;
+            testResult.value = null;
+            Object.assign(form, emptyForm());
+            showModal.value = true;
+        }
+        function openEdit(row) {
+            const c = row.check;
+            editingId.value = c.id;
+            testResult.value = null;
+            Object.assign(form, {
+                name: c.name, endpoint: c.endpoint, server_name: c.server_name || '',
+                warn_days: c.warn_days, critical_days: c.critical_days,
+                interval_sec: c.interval_sec, notify_enabled: !!c.notify_enabled,
+            });
+            showModal.value = true;
+        }
+
+        async function save() {
+            if (!form.name.trim() || !form.endpoint.trim()) { message.error('名称与地址不能为空'); return; }
+            try {
+                if (editingId.value) await api.put('/api/cert-checks/' + editingId.value, { ...form });
+                else await api.post('/api/cert-checks', { ...form });
+                message.success('已保存');
+                showModal.value = false;
+                load();
+            } catch (e) { message.error(String(e.message || e)); }
+        }
+
+        async function doTest() {
+            if (!form.endpoint.trim()) { message.error('请先填写地址'); return; }
+            testing.value = true;
+            testResult.value = null;
+            try { testResult.value = await api.post('/api/cert-checks/test', { ...form }); }
+            catch (e) { message.error(String(e.message || e)); }
+            testing.value = false;
+        }
+
+        async function toggle(row) {
+            try { await api.post('/api/cert-checks/' + row.check.id + '/toggle'); load(); }
+            catch (e) { message.error(String(e.message || e)); }
+        }
+        async function remove(row) {
+            try { await api.del('/api/cert-checks/' + row.check.id); message.success('已删除'); load(); }
+            catch (e) { message.error(String(e.message || e)); }
+        }
+
+        const columns = computed(() => [
+            { title: '名称', key: 'name', render: r => r.check.name },
+            { title: '地址', key: 'endpoint', ellipsis: { tooltip: true }, render: r => h('span', { class: 'mono', style: 'font-size:12px' }, r.check.endpoint) },
+            {
+                title: '剩余天数', key: 'days', width: 110,
+                render: r => {
+                    if (!r.last) return h(NText, { depth: 3 }, () => '未检查');
+                    const d = r.last.days_left;
+                    const type = d < 0 ? 'error' : d <= r.check.critical_days ? 'error'
+                        : d <= r.check.warn_days ? 'warning' : 'success';
+                    return h(NTag, { size: 'small', type, bordered: false },
+                        () => d < 0 ? '已过期 ' + (-d) + ' 天' : d + ' 天');
+                },
+            },
+            { title: '到期时间', key: 'not_after', width: 160, render: r => r.last && r.last.not_after ? formatTime(r.last.not_after) : '-' },
+            { title: '签发者', key: 'issuer', ellipsis: { tooltip: true }, render: r => r.last ? (r.last.issuer || '-') : '-' },
+            { title: '阈值', key: 'th', width: 110, render: r => '警告 ' + r.check.warn_days + ' / 严重 ' + r.check.critical_days },
+            {
+                title: '状态', key: 'status', width: 90,
+                render: r => h(NTag, { size: 'small', type: r.running ? 'success' : 'default', bordered: false },
+                    () => r.running ? '运行中' : '已停止'),
+            },
+            {
+                title: '操作', key: 'actions', width: 190,
+                render: r => h(NSpace, { size: 4 }, () => [
+                    h(NButton, { size: 'tiny', secondary: true, onClick: () => openEdit(r) }, () => '编辑'),
+                    h(NButton, { size: 'tiny', secondary: true, onClick: () => toggle(r) }, () => r.check.enabled ? '停用' : '启用'),
+                    h(NPopconfirm, { onPositiveClick: () => remove(r) }, {
+                        trigger: () => h(NButton, { size: 'tiny', secondary: true, type: 'error' }, () => '删除'),
+                        default: () => '确认删除该检查？',
+                    }),
+                ]),
+            },
+        ]);
+
+        return () => h('div', null, [
+            h(NSpace, { justify: 'space-between', align: 'center', style: 'margin-bottom:12px' }, () => [
+                h(NText, { depth: 3, style: 'font-size:13px' },
+                    () => '证书过期是能提前几十天预知的故障，建立一次 TLS 握手即可检查，不影响业务'),
+                h(NButton, { type: 'primary', size: 'small', onClick: openAdd }, () => '+ 添加'),
+            ]),
+            h(NDataTable, {
+                columns: columns.value, data: items.value, bordered: false, size: 'small',
+                loading: loading.value, maxHeight: 'calc(100vh - 220px)',
+                scrollX: _isMobile.value ? 900 : undefined,
+            }),
+            h(NModal, {
+                show: showModal.value, 'onUpdate:show': v => showModal.value = v,
+                preset: 'card', title: editingId.value ? '编辑证书检查' : '添加证书检查',
+                style: _isMobile.value ? 'width:95vw' : 'width:620px;max-width:96vw', segmented: true,
+            }, () => h(NForm, { labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 110 }, () => [
+                h(NFormItem, { label: '名称' }, () => h(NInput, {
+                    value: form.name, onUpdateValue: v => form.name = v, placeholder: '如 Coolify 控制台',
+                })),
+                h(NFormItem, { label: '地址' }, () => h(NInput, {
+                    value: form.endpoint, onUpdateValue: v => form.endpoint = v,
+                    placeholder: 'example.com:443，也可直接填 https://example.com',
+                })),
+                h(NFormItem, { label: 'SNI' }, () => h(NInput, {
+                    value: form.server_name, onUpdateValue: v => form.server_name = v,
+                    placeholder: '留空则用地址中的域名',
+                })),
+                h(NGrid, { cols: 3, xGap: 12 }, () => [
+                    h(NGi, null, () => h(NFormItem, { label: '警告(天)' }, () => h(NInputNumber, {
+                        value: form.warn_days, onUpdateValue: v => form.warn_days = v, min: 1, max: 365, style: 'width:100%',
+                    }))),
+                    h(NGi, null, () => h(NFormItem, { label: '严重(天)' }, () => h(NInputNumber, {
+                        value: form.critical_days, onUpdateValue: v => form.critical_days = v, min: 1, max: 180, style: 'width:100%',
+                    }))),
+                    h(NGi, null, () => h(NFormItem, { label: '间隔(秒)' }, () => h(NInputNumber, {
+                        value: form.interval_sec, onUpdateValue: v => form.interval_sec = v, min: 60, max: 86400, style: 'width:100%',
+                    }))),
+                ]),
+                h(NFormItem, { label: '触发通知' }, () => h(NSwitch, {
+                    value: form.notify_enabled, onUpdateValue: v => form.notify_enabled = v,
+                })),
+                testResult.value ? h(NFormItem, { label: '测试结果' }, () => (
+                    testResult.value.success
+                        ? h(NAlert, { type: testResult.value.status === 'ok' ? 'success' : 'warning' }, () =>
+                            '剩余 ' + testResult.value.days_left + ' 天，签发者：' + (testResult.value.issuer || '-'))
+                        : h(NAlert, { type: 'error' }, () => String(testResult.value.error || '检查失败'))
+                )) : null,
+                h('div', { style: 'display:flex;justify-content:flex-end;gap:8px;margin-top:8px' }, [
+                    h(NButton, { onClick: doTest, loading: testing.value }, () => '立即检查'),
+                    h(NButton, { onClick: () => showModal.value = false }, () => '取消'),
+                    h(NButton, { type: 'primary', onClick: save }, () => '保存'),
+                ]),
+            ])),
+        ]);
+    },
+});
+
 const SettingsPage = defineComponent({
     setup() {
         const settings = reactive({
@@ -3715,6 +4726,7 @@ const AppLayout = defineComponent({
         const menuOptions = computed(() => [
             { label: '仪表盘', key: 'dashboard' },
             { label: '健康检查', key: 'g-healthcheck' },
+            { label: '指标监控', key: 'g-metrics' },
             { label: 'MySQL', key: 'g-mysql' },
             { label: 'Cloud Logging', key: 'g-cloud-logging' },
             isUISettingEnabled('show_rocketmq_menu') ? { label: 'RocketMQ', key: 'g-rocketmq' } : null,
@@ -3724,6 +4736,12 @@ const AppLayout = defineComponent({
         ].filter(Boolean));
 
         const groupTabs = {
+            'g-metrics': [
+                { label: '采集目标', key: 'prom-targets' },
+                { label: '告警规则', key: 'prom-checks' },
+                { label: '告警日志', key: 'prom-logs' },
+                { label: '证书检查', key: 'cert-checks' },
+            ],
             'g-mysql': [
                 { label: '数据库', key: 'databases' },
                 { label: '慢SQL', key: 'slow-queries' },
@@ -3895,6 +4913,10 @@ const routes = [
     { path: '/health-checks-logs', component: HealthCheckLogsPage },
     { path: '/grafana', component: GrafanaPage },
     { path: '/grafana-alerts', component: GrafanaAlertsPage },
+    { path: '/prom-targets', component: PromTargetsPage },
+    { path: '/prom-checks', component: PromChecksPage },
+    { path: '/prom-logs', component: PromLogsPage },
+    { path: '/cert-checks', component: CertChecksPage },
     { path: '/audit-logs', component: AuditLogsPage },
     { path: '/settings', component: SettingsPage },
 ];

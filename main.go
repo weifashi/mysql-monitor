@@ -135,13 +135,23 @@ func main() {
 	}
 
 	// Cloud Logging monitors
+	promMgr := monitor.NewPromManager(s, dispatcher, eventBus)
+	if err := promMgr.StartAll(); err != nil {
+		log.Printf("failed to start prometheus monitors: %v", err)
+	}
+
+	certMgr := monitor.NewCertManager(s, dispatcher, eventBus)
+	if err := certMgr.StartAll(); err != nil {
+		log.Printf("failed to start certificate monitors: %v", err)
+	}
+
 	cloudLoggingMgr := monitor.NewCloudLoggingManager(s, dispatcher, eventBus)
 	if err := cloudLoggingMgr.StartAll(); err != nil {
 		log.Printf("start cloud logging monitors: %v", err)
 	}
 
 	// Web server
-	srv := web.NewServer(s, authStore, mgr, rocketMQMgr, healthCheckMgr, grafanaMgr, customSQLMgr, cloudLoggingMgr, dispatcher, eventBus, publicBaseURL)
+	srv := web.NewServer(s, authStore, mgr, rocketMQMgr, healthCheckMgr, grafanaMgr, customSQLMgr, cloudLoggingMgr, promMgr, certMgr, dispatcher, eventBus, publicBaseURL)
 	httpSrv := &http.Server{
 		Addr:    listenAddr,
 		Handler: srv.Routes(),
@@ -160,6 +170,8 @@ func main() {
 		grafanaMgr.StopAll()
 		customSQLMgr.StopAll()
 		cloudLoggingMgr.StopAll()
+		promMgr.StopAll()
+		certMgr.StopAll()
 		cancel()
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()

@@ -27,6 +27,8 @@ type Server struct {
 	grafanaMgr      *monitor.GrafanaManager
 	customSQLMgr    *monitor.CustomSQLManager
 	cloudLoggingMgr *monitor.CloudLoggingManager
+	promMgr         *monitor.PromManager
+	certMgr         *monitor.CertManager
 	dispatcher      *notify.Dispatcher
 	hub             *Hub
 	staticHandler   http.Handler
@@ -35,7 +37,7 @@ type Server struct {
 	publicBaseURL string
 }
 
-func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *monitor.RocketMQManager, hc *monitor.HealthCheckManager, gm *monitor.GrafanaManager, csql *monitor.CustomSQLManager, cl *monitor.CloudLoggingManager, d *notify.Dispatcher, eb *monitor.EventBus, publicBaseURL string) *Server {
+func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *monitor.RocketMQManager, hc *monitor.HealthCheckManager, gm *monitor.GrafanaManager, csql *monitor.CustomSQLManager, cl *monitor.CloudLoggingManager, pm *monitor.PromManager, cm *monitor.CertManager, d *notify.Dispatcher, eb *monitor.EventBus, publicBaseURL string) *Server {
 	hub := NewHub(eb)
 	go hub.Run()
 	staticSub, _ := fs.Sub(staticFS, "static")
@@ -44,7 +46,7 @@ func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *mo
 		appVersion = defaultAppVersion
 	}
 	return &Server{
-		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, grafanaMgr: gm, customSQLMgr: csql, cloudLoggingMgr: cl, dispatcher: d, hub: hub,
+		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, grafanaMgr: gm, customSQLMgr: csql, cloudLoggingMgr: cl, promMgr: pm, certMgr: cm, dispatcher: d, hub: hub,
 		staticHandler: http.StripPrefix("/", noCacheStaticAssets(http.FileServer(http.FS(staticSub)))),
 		appVersion:    appVersion,
 		publicBaseURL: strings.TrimSpace(strings.TrimSuffix(publicBaseURL, "/")),
@@ -169,6 +171,32 @@ func (s *Server) Routes() http.Handler {
 	api.HandleFunc("POST /api/health-checks/{id}/toggle", s.apiHealthCheckToggle)
 	api.HandleFunc("POST /api/health-checks/{id}/test", s.apiHealthCheckTest)
 	api.HandleFunc("GET /api/health-checks/logs", s.apiHealthCheckLogs)
+
+	// Prometheus 端点监控：一套采集器覆盖主机 / 容器 / 中间件 / 应用 / 业务五个维度
+	api.HandleFunc("GET /api/prom-targets", s.apiPromTargetList)
+	api.HandleFunc("POST /api/prom-targets", s.apiPromTargetCreate)
+	api.HandleFunc("PUT /api/prom-targets/{id}", s.apiPromTargetUpdate)
+	api.HandleFunc("DELETE /api/prom-targets/{id}", s.apiPromTargetDelete)
+	api.HandleFunc("POST /api/prom-targets/{id}/toggle", s.apiPromTargetToggle)
+	api.HandleFunc("POST /api/prom-targets/test", s.apiPromTargetTest)
+
+	api.HandleFunc("GET /api/prom-checks", s.apiPromCheckList)
+	api.HandleFunc("POST /api/prom-checks", s.apiPromCheckCreate)
+	api.HandleFunc("PUT /api/prom-checks/{id}", s.apiPromCheckUpdate)
+	api.HandleFunc("DELETE /api/prom-checks/{id}", s.apiPromCheckDelete)
+	api.HandleFunc("POST /api/prom-checks/{id}/toggle", s.apiPromCheckToggle)
+	api.HandleFunc("POST /api/prom-checks/test", s.apiPromCheckTest)
+	api.HandleFunc("GET /api/prom-checks/logs", s.apiPromAlertLogs)
+	api.HandleFunc("GET /api/prom-dimensions", s.apiPromDimensionSummary)
+
+	// TLS 证书到期检查
+	api.HandleFunc("GET /api/cert-checks", s.apiCertCheckList)
+	api.HandleFunc("POST /api/cert-checks", s.apiCertCheckCreate)
+	api.HandleFunc("PUT /api/cert-checks/{id}", s.apiCertCheckUpdate)
+	api.HandleFunc("DELETE /api/cert-checks/{id}", s.apiCertCheckDelete)
+	api.HandleFunc("POST /api/cert-checks/{id}/toggle", s.apiCertCheckToggle)
+	api.HandleFunc("POST /api/cert-checks/test", s.apiCertCheckTest)
+	api.HandleFunc("GET /api/cert-checks/logs", s.apiCertCheckLogs)
 
 	// Grafana
 	api.HandleFunc("GET /api/grafana", s.apiGrafanaList)

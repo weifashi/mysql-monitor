@@ -308,3 +308,110 @@ CREATE TABLE IF NOT EXISTS custom_sql_logs (
 CREATE INDEX IF NOT EXISTS idx_custom_sql_logs_detected ON custom_sql_logs(detected_at);
 CREATE INDEX IF NOT EXISTS idx_custom_sql_logs_check ON custom_sql_logs(check_id, detected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_custom_sql_checks_db ON custom_sql_checks(database_id);
+
+-- ============================================================
+-- Prometheus 端点监控（覆盖主机 / 容器 / 中间件 / 应用 / 业务五个维度）
+-- 采集对象统一为 Prometheus 文本格式端点：
+--   node_exporter      主机资源 USE
+--   cAdvisor           容器状态与资源
+--   应用 /metrics      RED + 连接池 + 业务指标
+--   redis_exporter 等  中间件
+-- ============================================================
+CREATE TABLE IF NOT EXISTS prom_targets (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT    NOT NULL,
+    url          TEXT    NOT NULL,
+    kind         TEXT    NOT NULL DEFAULT 'custom',
+    headers_json TEXT    NOT NULL DEFAULT '{}',
+    timeout_sec  INTEGER NOT NULL DEFAULT 10,
+    interval_sec INTEGER NOT NULL DEFAULT 30,
+    labels_json  TEXT    NOT NULL DEFAULT '{}',
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    created_at   DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at   DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS prom_checks (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    target_id           INTEGER NOT NULL,
+    name                TEXT    NOT NULL,
+    dimension           TEXT    NOT NULL DEFAULT 'custom',
+    metric              TEXT    NOT NULL,
+    label_filter        TEXT    NOT NULL DEFAULT '',
+    aggregate           TEXT    NOT NULL DEFAULT 'last',
+    expr_kind           TEXT    NOT NULL DEFAULT 'raw',
+    expr_denominator    TEXT    NOT NULL DEFAULT '',
+    alert_strategy      TEXT    NOT NULL DEFAULT 'threshold',
+    alert_condition     TEXT    NOT NULL DEFAULT 'gt',
+    alert_value         TEXT    NOT NULL DEFAULT '',
+    alert_delta_value   TEXT    NOT NULL DEFAULT '',
+    alert_delta_percent TEXT    NOT NULL DEFAULT '',
+    alert_consecutive   INTEGER NOT NULL DEFAULT 1,
+    severity            TEXT    NOT NULL DEFAULT 'warning',
+    notify_enabled      INTEGER NOT NULL DEFAULT 1,
+    recovery_notify     INTEGER NOT NULL DEFAULT 1,
+    message_template    TEXT    NOT NULL DEFAULT '',
+    enabled             INTEGER NOT NULL DEFAULT 1,
+    created_at          DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at          DATETIME NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (target_id) REFERENCES prom_targets(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS prom_alert_logs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_id    INTEGER NOT NULL,
+    check_name  TEXT    NOT NULL DEFAULT '',
+    target_id   INTEGER NOT NULL,
+    target_name TEXT    NOT NULL DEFAULT '',
+    dimension   TEXT    NOT NULL DEFAULT '',
+    severity    TEXT    NOT NULL DEFAULT '',
+    status      TEXT    NOT NULL DEFAULT '',
+    metric      TEXT    NOT NULL DEFAULT '',
+    value       TEXT    NOT NULL DEFAULT '',
+    threshold   TEXT    NOT NULL DEFAULT '',
+    message     TEXT    NOT NULL DEFAULT '',
+    error       TEXT    NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    detected_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (check_id) REFERENCES prom_checks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_prom_alert_logs_detected ON prom_alert_logs(detected_at);
+CREATE INDEX IF NOT EXISTS idx_prom_alert_logs_check ON prom_alert_logs(check_id, detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_prom_checks_target ON prom_checks(target_id);
+
+-- ============================================================
+-- 证书与依赖到期监控（维度 G）
+-- ============================================================
+CREATE TABLE IF NOT EXISTS cert_checks (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    name              TEXT    NOT NULL,
+    endpoint          TEXT    NOT NULL,
+    server_name       TEXT    NOT NULL DEFAULT '',
+    warn_days         INTEGER NOT NULL DEFAULT 30,
+    critical_days     INTEGER NOT NULL DEFAULT 7,
+    interval_sec      INTEGER NOT NULL DEFAULT 3600,
+    notify_enabled    INTEGER NOT NULL DEFAULT 1,
+    enabled           INTEGER NOT NULL DEFAULT 1,
+    created_at        DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at        DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS cert_check_logs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_id     INTEGER NOT NULL,
+    check_name   TEXT    NOT NULL DEFAULT '',
+    endpoint     TEXT    NOT NULL DEFAULT '',
+    status       TEXT    NOT NULL DEFAULT '',
+    issuer       TEXT    NOT NULL DEFAULT '',
+    subject      TEXT    NOT NULL DEFAULT '',
+    not_after    DATETIME,
+    days_left    INTEGER NOT NULL DEFAULT 0,
+    message      TEXT    NOT NULL DEFAULT '',
+    error        TEXT    NOT NULL DEFAULT '',
+    detected_at  DATETIME NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (check_id) REFERENCES cert_checks(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_cert_check_logs_detected ON cert_check_logs(detected_at);
+CREATE INDEX IF NOT EXISTS idx_cert_check_logs_check ON cert_check_logs(check_id, detected_at DESC);
