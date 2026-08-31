@@ -78,7 +78,10 @@ const _uiSettings = reactive({
     show_grafana_menu: '',
 });
 
-// 用上一次的结果起手，让刷新后的首帧就是正确的
+// 服务端的值是否已经拿到。缓存只是上一次的快照，可能已经过期。
+const _uiSettingsLoaded = ref(false);
+
+// 用上一次的结果起手，让刷新后的首帧尽量就是对的
 try {
     const cached = JSON.parse(localStorage.getItem(UI_SETTINGS_CACHE_KEY) || 'null');
     if (cached && typeof cached === 'object') {
@@ -95,14 +98,20 @@ function applyUISettings(settings) {
             _uiSettings[key] = settings[key] || '0';
         }
     }
+    _uiSettingsLoaded.value = true;
     try {
         localStorage.setItem(UI_SETTINGS_CACHE_KEY, JSON.stringify({ ..._uiSettings }));
     } catch {}
 }
 
 function isUISettingEnabled(key) {
-    // 首次访问、还没有缓存时按"不显示"处理：晚一点出现，好过出现了又消失
-    if (!_uiSettings[key]) return false;
+    // 对本地缓存做不对称信任，这样菜单在两个方向上都不会闪：
+    //   缓存说"关" → 立刻隐藏。最坏情况是一个其实开着的菜单晚 100ms 出现。
+    //   缓存说"开" → 先不显示，等服务端确认。否则服务端已经关掉、而缓存还是
+    //                上次的"开"时，首帧会把它渲染出来再收回去——正是要修的那个闪烁。
+    // 只有服务端确认过的"开"才显示。
+    if (_uiSettings[key] === '0') return false;
+    if (!_uiSettingsLoaded.value) return false;
     return _uiSettings[key] !== '0';
 }
 
