@@ -1,7 +1,10 @@
 package web
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -16,7 +19,38 @@ import (
 //go:embed static
 var staticFS embed.FS
 
+// 静态资源实在算不出哈希时的兜底，正常路径用不到。
 const defaultAppVersion = "20260621163340"
+
+// staticAssetsVersion 用静态资源内容算出版本串，拼进 index.html 的
+// <script src="/static/app.js?v=…">。
+//
+// 原先这里是写死的常量：内容改了 URL 却不变，浏览器和中间 CDN 都可能
+// 继续用旧的 app.js —— 部署完看到的还是老界面，而且没有任何报错。
+// 靠人记得改常量或设 APP_VERSION 不可靠，所以直接由内容推导：
+// 资源一变版本串就变，缓存自然失效。
+func staticAssetsVersion(fsys fs.FS) string {
+	h := sha256.New()
+	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		f, openErr := fsys.Open(path)
+		if openErr != nil {
+			return openErr
+		}
+		defer f.Close()
+		if _, wErr := io.WriteString(h, path); wErr != nil {
+			return wErr
+		}
+		_, cErr := io.Copy(h, f)
+		return cErr
+	})
+	if err != nil {
+		return defaultAppVersion
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}
 
 type Server struct {
 	store           *store.Store
@@ -43,7 +77,7 @@ func NewServer(s *store.Store, a *auth.SessionStore, m *monitor.Manager, rmq *mo
 	staticSub, _ := fs.Sub(staticFS, "static")
 	appVersion := strings.TrimSpace(os.Getenv("APP_VERSION"))
 	if appVersion == "" {
-		appVersion = defaultAppVersion
+		appVersion = staticAssetsVersion(staticSub)
 	}
 	return &Server{
 		store: s, auth: a, manager: m, rocketMQMgr: rmq, healthCheckMgr: hc, grafanaMgr: gm, customSQLMgr: csql, cloudLoggingMgr: cl, promMgr: pm, certMgr: cm, dispatcher: d, hub: hub,
