@@ -253,6 +253,26 @@ func TestEvaluatePromRuleIncrease(t *testing.T) {
 	}
 }
 
+func TestEvaluatePromRuleIncreaseZeroDelta(t *testing.T) {
+	// 阈值填 0 是"任何增长都报"的直觉写法。此时 delta==0 不能命中，
+	// 否则像 node_vmstat_oom_kill 这种长期不变的计数器会每个周期都告警。
+	zero := &store.PromCheck{AlertStrategy: "increase", AlertDeltaValue: "0"}
+	st := &promMetricState{LastValue: 0, HasLast: true}
+	if matched, _ := evaluatePromRule(0, zero, st); matched {
+		t.Error("zero delta must not alert even when threshold is 0")
+	}
+	if matched, _ := evaluatePromRule(1, zero, st); !matched {
+		t.Error("a real increase should alert when threshold is 0")
+	}
+
+	// 计数器重置（进程重启）会让 delta 变负，同样不该报增长
+	neg := &store.PromCheck{AlertStrategy: "increase", AlertDeltaValue: "100"}
+	st2 := &promMetricState{LastValue: 5000, HasLast: true}
+	if matched, _ := evaluatePromRule(10, neg, st2); matched {
+		t.Error("counter reset (negative delta) must not alert")
+	}
+}
+
 func TestNormalizeCertEndpoint(t *testing.T) {
 	cases := map[string]string{
 		"example.com":                    "example.com:443",

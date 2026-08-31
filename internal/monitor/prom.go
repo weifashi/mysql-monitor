@@ -667,6 +667,12 @@ func evaluatePromRule(value float64, check *store.PromCheck, st *promMetricState
 		}
 		delta := value - st.LastValue
 
+		// 增长策略必须真的增长了才算命中。否则把阈值填 0（"任何增长都报"的直觉写法）
+		// 会让 delta==0 满足 delta >= 0，计数器每个采集周期都告警一次。
+		if delta <= 0 {
+			return false, fmt.Sprintf("无增长（增量 %s）", formatPromValue(delta))
+		}
+
 		if dv := strings.TrimSpace(check.AlertDeltaValue); dv != "" {
 			limit, err := strconv.ParseFloat(dv, 64)
 			if err == nil && delta >= limit {
