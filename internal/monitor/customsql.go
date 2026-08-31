@@ -1006,7 +1006,7 @@ func ValidateCustomSQL(sqlText string) error {
 	if strings.Contains(stmt, ";") {
 		return fmt.Errorf("只允许单条查询 SQL")
 	}
-	lower := strings.ToLower(strings.TrimSpace(stmt))
+	lower := stripSQLStringLiterals(strings.ToLower(strings.TrimSpace(stmt)))
 	tokens := customSQLTokens(lower)
 	if len(tokens) == 0 {
 		return fmt.Errorf("SQL 不能为空")
@@ -1082,6 +1082,45 @@ func customSQLLooksSingleRowAggregate(lower string) bool {
 }
 
 var customSQLSpaceRE = regexp.MustCompile(`\s+`)
+
+// stripSQLStringLiterals 把引号内的内容清空，只保留一对空引号占位。
+//
+// 关键字检查是按 token 做的，而 tokenizer 按非字母数字切分，
+// 所以 `command <> 'Sleep'` 会切出 sleep 这个 token，被当成调用了 SLEEP()
+// 而拒绝——但它只是个字符串常量。MySQL 监控 SQL 里拿 'Sleep' / 'update'
+// 之类的状态值做比较非常常见，不排除字面量会大面积误伤。
+func stripSQLStringLiterals(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		c := runes[i]
+		if c != '\'' && c != '"' {
+			b.WriteRune(c)
+			continue
+		}
+		quote := c
+		b.WriteRune(quote)
+		i++
+		for i < len(runes) {
+			if runes[i] == '\\' { // 反斜杠转义，跳过下一个字符
+				i += 2
+				continue
+			}
+			if runes[i] == quote {
+				// '' 是 SQL 里表示引号自身的写法，不算结束
+				if i+1 < len(runes) && runes[i+1] == quote {
+					i += 2
+					continue
+				}
+				break
+			}
+			i++
+		}
+		b.WriteRune(quote)
+	}
+	return b.String()
+}
 
 func customSQLTokens(lower string) []string {
 	parts := strings.FieldsFunc(lower, func(r rune) bool {

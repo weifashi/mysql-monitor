@@ -147,3 +147,31 @@ func TestCustomSQLMetricSourceSignatureSeparatesSQLSources(t *testing.T) {
 		t.Fatalf("different MySQL backends should not share a metric baseline key")
 	}
 }
+
+func TestValidateCustomSQLStringLiteralsAreNotKeywords(t *testing.T) {
+	// 字符串常量里出现关键字不该被当成真的调用了那个语句。
+	// MySQL 监控里 command <> 'Sleep' 是最常见的写法之一。
+	ok := []string{
+		"SELECT COUNT(*) AS active FROM information_schema.processlist WHERE command <> 'Sleep'",
+		"SELECT COUNT(*) AS n FROM information_schema.processlist WHERE state = 'update'",
+		"SELECT COUNT(*) AS replicas FROM information_schema.processlist WHERE command LIKE 'Binlog Dump%'",
+		"SELECT COUNT(*) AS n FROM t WHERE note = 'it''s a drop'",
+	}
+	for _, s := range ok {
+		if err := ValidateCustomSQL(s); err != nil {
+			t.Errorf("应放行但被拒: %s\n  原因: %v", s, err)
+		}
+	}
+
+	// 真正的写操作和 SLEEP() 调用仍然要拦住
+	bad := []string{
+		"SELECT SLEEP(5) AS x",
+		"DELETE FROM orders",
+		"SELECT id FROM t WHERE 1=1 FOR UPDATE LIMIT 1",
+	}
+	for _, s := range bad {
+		if err := ValidateCustomSQL(s); err == nil {
+			t.Errorf("应拦截却放行: %s", s)
+		}
+	}
+}

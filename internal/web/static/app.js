@@ -822,7 +822,7 @@ const CUSTOM_SQL_TEMPLATES = [
         items: [
             {
                 name: 'InnoDB 缓冲池命中率 < 99%',
-                sql_text: "SELECT ROUND(100 - (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_reads') * 100 / NULLIF((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_read_requests'), 0), 4) AS hit_ratio",
+                sql_text: "SELECT ROUND(100 - (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_reads') * 100 / NULLIF((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_read_requests'), 0), 4) AS hit_ratio LIMIT 1",
                 result_field: 'hit_ratio',
                 condition: 'lt', expected_value: '99', alert_strategy: 'threshold',
                 interval_sec: 60,
@@ -830,7 +830,7 @@ const CUSTOM_SQL_TEMPLATES = [
             },
             {
                 name: '缓冲池使用率 > 98%（容量已满）',
-                sql_text: "SELECT ROUND((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_pages_data') * 100 / NULLIF((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_pages_total'), 0), 2) AS used_pct",
+                sql_text: "SELECT ROUND((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_pages_data') * 100 / NULLIF((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_pages_total'), 0), 2) AS used_pct LIMIT 1",
                 result_field: 'used_pct',
                 condition: 'gt', expected_value: '98', alert_strategy: 'sustained', alert_consecutive: 5,
                 interval_sec: 60,
@@ -838,7 +838,7 @@ const CUSTOM_SQL_TEMPLATES = [
             },
             {
                 name: '连接数占 max_connections 超 70%',
-                sql_text: "SELECT ROUND((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Threads_connected') * 100 / @@max_connections, 2) AS conn_pct",
+                sql_text: "SELECT ROUND((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Threads_connected') * 100 / @@max_connections, 2) AS conn_pct LIMIT 1",
                 result_field: 'conn_pct',
                 condition: 'gt', expected_value: '70', alert_strategy: 'sustained', alert_consecutive: 3,
                 interval_sec: 30,
@@ -846,7 +846,7 @@ const CUSTOM_SQL_TEMPLATES = [
             },
             {
                 name: '连接被拒绝数增长（Aborted_connects）',
-                sql_text: "SELECT VARIABLE_VALUE AS aborted FROM performance_schema.global_status WHERE VARIABLE_NAME='Aborted_connects'",
+                sql_text: "SELECT VARIABLE_VALUE AS aborted FROM performance_schema.global_status WHERE VARIABLE_NAME='Aborted_connects' LIMIT 1",
                 result_field: 'aborted',
                 alert_strategy: 'increase', alert_delta_value: '10',
                 interval_sec: 60,
@@ -854,7 +854,7 @@ const CUSTOM_SQL_TEMPLATES = [
             },
             {
                 name: '慢查询计数增长',
-                sql_text: "SELECT VARIABLE_VALUE AS slow FROM performance_schema.global_status WHERE VARIABLE_NAME='Slow_queries'",
+                sql_text: "SELECT VARIABLE_VALUE AS slow FROM performance_schema.global_status WHERE VARIABLE_NAME='Slow_queries' LIMIT 1",
                 result_field: 'slow',
                 alert_strategy: 'increase', alert_delta_value: '20',
                 interval_sec: 60,
@@ -862,7 +862,7 @@ const CUSTOM_SQL_TEMPLATES = [
             },
             {
                 name: '行锁等待数增长',
-                sql_text: "SELECT VARIABLE_VALUE AS lock_waits FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_row_lock_waits'",
+                sql_text: "SELECT VARIABLE_VALUE AS lock_waits FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_row_lock_waits' LIMIT 1",
                 result_field: 'lock_waits',
                 alert_strategy: 'increase', alert_delta_value: '50',
                 interval_sec: 60,
@@ -870,7 +870,7 @@ const CUSTOM_SQL_TEMPLATES = [
             },
             {
                 name: '平均行锁等待时长 > 200ms',
-                sql_text: "SELECT VARIABLE_VALUE AS avg_ms FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_row_lock_time_avg'",
+                sql_text: "SELECT VARIABLE_VALUE AS avg_ms FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_row_lock_time_avg' LIMIT 1",
                 result_field: 'avg_ms',
                 condition: 'gt', expected_value: '200', alert_strategy: 'sustained', alert_consecutive: 3,
                 interval_sec: 60,
