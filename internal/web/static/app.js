@@ -69,10 +69,24 @@ const api = {
 // ============================================================
 // UI settings
 // ============================================================
+const UI_SETTINGS_CACHE_KEY = 'ops-sentinel.uiSettings';
+
+// 空串表示"还没拿到设置"。不能像以前那样默认 '1'——那样刷新时会先把
+// 被关掉的菜单渲染出来，等 /api/settings 回来再收回去，肉眼可见地闪一下。
 const _uiSettings = reactive({
-    show_rocketmq_menu: '1',
-    show_grafana_menu: '1',
+    show_rocketmq_menu: '',
+    show_grafana_menu: '',
 });
+
+// 用上一次的结果起手，让刷新后的首帧就是正确的
+try {
+    const cached = JSON.parse(localStorage.getItem(UI_SETTINGS_CACHE_KEY) || 'null');
+    if (cached && typeof cached === 'object') {
+        for (const key of Object.keys(_uiSettings)) {
+            if (typeof cached[key] === 'string') _uiSettings[key] = cached[key];
+        }
+    }
+} catch {}
 
 function applyUISettings(settings) {
     if (!settings) return;
@@ -81,9 +95,14 @@ function applyUISettings(settings) {
             _uiSettings[key] = settings[key] || '0';
         }
     }
+    try {
+        localStorage.setItem(UI_SETTINGS_CACHE_KEY, JSON.stringify({ ..._uiSettings }));
+    } catch {}
 }
 
 function isUISettingEnabled(key) {
+    // 首次访问、还没有缓存时按"不显示"处理：晚一点出现，好过出现了又消失
+    if (!_uiSettings[key]) return false;
     return _uiSettings[key] !== '0';
 }
 
