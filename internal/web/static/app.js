@@ -1728,11 +1728,16 @@ const CustomSQLLogsPage = defineComponent({
 
         const columns = useColumns([
             { title: '检测时间', key: 'detected_at', width: 140, render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => formatTime(row.detected_at)) },
-            { title: '规则', key: 'check_name', width: 140 },
-            { title: '数据库', key: 'database_name', width: 110, _hideOnMobile: true },
+            // 规则名通常带着"<数据库> · "前缀（与数据库列重复），去掉后单行就放得下
+            { title: '规则', key: 'check_name', width: 230, ellipsis: { tooltip: true }, render: row => {
+                const n = row.check_name || '';
+                const db = row.database_name || '';
+                return db && n.startsWith(db + ' · ') ? n.slice(db.length + 3) : n;
+            } },
+            { title: '数据库', key: 'database_name', width: 150, ellipsis: { tooltip: true }, _hideOnMobile: true },
             { title: '状态', key: 'status', width: 80, render: row => row.status === 'alert' ? h(NTag, { type: 'error', size: 'small' }, () => '告警') : row.status === 'error' ? h(NTag, { type: 'warning', size: 'small' }, () => '错误') : h(NTag, { type: 'success', size: 'small' }, () => '正常') },
             { title: '当前值', key: 'value', width: 300, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;word-break:break-word;line-height:1.55' }, String(row.value || '').replace(/;\s*/g, ';\n')) },
-            { title: '条件', key: 'condition', width: 130, _hideOnMobile: true, render: row => (row.condition || '') + (row.expected_value ? ' ' + row.expected_value : '') },
+            { title: '条件', key: 'condition', width: 90, _hideOnMobile: true, render: row => (row.condition || '') + (row.expected_value ? ' ' + row.expected_value : '') },
             { title: '结果', key: 'message', ellipsis: { tooltip: true }, render: row => row.error || row.message },
             { title: '耗时', key: 'duration_ms', width: 80, _hideOnMobile: true, render: row => row.duration_ms + 'ms' },
         ]);
@@ -1755,7 +1760,7 @@ const CustomSQLLogsPage = defineComponent({
                     h(NSelect, { value: filterCheck.value, 'onUpdate:value': v => { filterCheck.value = v; page.value = 1; }, options: checkOptions.value, style: _isMobile.value ? 'flex:1;min-width:0' : 'width:220px', placeholder: '筛选规则', clearable: true, size: 'small' }),
                 ]),
             ]),
-            h('div', { class: 'log-page-table' }, [
+            h('div', { class: 'log-page-table', style: 'max-width:1280px' }, [
                 h(NDataTable, { columns: columns.value, data: data.value.data || [], bordered: false, size: 'small', loading: loading.value, flexHeight: true, style: 'height:100%', scrollX: _isMobile.value ? 620 : undefined }),
             ]),
             data.value.total_pages > 1 ? h('div', { class: 'log-page-pagination center' }, [
