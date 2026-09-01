@@ -4797,21 +4797,29 @@ const AppLayout = defineComponent({
 
         const groupTabs = {
             'g-rules': [
-                { label: '采集目标', key: 'prom-targets' },
-                { label: '告警规则', key: 'prom-checks' },
-                { label: '评估流水', key: 'prom-logs' },
-                { label: '证书检查', key: 'cert-checks' },
-                { label: '健康检查', key: 'health-checks' },
-                { label: '检查日志', key: 'health-checks-logs' },
-                { label: '数据库', key: 'databases' },
-                { label: '慢SQL', key: 'slow-queries' },
-                { label: '已忽略SQL', key: 'ignored-sql' },
-                { label: '自定义SQL', key: 'custom-sql' },
-                { label: 'SQL结果', key: 'custom-sql-logs' },
-                { label: 'CL配置', key: 'cloud-logging-configs' },
-                { label: 'CL查询', key: 'cloud-logging-query' },
-                { label: 'CL监控', key: 'cloud-logging-checks' },
-                { label: 'CL日志', key: 'cloud-logging-logs' },
+                { type: 'group', label: '指标', key: 'sec-prom', children: [
+                    { label: '采集目标', key: 'prom-targets' },
+                    { label: '告警规则', key: 'prom-checks' },
+                    { label: '评估流水', key: 'prom-logs' },
+                ] },
+                { type: 'group', label: '证书与站点', key: 'sec-edge', children: [
+                    { label: '证书检查', key: 'cert-checks' },
+                    { label: '健康检查', key: 'health-checks' },
+                    { label: '检查日志', key: 'health-checks-logs' },
+                ] },
+                { type: 'group', label: 'MySQL', key: 'sec-mysql', children: [
+                    { label: '数据库', key: 'databases' },
+                    { label: '慢SQL', key: 'slow-queries' },
+                    { label: '已忽略SQL', key: 'ignored-sql' },
+                    { label: '自定义SQL', key: 'custom-sql' },
+                    { label: 'SQL结果', key: 'custom-sql-logs' },
+                ] },
+                { type: 'group', label: 'Cloud Logging', key: 'sec-cl', children: [
+                    { label: '配置', key: 'cloud-logging-configs' },
+                    { label: '查询', key: 'cloud-logging-query' },
+                    { label: '监控', key: 'cloud-logging-checks' },
+                    { label: '告警日志', key: 'cloud-logging-logs' },
+                ] },
             ],
             'g-rocketmq': [
                 { label: 'MQ 配置', key: 'rocketmq' },
@@ -4830,7 +4838,10 @@ const AppLayout = defineComponent({
         };
         const routeToGroup = {};
         for (const [g, tabs] of Object.entries(groupTabs)) {
-            for (const t of tabs) routeToGroup[t.key] = g;
+            for (const t of tabs) {
+                if (t.type === 'group') { for (const c of t.children) routeToGroup[c.key] = g; }
+                else routeToGroup[t.key] = g;
+            }
         }
 
         const routeKey = computed(() => route.path.replace('/', '') || 'overview');
@@ -4852,7 +4863,8 @@ const AppLayout = defineComponent({
 
         function handleMenuUpdate(key) {
             if (groupTabs[key]) {
-                router.push('/' + groupTabs[key][0].key);
+                const first = groupTabs[key][0];
+                router.push('/' + (first.type === 'group' ? first.children[0].key : first.key));
             } else {
                 router.push('/' + key);
             }
