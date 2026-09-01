@@ -3,6 +3,7 @@ package monitor
 import (
 	"math"
 	"testing"
+	"time"
 
 	"ops-sentinel/internal/store"
 )
@@ -298,5 +299,31 @@ func TestParseJSONStringMap(t *testing.T) {
 	}
 	if got := parseJSONStringMap("{}"); got != nil {
 		t.Errorf("empty object should return nil, got %+v", got)
+	}
+}
+
+func TestShouldLogPromResult(t *testing.T) {
+	base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+
+	// 状态变化必须写：告警和恢复都不能漏
+	st := &promMetricState{LastLoggedStatus: "ok", LastLoggedAt: base}
+	if !shouldLogPromResult(st, "alert", base.Add(time.Second)) {
+		t.Error("ok -> alert 必须落库")
+	}
+	if !shouldLogPromResult(st, "error", base.Add(time.Second)) {
+		t.Error("ok -> error 必须落库")
+	}
+
+	// 状态没变时按心跳间隔限流，否则每轮一行会把库撑爆
+	if shouldLogPromResult(st, "ok", base.Add(5*time.Minute)) {
+		t.Error("状态未变且未到心跳间隔，不该写库")
+	}
+	if !shouldLogPromResult(st, "ok", base.Add(promLogHeartbeat)) {
+		t.Error("到了心跳间隔就该写一行，用来证明规则还在跑")
+	}
+
+	// 没有状态时保守处理：写
+	if !shouldLogPromResult(nil, "ok", base) {
+		t.Error("状态缺失时应落库")
 	}
 }

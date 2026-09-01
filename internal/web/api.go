@@ -243,10 +243,11 @@ func (s *Server) apiDashboardStats(w http.ResponseWriter, r *http.Request) {
 		healthCheckCount, healthCheckErrorsToday     int
 		grafanaConfigs, grafanaAlertsToday           int
 		cloudLoggingConfigs, cloudLoggingAlertsToday int
+		promChecks, promAlertsToday, certChecks      int
 		recentLogs                                   []store.SlowQueryLog
 		wg                                           sync.WaitGroup
 	)
-	wg.Add(13)
+	wg.Add(16)
 	go func() { defer wg.Done(); totalDBs, _ = s.store.CountDatabases() }()
 	go func() { defer wg.Done(); enabledDBs, _ = s.store.CountEnabledDatabases() }()
 	go func() { defer wg.Done(); todayCount, _ = s.store.CountSlowQueriesToday() }()
@@ -260,6 +261,9 @@ func (s *Server) apiDashboardStats(w http.ResponseWriter, r *http.Request) {
 	go func() { defer wg.Done(); grafanaAlertsToday, _ = s.store.CountGrafanaAlertsToday() }()
 	go func() { defer wg.Done(); cloudLoggingConfigs, _ = s.store.CountCloudLoggingConfigs() }()
 	go func() { defer wg.Done(); cloudLoggingAlertsToday, _ = s.store.CountCloudLoggingAlertsToday() }()
+	go func() { defer wg.Done(); promChecks, _ = s.store.CountPromChecks() }()
+	go func() { defer wg.Done(); promAlertsToday, _ = s.store.CountPromAlertsToday() }()
+	go func() { defer wg.Done(); certChecks, _ = s.store.CountCertChecks() }()
 	wg.Wait()
 
 	jsonOK(w, map[string]any{
@@ -281,6 +285,11 @@ func (s *Server) apiDashboardStats(w http.ResponseWriter, r *http.Request) {
 		"cloud_logging_configs":      cloudLoggingConfigs,
 		"cloud_logging_running":      s.cloudLoggingMgr.RunningCount(),
 		"cloud_logging_alerts_today": cloudLoggingAlertsToday,
+		"prom_targets_running":       s.promMgr.RunningCount(),
+		"prom_checks":                promChecks,
+		"prom_alerts_today":          promAlertsToday,
+		"cert_checks":                certChecks,
+		"cert_running":               s.certMgr.RunningCount(),
 	})
 }
 

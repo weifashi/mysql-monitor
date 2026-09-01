@@ -508,6 +508,14 @@ func (s *Store) runPurge() {
 	if n, err := s.PurgeOldCustomSQLLogs(); err == nil && n > 0 {
 		log.Printf("purged %d old custom sql logs", n)
 	}
+	// 这两张表是随 Prometheus 采集与证书监控一起加的，当时漏了注册到这里，
+	// 结果只进不出：实测 232 条采集规则一天写 28 万行、库一天涨到 59MB。
+	if n, err := s.PurgeOldPromAlertLogs(); err == nil && n > 0 {
+		log.Printf("purged %d old prom alert logs", n)
+	}
+	if n, err := s.PurgeOldCertCheckLogs(); err == nil && n > 0 {
+		log.Printf("purged %d old cert check logs", n)
+	}
 	s.CleanupOldNotifiedPIDs()
 }
 

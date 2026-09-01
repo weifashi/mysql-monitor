@@ -50,6 +50,29 @@ type promMetricState struct {
 	ConsecutiveMatched int
 	LastValue          float64
 	HasLast            bool
+
+	// 下面两个只用于控制写库频率，不参与告警判定
+	LastLoggedStatus string
+	LastLoggedAt     time.Time
+}
+
+// promLogHeartbeat 是"状态没变"时的最小写库间隔。
+//
+// 原先每次判定都写一行，232 条规则按 30~60 秒一轮，实测 11761 行/小时、
+// 约 28 万行/天，一天就把库撑到 59MB —— 而其中绝大多数是重复的 ok。
+// 状态变化必写（告警、恢复都不会漏），没变化时每 10 分钟留一行心跳，
+// 用来证明这条规则还在跑、当前值是多少。
+const promLogHeartbeat = 10 * time.Minute
+
+// shouldLogPromResult 决定这次判定要不要落库。
+func shouldLogPromResult(st *promMetricState, status string, now time.Time) bool {
+	if st == nil {
+		return true
+	}
+	if st.LastLoggedStatus != status {
+		return true
+	}
+	return now.Sub(st.LastLoggedAt) >= promLogHeartbeat
 }
 
 func NewPromManager(s *store.Store, d *notify.Dispatcher, eb *EventBus) *PromManager {
@@ -267,13 +290,17 @@ func (m *PromManager) scrape(ctx context.Context, target *store.PromTarget) (map
 func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck, families map[string][]promSample, elapsed int64) {
 	value, err := computePromValue(check, families)
 	if err != nil {
-		m.store.InsertPromAlertLog(&store.PromAlertLog{
-			CheckID: check.ID, CheckName: check.Name,
-			TargetID: target.ID, TargetName: target.Name,
-			Dimension: check.Dimension, Severity: check.Severity,
-			Status: "error", Metric: check.Metric,
-			Error: err.Error(), DurationMs: elapsed,
-		})
+		st := m.metricState(check.ID)
+		if now := time.Now(); shouldLogPromResult(st, "error", now) {
+			m.store.InsertPromAlertLog(&store.PromAlertLog{
+				CheckID: check.ID, CheckName: check.Name,
+				TargetID: target.ID, TargetName: target.Name,
+				Dimension: check.Dimension, Severity: check.Severity,
+				Status: "error", Metric: check.Metric,
+				Error: err.Error(), DurationMs: elapsed,
+			})
+			st.LastLoggedStatus, st.LastLoggedAt = "error", now
+		}
 		m.emit("prom_check_error", target.ID, target.Name,
 			fmt.Sprintf("%s: %v", check.Name, err), nil)
 		return
@@ -289,13 +316,17 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 
 	if matched {
 		message := renderPromMessage(target, check, valueStr, reason)
-		m.store.InsertPromAlertLog(&store.PromAlertLog{
-			CheckID: check.ID, CheckName: check.Name,
-			TargetID: target.ID, TargetName: target.Name,
-			Dimension: check.Dimension, Severity: check.Severity,
-			Status: "alert", Metric: check.Metric, Value: valueStr,
-			Threshold: check.AlertValue, Message: message, DurationMs: elapsed,
-		})
+		now := time.Now()
+		if shouldLogPromResult(state, "alert", now) {
+			m.store.InsertPromAlertLog(&store.PromAlertLog{
+				CheckID: check.ID, CheckName: check.Name,
+				TargetID: target.ID, TargetName: target.Name,
+				Dimension: check.Dimension, Severity: check.Severity,
+				Status: "alert", Metric: check.Metric, Value: valueStr,
+				Threshold: check.AlertValue, Message: message, DurationMs: elapsed,
+			})
+			state.LastLoggedStatus, state.LastLoggedAt = "alert", now
+		}
 		m.emit("prom_alert", target.ID, target.Name, message, map[string]interface{}{
 			"check":     check.Name,
 			"dimension": check.Dimension,
@@ -312,13 +343,17 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 		return
 	}
 
-	m.store.InsertPromAlertLog(&store.PromAlertLog{
-		CheckID: check.ID, CheckName: check.Name,
-		TargetID: target.ID, TargetName: target.Name,
-		Dimension: check.Dimension, Severity: check.Severity,
-		Status: "ok", Metric: check.Metric, Value: valueStr,
-		Threshold: check.AlertValue, DurationMs: elapsed,
-	})
+	nowOK := time.Now()
+	if shouldLogPromResult(state, "ok", nowOK) {
+		m.store.InsertPromAlertLog(&store.PromAlertLog{
+			CheckID: check.ID, CheckName: check.Name,
+			TargetID: target.ID, TargetName: target.Name,
+			Dimension: check.Dimension, Severity: check.Severity,
+			Status: "ok", Metric: check.Metric, Value: valueStr,
+			Threshold: check.AlertValue, DurationMs: elapsed,
+		})
+		state.LastLoggedStatus, state.LastLoggedAt = "ok", nowOK
+	}
 
 	if hasPrev && prevStatus == "alert" && check.RecoveryNotify && check.NotifyEnabled {
 		msg := fmt.Sprintf("[恢复] %s / %s\n指标：%s\n当前值：%s",

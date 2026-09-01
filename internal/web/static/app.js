@@ -377,6 +377,15 @@ const DashboardPage = defineComponent({
                     { label: '已配置', value: stats.value.rocketmq_configs || 0, color: '#2080f0', link: '/rocketmq' },
                     { label: '今日告警', value: stats.value.rocketmq_alerts_today || 0, color: (stats.value.rocketmq_alerts_today || 0) > 0 ? '#d03050' : '#999', link: '/rocketmq-alerts' },
                 ], '/rocketmq') : null,
+                statCard('指标监控', 'Prometheus 端点', [
+                    { label: '采集目标', value: stats.value.prom_targets_running || 0, color: '#18a058', link: '/prom-targets' },
+                    { label: '告警规则', value: stats.value.prom_checks || 0, color: '#2080f0', link: '/prom-checks' },
+                    { label: '今日告警', value: stats.value.prom_alerts_today || 0, color: (stats.value.prom_alerts_today || 0) > 0 ? '#d03050' : '#999', link: '/prom-logs' },
+                ], '/prom-targets'),
+                statCard('证书检查', 'TLS 到期监控', [
+                    { label: '运行中', value: stats.value.cert_running || 0, color: '#18a058', link: '/cert-checks' },
+                    { label: '已配置', value: stats.value.cert_checks || 0, color: '#2080f0', link: '/cert-checks' },
+                ], '/cert-checks'),
                 statCard('健康检查', 'HTTP 端点监控', [
                     { label: '运行中', value: stats.value.health_checks_running || 0, color: '#18a058', link: '/health-checks' },
                     { label: '已配置', value: stats.value.health_checks || 0, color: '#2080f0', link: '/health-checks' },
