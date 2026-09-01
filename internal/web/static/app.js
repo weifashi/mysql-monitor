@@ -5027,7 +5027,8 @@ function firingCard(router, group) {
             multi
                 ? ['命中 ' + group.length + ' 个对象：', group.map(e =>
                     h('span', { style: 'margin-right:10px;font-family:monospace' }, `${e.target_name} ${e.value}${e.detail ? '（' + e.detail + '）' : ''}`))]
-                : `${first.target_name} · 当前 ${first.value}${first.threshold ? ' · 阈值 ' + first.threshold : ''}${first.peak_value && first.peak_value !== first.value ? ' · 峰值 ' + first.peak_value : ''}`),
+                : h('span', { title: (first.value || '').length > 90 ? first.value : undefined },
+                    `${first.target_name} · 当前 ${(first.value || '').length > 90 ? first.value.slice(0, 90) + '…' : first.value}${first.threshold ? ' · 阈值 ' + first.threshold : ''}${first.peak_value && first.peak_value !== first.value && first.peak_value.length <= 24 ? ' · 峰值 ' + first.peak_value : ''}`)),
         !multi && first.detail ? h('div', { style: 'font-size:12px;font-family:monospace;opacity:.7;margin-top:4px' }, '来源：' + first.detail) : null,
         h('div', { style: 'margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px' }, [
             h(NTag, { size: 'tiny', bordered: false }, () => ({ prom: '指标', health: '站点', cert: '证书', custom_sql: 'SQL' }[first.source] || first.source)),
@@ -5143,14 +5144,25 @@ const AlertsPage = defineComponent({
         onMounted(() => { load(); timer = setInterval(load, 30000); });
         onUnmounted(() => clearInterval(timer));
 
+        // 站点/SQL 类事件的"峰值"是整段错误文本，必须单行省略、悬停看全文——
+        // 否则一条 connection reset 的报错能把行高撑成一整块。
+        // "对象"列与规则名内容重复（prom 规则名自带 vm 前缀，站点检查两者相同），去掉。
         const resolvedColumns = [
-            { title: '规则', key: 'check_name' },
-            { title: '对象', key: 'target_name' },
-            { title: '来源', key: 'source', width: 70, render: r => ({ prom: '指标', health: '站点', cert: '证书', custom_sql: 'SQL' }[r.source] || r.source) },
-            { title: '峰值', key: 'peak_value', width: 110, render: r => h('span', { style: 'font-family:monospace' }, r.peak_value || r.value) },
-            { title: '首次触发', key: 'first_at', width: 150, render: r => (r.first_at || '').replace('T', ' ').slice(0, 16) },
-            { title: '持续', key: 'dur', width: 90, render: r => r.resolved_at ? fmtSince2(r.first_at, r.resolved_at) : '' },
-            { title: '恢复于', key: 'resolved_at', width: 150, render: r => (r.resolved_at || '').replace('T', ' ').slice(0, 16) },
+            { title: '规则', key: 'check_name', ellipsis: { tooltip: true }, render: r => h('div', null, [
+                h('span', null, r.check_name),
+                r.detail ? h('span', { style: 'font-size:11px;font-family:monospace;opacity:.55;margin-left:8px' }, r.detail) : null,
+            ]) },
+            { title: '来源', key: 'source', width: 64, render: r => ({ prom: '指标', health: '站点', cert: '证书', custom_sql: 'SQL' }[r.source] || r.source) },
+            { title: '峰值', key: 'peak_value', width: 170, render: r => {
+                const v = r.peak_value || r.value || '';
+                return h('span', {
+                    style: 'display:block;max-width:158px;font-family:monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis' + (v.length > 24 ? ';cursor:help' : ''),
+                    title: v.length > 24 ? v : undefined,
+                }, v);
+            } },
+            { title: '首次触发', key: 'first_at', width: 130, render: r => (r.first_at || '').replace('T', ' ').slice(5, 16) },
+            { title: '持续', key: 'dur', width: 78, render: r => r.resolved_at ? fmtSince2(r.first_at, r.resolved_at) : '' },
+            { title: '恢复于', key: 'resolved_at', width: 130, render: r => (r.resolved_at || '').replace('T', ' ').slice(5, 16) },
         ];
         function fmtSince2(a, b) {
             const m = Math.floor((new Date(b) - new Date(a)) / 60000);
