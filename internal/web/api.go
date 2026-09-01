@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -730,6 +731,19 @@ func parseNotificationJSON(r *http.Request) (*store.NotificationConfig, error) {
 	}
 	if req.DatabaseID != nil && *req.DatabaseID > 0 {
 		nc.DatabaseID = req.DatabaseID
+	}
+
+	// webhook 粘贴翻车是实际发生过两次的事故：URL 尾部带「空格+序号」
+	// （像从带行号的列表里复制的），TrimSpace 去不掉中间的空格，静默存下后
+	// 所有通知都失败、只在服务端日志里可见。这里直接拒绝并说清原因。
+	if w := strings.TrimSpace(req.Webhook); w != "" {
+		if strings.ContainsAny(w, " \t") {
+			return nil, fmt.Errorf("webhook 地址里含有空格——通常是复制时把后面的序号一起带上了，请检查粘贴内容")
+		}
+		if u, uerr := url.Parse(w); uerr != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return nil, fmt.Errorf("webhook 必须是 http(s) 开头的完整地址")
+		}
+		req.Webhook = w
 	}
 
 	var configJSON []byte
