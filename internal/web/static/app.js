@@ -4762,14 +4762,14 @@ const AppLayout = defineComponent({
         onUnmounted(() => clearInterval(_sumTimer));
         function statusStrip() {
             const sm = alertSummary.value;
-            const pill = (bg, fg, text) => h('span', {
-                style: `background:${bg};color:${fg};border-radius:12px;padding:2px 10px;font-size:12px;font-weight:700;font-family:monospace;cursor:pointer`,
+            const pill = (cls, text) => h('span', {
+                class: 'strip-pill ' + cls,
                 onClick: () => router.push('/alerts'),
             }, text);
             const pills = [];
-            if (sm.critical > 0) pills.push(pill('#fdd8de', '#b91c3c', '● ' + sm.critical));
-            if (sm.warning > 0) pills.push(pill('#fdeecb', '#a05a03', '▲ ' + sm.warning));
-            if (!pills.length) pills.push(pill('#d6f2e2', '#0e7a3f', '✓ 正常'));
+            if (sm.critical > 0) pills.push(pill('strip-r', '● ' + sm.critical));
+            if (sm.warning > 0) pills.push(pill('strip-y', '▲ ' + sm.warning));
+            if (!pills.length) pills.push(pill('strip-g', '✓ 正常'));
             return h('div', { style: 'display:flex;gap:6px;margin-left:14px;align-items:center' }, pills);
         }
 
