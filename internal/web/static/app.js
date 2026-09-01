@@ -1760,7 +1760,7 @@ const CustomSQLLogsPage = defineComponent({
                     h(NSelect, { value: filterCheck.value, 'onUpdate:value': v => { filterCheck.value = v; page.value = 1; }, options: checkOptions.value, style: _isMobile.value ? 'flex:1;min-width:0' : 'width:220px', placeholder: '筛选规则', clearable: true, size: 'small' }),
                 ]),
             ]),
-            h('div', { class: 'log-page-table', style: 'max-width:1280px' }, [
+            h('div', { class: 'log-page-table' }, [
                 h(NDataTable, { columns: columns.value, data: data.value.data || [], bordered: false, size: 'small', loading: loading.value, flexHeight: true, style: 'height:100%', scrollX: _isMobile.value ? 620 : undefined }),
             ]),
             data.value.total_pages > 1 ? h('div', { class: 'log-page-pagination center' }, [
@@ -5003,7 +5003,7 @@ const AppLayout = defineComponent({
                     ]) : null,
                     // Content
                     h(NLayout, { contentStyle: 'padding:28px 36px 48px;overflow-y:auto;background:var(--body-bg)' }, () => [
-                        h(VueRouter.RouterView),
+                        h('div', { class: 'content-wrap' }, [h(VueRouter.RouterView)]),
                     ]),
                 ]),
             ]);
@@ -5056,11 +5056,18 @@ function firingCard(router, group) {
             h(NTag, { size: 'tiny', type: sevTagType(first.severity) }, () => first.severity),
             h('span', { style: 'margin-left:auto;font-size:12px;opacity:.55;font-family:monospace' }, '已持续 ' + fmtSince(earliest)),
         ]),
-        h('div', { style: 'font-size:13px;opacity:.75;margin-top:7px;line-height:1.7' },
-            multi
-                ? ['命中 ' + group.length + ' 个对象：', group.map(e =>
-                    h('span', { style: 'margin-right:10px;font-family:monospace' }, `${e.target_name} ${e.value}${e.detail ? '（' + e.detail + '）' : ''}`))]
-                : h('span', { title: (first.value || '').length > 90 ? first.value : undefined },
+        multi ? h('div', { style: 'margin-top:9px' }, [
+            h('div', { style: 'font-size:12px;opacity:.6;margin-bottom:6px' }, '命中 ' + group.length + ' 个对象'),
+            h('div', { style: 'display:flex;gap:8px;flex-wrap:wrap' }, group.map(e =>
+                h('div', {
+                    style: 'display:flex;align-items:baseline;gap:6px;padding:3px 10px;border-radius:6px;background:var(--stat-card-bg,rgba(128,128,128,.08));font-size:12.5px' + (e.detail ? ';cursor:help' : ''),
+                    title: e.detail || undefined,
+                }, [
+                    h('span', null, (e.target_name || '').replace(' 主机指标', '').replace(' 应用指标', '')),
+                    h('span', { style: 'font-family:monospace;font-weight:600' }, e.value),
+                ]))),
+        ]) : h('div', { style: 'font-size:13px;opacity:.75;margin-top:7px;line-height:1.7' },
+            h('span', { title: (first.value || '').length > 90 ? first.value : undefined },
                     `${first.target_name} · 当前 ${(first.value || '').length > 90 ? first.value.slice(0, 90) + '…' : first.value}${first.threshold ? ' · 阈值 ' + first.threshold : ''}${first.peak_value && first.peak_value !== first.value && first.peak_value.length <= 24 ? ' · 峰值 ' + first.peak_value : ''}`)),
         !multi && first.detail ? h('div', { style: 'font-size:12px;font-family:monospace;opacity:.7;margin-top:4px' }, '来源：' + first.detail) : null,
         h('div', { style: 'margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px' }, [
@@ -5154,7 +5161,7 @@ const OverviewPage = defineComponent({
 
                 d.risks && d.risks.length ? [
                     h('div', { class: 'sen-sec', style: 'color:#f0a020' }, `容量风险（未触发但已接近阈值）`),
-                    h('div', { style: 'max-width:1100px' }, [h(NDataTable, { columns: riskColumns, data: d.risks, size: 'small', bordered: false })]),
+                    h(NDataTable, { columns: riskColumns, data: d.risks, size: 'small', bordered: false }),
                 ] : null,
 
             ]);
@@ -5221,7 +5228,7 @@ const AlertsPage = defineComponent({
                         : h(NEmpty, { description: '当前没有触发中的告警', style: 'margin:60px 0' });
                 }
                 return events.value.length
-                    ? h('div', { style: 'max-width:1250px' }, [h(NDataTable, { columns: resolvedColumns, data: events.value, size: 'small', bordered: false })])
+                    ? h(NDataTable, { columns: resolvedColumns, data: events.value, size: 'small', bordered: false })
                     : h(NEmpty, { description: '暂无已恢复的事件', style: 'margin:60px 0' });
             }),
         ]);
@@ -5303,7 +5310,7 @@ const ObjectsPage = defineComponent({
             h(NSpin, { show: loading.value }, () =>
                 // 限宽：不设的话"对象"列会把 2K 屏的剩余空间全吃掉，
                 // 名字和数字之间隔一大片空白，数字被推到屏幕右缘。
-                h('div', { style: 'max-width:1150px' }, [
+h('div', null, [
                     h(NDataTable, {
                         columns: columns.value, data: filtered.value, size: 'small', bordered: false,
                         rowProps: o => ({ style: 'cursor:pointer', onClick: () => router.push('/objects/' + o.id) }),
@@ -5390,7 +5397,7 @@ const ObjectDetailPage = defineComponent({
                     ]))) : null,
 
                 h('div', { class: 'sen-sec' }, `全部规则（${(o.checks || []).length} 条，来源混排）`),
-                h('div', { style: 'max-width:1020px' }, [h(NDataTable, { columns: checkColumns, data: o.checks || [], size: 'small', bordered: false })]),
+                h(NDataTable, { columns: checkColumns, data: o.checks || [], size: 'small', bordered: false }),
 
                 d.children && d.children.length ? [
                     h('div', { class: 'sen-sec' }, `承载的对象（${d.children.length}）`),

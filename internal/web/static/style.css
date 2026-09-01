@@ -797,9 +797,18 @@ html {
 [data-theme="dark"] .strip-y { background: rgba(240,160,32,.20); color: #f8c780; }
 [data-theme="dark"] .strip-g { background: rgba(54,173,106,.18); color: #7fd8a8; }
 
-/* 数据表全局限宽：宽屏上弹性列会把 2K 的剩余空间全吃掉，名字和数字
-   之间隔一大片空白（同一问题已在四个页面逐个修过，这里一次兜底）。
-   log-page-table 的满高日志表有自己的布局，不受此限。 */
-.n-data-table {
-    max-width: 1280px;
+/* 主内容统一 1360px 居中：宽屏上两侧对称留白，页内所有卡片、表格
+   左右边缘对齐。此前逐表限宽（1020~1280 五个档）导致内容贴左、
+   宽度参差，一并废除。 */
+.content-wrap {
+    max-width: 1360px;
+    margin: 0 auto;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+.content-wrap > * {
+    flex: 1;
+    min-height: 0;
 }
