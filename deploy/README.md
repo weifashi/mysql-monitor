@@ -1,0 +1,20 @@
+# 采集端部署脚本
+
+ops-sentinel 服务端之外、装在被监控机器上的部分。全部走 node_exporter
+的 textfile 采集器，零常驻内存（systemd timer 每分钟一跑）。
+
+| 文件 | 装到哪 | 作用 |
+|---|---|---|
+| `ttpos-container-metrics.sh` | 各 VM `/usr/local/bin/` | 容器 cgroup 内存用量/上限/OOM 计数 |
+| `ttpos-log-metrics.sh` | 各 VM `/usr/local/bin/` | 容器日志 error/fatal/panic 计数（增量扫描） |
+| `ttpos-log-exclude.txt` | 各 VM `/var/lib/ttpos-log-metrics/exclude.txt` | 17 条业务噪音排除清单（源自生产 Cloud Logging 配置） |
+| `install-log-metrics.sh` | 临时 | 单机安装器（脚本 + timer） |
+| `rollout-log-metrics.sh` | 物理机上执行 | 下载一次、`incus file push` 到本机全部 VM 并安装 |
+
+## 已知约束
+
+- rehearsal-db-* / storage-* 的 nftables output 链是 policy drop，
+  **VM 内拉不到外网文件**——所以 rollout 脚本在物理机下载后用
+  `incus file push` 推进去，不要改成 VM 内 curl。
+- node_exporter 需已启用 `--collector.textfile.directory=/var/lib/node_exporter/textfile`
+  （容器指标部署时已在 20 台 VM 统一开启）。

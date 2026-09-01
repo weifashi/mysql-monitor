@@ -1,0 +1,17 @@
+已交班
+销售账单已结束
+record not found
+订单商品未送厨
+订单不存在
+获取erp商品列表失败
+保存员工操作日志失败
+没有未送厨的商品
+桌台订单结束
+验证码错误
+订单已结账
+ErrorWithData
+ErrorWithDetail
+ErrorAutoWithData
+更新金额失败
+物料单价镜像同步任务失败
+调用erp接口返回空

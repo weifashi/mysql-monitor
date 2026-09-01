@@ -76,6 +76,7 @@ const UI_SETTINGS_CACHE_KEY = 'ops-sentinel.uiSettings';
 const _uiSettings = reactive({
     show_rocketmq_menu: '',
     show_grafana_menu: '',
+    show_cloud_logging_menu: '',
 });
 
 // 服务端的值是否已经拿到。缓存只是上一次的快照，可能已经过期。
@@ -3451,6 +3452,7 @@ const SettingsPage = defineComponent({
             oauth_public_base_url: '',
             show_rocketmq_menu: '1',
             show_grafana_menu: '1',
+            show_cloud_logging_menu: '1',
         });
         const users = ref([]);
         const loading = ref(true);
@@ -3481,6 +3483,7 @@ const SettingsPage = defineComponent({
                     oauth_public_base_url: settings.oauth_public_base_url,
                     show_rocketmq_menu: settings.show_rocketmq_menu,
                     show_grafana_menu: settings.show_grafana_menu,
+                    show_cloud_logging_menu: settings.show_cloud_logging_menu,
                 });
                 applyUISettings(settings);
                 message.success('设置已保存');
@@ -3520,6 +3523,7 @@ const SettingsPage = defineComponent({
             h(NCard, { title: '界面显示', size: 'small', style: 'margin-bottom:20px' }, () => h(NForm, { model: settings, labelPlacement: _isMobile.value ? 'top' : 'left', labelWidth: _isMobile.value ? undefined : 140 }, [
                 h(NFormItem, { label: '显示 RocketMQ' }, () => h(NSwitch, { value: settings.show_rocketmq_menu !== '0', 'onUpdate:value': v => settings.show_rocketmq_menu = v ? '1' : '0' })),
                 h(NFormItem, { label: '显示 Grafana' }, () => h(NSwitch, { value: settings.show_grafana_menu !== '0', 'onUpdate:value': v => settings.show_grafana_menu = v ? '1' : '0' })),
+                h(NFormItem, { label: '显示 Cloud Logging' }, () => h(NSwitch, { value: settings.show_cloud_logging_menu !== '0', 'onUpdate:value': v => settings.show_cloud_logging_menu = v ? '1' : '0' })),
                 h(NButton, { type: 'primary', loading: saving.value, onClick: saveSettings }, () => '保存设置'),
             ])),
             h(NCard, { title: 'GitHub 授权用户', size: 'small' }, () => h('div', [
@@ -4858,7 +4862,11 @@ const AppLayout = defineComponent({
         const currentTabs = computed(() => {
             const group = routeToGroup[routeKey.value];
             if (group && !isGroupVisible(group)) return null;
-            return group ? groupTabs[group] : null;
+            let tabs = group ? groupTabs[group] : null;
+            if (tabs && group === 'g-rules' && !isUISettingEnabled('show_cloud_logging_menu')) {
+                tabs = tabs.filter(t => t.key !== 'sec-cl');
+            }
+            return tabs;
         });
 
         function handleMenuUpdate(key) {

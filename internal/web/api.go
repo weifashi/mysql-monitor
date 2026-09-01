@@ -977,13 +977,14 @@ func (s *Server) apiSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	allowed := map[string]bool{
-		"github_client_id":       true,
-		"github_client_secret":   true,
-		"github_enabled":         true,
-		"password_login_enabled": true,
-		"oauth_public_base_url":  true,
-		"show_rocketmq_menu":     true,
-		"show_grafana_menu":      true,
+		"github_client_id":        true,
+		"github_client_secret":    true,
+		"github_enabled":          true,
+		"password_login_enabled":  true,
+		"oauth_public_base_url":   true,
+		"show_rocketmq_menu":      true,
+		"show_grafana_menu":       true,
+		"show_cloud_logging_menu": true,
 	}
 	var changed []string
 	for k, v := range req {

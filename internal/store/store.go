@@ -1615,10 +1615,11 @@ func (s *Store) IsSQLIgnored(databaseID int64, fingerprint string) bool {
 
 func (s *Store) InitDefaultSettings() {
 	defaults := map[string]string{
-		"password_login_enabled": "1",
-		"github_enabled":         "0",
-		"show_rocketmq_menu":     "1",
-		"show_grafana_menu":      "1",
+		"password_login_enabled":  "1",
+		"github_enabled":          "0",
+		"show_rocketmq_menu":      "1",
+		"show_grafana_menu":       "1",
+		"show_cloud_logging_menu": "1",
 	}
 	for k, v := range defaults {
 		if s.GetSetting(k) == "" {
