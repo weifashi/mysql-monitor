@@ -5121,7 +5121,7 @@ const OverviewPage = defineComponent({
 
                 d.risks && d.risks.length ? [
                     h('div', { class: 'sen-sec', style: 'color:#f0a020' }, `容量风险（未触发但已接近阈值）`),
-                    h(NDataTable, { columns: riskColumns, data: d.risks, size: 'small', bordered: false }),
+                    h('div', { style: 'max-width:1100px' }, [h(NDataTable, { columns: riskColumns, data: d.risks, size: 'small', bordered: false })]),
                 ] : null,
 
             ]);
@@ -5188,7 +5188,7 @@ const AlertsPage = defineComponent({
                         : h(NEmpty, { description: '当前没有触发中的告警', style: 'margin:60px 0' });
                 }
                 return events.value.length
-                    ? h(NDataTable, { columns: resolvedColumns, data: events.value, size: 'small', bordered: false })
+                    ? h('div', { style: 'max-width:1250px' }, [h(NDataTable, { columns: resolvedColumns, data: events.value, size: 'small', bordered: false })])
                     : h(NEmpty, { description: '暂无已恢复的事件', style: 'margin:60px 0' });
             }),
         ]);
@@ -5244,7 +5244,7 @@ const ObjectsPage = defineComponent({
 
         const columns = computed(() => [
             {
-                title: '对象', key: 'name', render: o => h('div', null, [
+                title: '对象', key: 'name', width: 250, ellipsis: { tooltip: true }, render: o => h('div', null, [
                     h('span', { style: 'font-weight:600' }, o.name.replace(' 主机指标', '').replace(' 应用指标', '')),
                     h('span', { style: 'font-size:11px;opacity:.5;margin-left:8px' },
                         [o.kind, o.labels && o.labels.host && o.labels.host !== '-' ? '@' + o.labels.host : '', o.labels && o.labels.role].filter(Boolean).join(' · ')),
@@ -5268,10 +5268,14 @@ const ObjectsPage = defineComponent({
                 ]),
             ]),
             h(NSpin, { show: loading.value }, () =>
-                h(NDataTable, {
-                    columns: columns.value, data: filtered.value, size: 'small', bordered: false,
-                    rowProps: o => ({ style: 'cursor:pointer', onClick: () => router.push('/objects/' + o.id) }),
-                })),
+                // 限宽：不设的话"对象"列会把 2K 屏的剩余空间全吃掉，
+                // 名字和数字之间隔一大片空白，数字被推到屏幕右缘。
+                h('div', { style: 'max-width:1150px' }, [
+                    h(NDataTable, {
+                        columns: columns.value, data: filtered.value, size: 'small', bordered: false,
+                        rowProps: o => ({ style: 'cursor:pointer', onClick: () => router.push('/objects/' + o.id) }),
+                    }),
+                ])),
         ]);
     },
 });
@@ -5353,7 +5357,7 @@ const ObjectDetailPage = defineComponent({
                     ]))) : null,
 
                 h('div', { class: 'sen-sec' }, `全部规则（${(o.checks || []).length} 条，来源混排）`),
-                h(NDataTable, { columns: checkColumns, data: o.checks || [], size: 'small', bordered: false }),
+                h('div', { style: 'max-width:1150px' }, [h(NDataTable, { columns: checkColumns, data: o.checks || [], size: 'small', bordered: false })]),
 
                 d.children && d.children.length ? [
                     h('div', { class: 'sen-sec' }, `承载的对象（${d.children.length}）`),
