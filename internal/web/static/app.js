@@ -2951,6 +2951,8 @@ const PromChecksPage = defineComponent({
         const showModal = ref(false);
         const editingId = ref(null);
         const dimFilter = ref('');
+        const targetFilter = ref(null);   // 按对象（采集目标）筛选
+        const kw = ref('');               // 名称/指标关键字，前端过滤
         const testing = ref(false);
         const testResult = ref(null);
         const message = useMessage();
@@ -2968,15 +2970,17 @@ const PromChecksPage = defineComponent({
         async function load() {
             loading.value = true;
             try {
-                const q = dimFilter.value ? '?dimension=' + dimFilter.value : '';
-                checks.value = await api.get('/api/prom-checks' + q);
+                const qs = [];
+                if (dimFilter.value) qs.push('dimension=' + dimFilter.value);
+                if (targetFilter.value) qs.push('target_id=' + targetFilter.value);
+                checks.value = await api.get('/api/prom-checks' + (qs.length ? '?' + qs.join('&') : ''));
                 const t = await api.get('/api/prom-targets');
                 targets.value = t.map(x => ({ label: x.target.name + ' — ' + x.target.url, value: x.target.id }));
             } catch {}
             loading.value = false;
         }
         onMounted(load);
-        watch(dimFilter, load);
+        watch([dimFilter, targetFilter], load);
 
         function openAdd() {
             editingId.value = null;
@@ -3100,17 +3104,41 @@ const PromChecksPage = defineComponent({
         const isIncrease = computed(() => form.alert_strategy === 'increase');
         const needDenominator = computed(() => form.expr_kind === 'ratio' || form.expr_kind === 'available_ratio');
 
+        // 关键字在前端过滤（272 条全在内存，即敲即出）；对象/维度走后端参数
+        const shownChecks = computed(() => {
+            const k = kw.value.trim().toLowerCase();
+            if (!k) return checks.value;
+            return checks.value.filter(c =>
+                (c.name || '').toLowerCase().includes(k) ||
+                (c.metric || '').toLowerCase().includes(k));
+        });
+        // 目标下拉用短名（去掉 URL），搜索友好
+        const targetOptions = computed(() => [{ label: '全部对象', value: null },
+            ...targets.value.map(t => ({ label: t.label.split(' — ')[0], value: t.value }))]);
+
         return () => h('div', null, [
             h(NSpace, { justify: 'space-between', align: 'center', style: 'margin-bottom:12px' }, () => [
-                h(NSelect, {
-                    value: dimFilter.value, onUpdateValue: v => dimFilter.value = v,
-                    options: [{ label: '全部维度', value: '' }, ...PROM_DIMENSIONS],
-                    style: 'width:150px', size: 'small',
-                }),
+                h(NSpace, { align: 'center', size: 8 }, () => [
+                    h(NSelect, {
+                        value: targetFilter.value, onUpdateValue: v => targetFilter.value = v,
+                        options: targetOptions.value, filterable: true, clearable: true,
+                        placeholder: '按对象筛选', style: 'width:210px', size: 'small',
+                    }),
+                    h(NSelect, {
+                        value: dimFilter.value, onUpdateValue: v => dimFilter.value = v,
+                        options: [{ label: '全部维度', value: '' }, ...PROM_DIMENSIONS],
+                        style: 'width:140px', size: 'small',
+                    }),
+                    h(NInput, {
+                        value: kw.value, onUpdateValue: v => kw.value = v, clearable: true,
+                        placeholder: '搜名称 / 指标', style: 'width:190px', size: 'small',
+                    }),
+                    h(NText, { depth: 3, style: 'font-size:12px' }, () => shownChecks.value.length + ' 条'),
+                ]),
                 h(NButton, { type: 'primary', size: 'small', onClick: openAdd }, () => '+ 添加规则'),
             ]),
             h(NDataTable, {
-                columns: columns.value, data: checks.value, bordered: false, size: 'small',
+                columns: columns.value, data: shownChecks.value, bordered: false, size: 'small',
                 loading: loading.value, maxHeight: 'calc(100vh - 220px)',
                 scrollX: _isMobile.value ? 900 : undefined,
             }),
