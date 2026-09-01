@@ -5072,24 +5072,35 @@ const OverviewPage = defineComponent({
                     h(NDataTable, { columns: riskColumns, data: d.risks, size: 'small', bordered: false }),
                 ] : null,
 
-                h('div', { style: 'display:flex;gap:16px;flex-wrap:wrap;margin-top:20px' }, [
-                    h('div', { style: 'flex:1;min-width:240px' }, [
-                        h('div', { style: 'font-size:13px;font-weight:700;margin-bottom:6px' }, '按维度'),
-                        ...Object.entries(d.dims || {}).map(([dim, v]) =>
-                            h('div', { style: 'display:flex;justify-content:space-between;font-size:13px;padding:5px 2px;border-bottom:1px solid var(--n-border-color,#f3f3f3)' }, [
-                                h('span', null, dim + ' · ' + v[1] + ' 条规则'),
-                                v[0] > 0 ? h(NTag, { size: 'tiny', type: 'error', bordered: false }, () => v[0] + ' 触发') : h(NTag, { size: 'tiny', type: 'success', bordered: false }, () => '正常'),
-                            ])),
-                    ]),
-                    h('div', { style: 'flex:1;min-width:240px' }, [
-                        h('div', { style: 'font-size:13px;font-weight:700;margin-bottom:6px' }, '系统自身'),
-                        h('div', { style: 'font-size:13px;padding:5px 2px;border-bottom:1px solid var(--n-border-color,#f3f3f3);display:flex;justify-content:space-between' }, [
-                            h('span', null, '通知渠道'),
-                            d.self.notify_channels > 0 ? h(NTag, { size: 'tiny', type: 'success', bordered: false }, () => d.self.notify_channels + ' 个') : h(NTag, { size: 'tiny', type: 'error', bordered: false }, () => '未配置'),
+                h('div', { style: 'margin-top:22px' }, [
+                    h('div', { style: 'font-size:13px;font-weight:700;margin-bottom:8px;opacity:.75' }, '维度与系统自身'),
+                    h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap' }, [
+                        ...Object.entries(d.dims || {}).map(([dim, v]) => {
+                            const name = { host: '主机', container: '容器', app: '应用', business: '业务', database: '数据库', middleware: '中间件' }[dim] || dim;
+                            return h('div', { style: 'border:1px solid var(--n-border-color,#e5e7eb);border-radius:8px;padding:9px 14px;min-width:108px;background:var(--card-bg,#fff)' }, [
+                                h('div', { style: 'font-size:11.5px;opacity:.55' }, name + '规则'),
+                                h('div', { style: 'display:flex;align-items:baseline;gap:8px' }, [
+                                    h('span', { style: 'font-size:19px;font-weight:750;font-family:monospace' }, v[1]),
+                                    v[0] > 0
+                                        ? h(NTag, { size: 'tiny', type: 'error', bordered: false }, () => v[0] + ' 触发')
+                                        : h(NTag, { size: 'tiny', type: 'success', bordered: false }, () => '正常'),
+                                ]),
+                            ]);
+                        }),
+                        h('div', { style: 'width:1px;background:var(--n-border-color,#e5e7eb);margin:2px 4px' }),
+                        h('div', { style: 'border:1px solid var(--n-border-color,#e5e7eb);border-radius:8px;padding:9px 14px;min-width:108px;background:var(--card-bg,#fff);cursor:pointer', onClick: () => router.push('/notifications') }, [
+                            h('div', { style: 'font-size:11.5px;opacity:.55' }, '通知渠道'),
+                            h('div', { style: 'display:flex;align-items:baseline;gap:8px' }, [
+                                h('span', { style: 'font-size:19px;font-weight:750;font-family:monospace' }, d.self.notify_channels),
+                                d.self.notify_channels > 0
+                                    ? h(NTag, { size: 'tiny', type: 'success', bordered: false }, () => '可用')
+                                    : h(NTag, { size: 'tiny', type: 'error', bordered: false }, () => '未配置'),
+                            ]),
                         ]),
-                        h('div', { style: 'font-size:13px;padding:5px 2px;border-bottom:1px solid var(--n-border-color,#f3f3f3);display:flex;justify-content:space-between' }, [
-                            h('span', null, '采集器（指标 / 证书 / 站点）'),
-                            h('span', { style: 'font-family:monospace' }, `${d.self.targets_running} / ${d.self.cert_running} / ${d.self.health_running}`),
+                        h('div', { style: 'border:1px solid var(--n-border-color,#e5e7eb);border-radius:8px;padding:9px 14px;min-width:150px;background:var(--card-bg,#fff)' }, [
+                            h('div', { style: 'font-size:11.5px;opacity:.55' }, '采集器（指标/证书/站点）'),
+                            h('div', { style: 'font-size:19px;font-weight:750;font-family:monospace' },
+                                `${d.self.targets_running} / ${d.self.cert_running} / ${d.self.health_running}`),
                         ]),
                     ]),
                 ]),
