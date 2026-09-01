@@ -5081,19 +5081,7 @@ const OverviewPage = defineComponent({
                     default: () => h(NButton, { size: 'small', type: 'primary', onClick: () => router.push('/notifications') }, () => '去配置'),
                 }) : null,
 
-                h('div', { class: 'sen-sec first', style: 'color:#d03050' },
-                    groups.length ? `触发中（${groups.length} 个问题 / ${(d.firing || []).length} 条）` : '触发中'),
-                groups.length
-                    ? groups.map(g => firingCard(router, g))
-                    : h('div', { class: 'sen-card', style: 'border-style:dashed;opacity:.65;font-size:13px' }, '✓ 当前没有触发中的告警'),
-
-                d.risks && d.risks.length ? [
-                    h('div', { class: 'sen-sec', style: 'color:#f0a020' }, `容量风险（未触发但已接近阈值）`),
-                    h(NDataTable, { columns: riskColumns, data: d.risks, size: 'small', bordered: false }),
-                ] : null,
-
-                h('div', { style: 'margin-top:4px' }, [
-                    h('div', { class: 'sen-sec', style: 'opacity:.75' }, '维度与系统自身'),
+                h('div', { style: 'margin:2px 0 18px' }, [
                     h('div', { style: 'display:flex;gap:12px;flex-wrap:wrap' }, [
                         ...Object.entries(d.dims || {}).map(([dim, v]) => {
                             const name = { host: '主机', container: '容器', app: '应用', business: '业务', database: '数据库', middleware: '中间件' }[dim] || dim;
@@ -5124,6 +5112,17 @@ const OverviewPage = defineComponent({
                         ]),
                     ]),
                 ]),
+                h('div', { class: 'sen-sec first', style: 'color:#d03050' },
+                    groups.length ? `触发中（${groups.length} 个问题 / ${(d.firing || []).length} 条）` : '触发中'),
+                groups.length
+                    ? groups.map(g => firingCard(router, g))
+                    : h('div', { class: 'sen-card', style: 'border-style:dashed;opacity:.65;font-size:13px' }, '✓ 当前没有触发中的告警'),
+
+                d.risks && d.risks.length ? [
+                    h('div', { class: 'sen-sec', style: 'color:#f0a020' }, `容量风险（未触发但已接近阈值）`),
+                    h(NDataTable, { columns: riskColumns, data: d.risks, size: 'small', bordered: false }),
+                ] : null,
+
             ]);
         });
     },
