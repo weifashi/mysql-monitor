@@ -334,6 +334,38 @@ func (m *PromManager) scrape(ctx context.Context, target *store.PromTarget) (map
 	return parsePromText(string(body)), nil
 }
 
+// fetchDiagnostic 拉取诊断 URL 的内容，限时限量，失败静默——
+// 诊断是告警的附属品，不能因为它拖住或搞坏通知本身。
+func (m *PromManager) fetchDiagnostic(diagURL string) string {
+	diagURL = strings.TrimSpace(diagURL)
+	if diagURL == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, diagURL, nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := m.client.Do(req)
+	if err != nil {
+		log.Printf("[prom] diag fetch %s: %v", diagURL, err)
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+	out := strings.TrimSpace(string(body))
+	// 飞书文本消息别撑爆：截到约 2000 字符，保尾部（最新的错误在后面）
+	const cap = 2000
+	if len(out) > cap {
+		out = "…" + out[len(out)-cap:]
+	}
+	return out
+}
+
 // evaluate 对单条规则求值并按需告警。
 func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck, families map[string][]promSample, elapsed int64) {
 	value, detail, err := computePromValue(check, families)
@@ -390,6 +422,11 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 		// 持续告警时不重复推送，只在状态由非 alert 变为 alert 时通知一次
 		notified := false
 		if check.NotifyEnabled && !(hasPrev && prevStatus == "alert") {
+			// 通知前拉诊断内容（如各 VM 的错误样本端口），附进消息——
+			// 人收到告警时错误内容已经在里面，不用再登机 docker logs。
+			if diag := m.fetchDiagnostic(check.DiagURL); diag != "" {
+				message += "\n\n最近错误样本：\n" + diag
+			}
 			if err := m.dispatcher.SendGlobalNotifications(message); err != nil {
 				log.Printf("[prom] notify failed for check %s: %v", check.Name, err)
 			} else {

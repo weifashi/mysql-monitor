@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -693,6 +694,9 @@ func (s *Server) apiNotificationTest(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true, "message": "发送成功"})
 }
 
+// feishuHookRE：飞书/Lark 机器人 webhook 官方格式，hook/ 后为 36 位 UUID。
+var feishuHookRE = regexp.MustCompile(`/open-apis/bot/v2/hook/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 func parseNotificationJSON(r *http.Request) (*store.NotificationConfig, error) {
 	var req struct {
 		Type       string `json:"type"`
@@ -742,6 +746,12 @@ func parseNotificationJSON(r *http.Request) (*store.NotificationConfig, error) {
 		}
 		if u, uerr := url.Parse(w); uerr != nil || (u.Scheme != "http" && u.Scheme != "https") {
 			return nil, fmt.Errorf("webhook 必须是 http(s) 开头的完整地址")
+		}
+		// 粘贴翻车已发生三次（尾巴带「空格0」「空格1」「-1」），空格校验拦不住
+		// 连字符变体。飞书/Lark 的 hook/ 后就是 36 位 UUID，按官方格式校验，
+		// 任何多余尾巴都不合法。
+		if strings.Contains(w, "/open-apis/bot/v2/hook/") && !feishuHookRE.MatchString(w) {
+			return nil, fmt.Errorf("飞书 webhook 的结尾应是 36 位 UUID（xxxxxxxx-xxxx-…）——当前地址结尾多了或少了字符，请重新完整复制")
 		}
 		req.Webhook = w
 	}

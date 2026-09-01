@@ -1079,6 +1079,7 @@ const CustomSQLPage = defineComponent({
             notify_enabled: true,
             recovery_notify: true,
             message_template: '',
+            diag_url: '',
         });
         const message = useMessage();
 
@@ -1151,6 +1152,7 @@ const CustomSQLPage = defineComponent({
                 notify_enabled: true,
                 recovery_notify: true,
                 message_template: '',
+            diag_url: '',
             });
         }
         function openAdd() {
@@ -1302,6 +1304,7 @@ const CustomSQLPage = defineComponent({
                 notify_enabled: !!form.notify_enabled,
                 recovery_notify: !!form.recovery_notify,
                 message_template: form.message_template || '',
+                diag_url: form.diag_url || '',
             };
         }
         function customSQLExportItem(row) {
@@ -2953,6 +2956,7 @@ const PromChecksPage = defineComponent({
             alert_strategy: 'threshold', alert_condition: 'gt', alert_value: '',
             alert_delta_value: '', alert_delta_percent: '', alert_consecutive: 1,
             severity: 'warning', notify_enabled: true, recovery_notify: true, message_template: '',
+            diag_url: '',
         });
         const form = reactive(emptyForm());
 
@@ -2992,6 +2996,7 @@ const PromChecksPage = defineComponent({
                 severity: row.severity || 'warning',
                 notify_enabled: !!row.notify_enabled, recovery_notify: !!row.recovery_notify,
                 message_template: row.message_template || '',
+                diag_url: row.diag_url || '',
             });
             showModal.value = true;
         }
@@ -3189,6 +3194,10 @@ const PromChecksPage = defineComponent({
                     type: 'textarea', rows: 2, value: form.message_template,
                     onUpdateValue: v => form.message_template = v,
                     placeholder: '留空用默认。可用变量：{{target}} {{check}} {{metric}} {{value}} {{threshold}} {{severity}} {{reason}}',
+                })),
+                h(NFormItem, { label: '诊断 URL' }, () => h(NInput, {
+                    value: form.diag_url, onUpdateValue: v => form.diag_url = v,
+                    placeholder: '可选。告警通知前 GET 此地址，把响应附进消息（如各 VM 的 :9101 错误样本）',
                 })),
                 testResult.value ? h(NFormItem, { label: '测试结果' }, () => (
                     testResult.value.success

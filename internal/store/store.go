@@ -128,6 +128,7 @@ func New(dataDir string) (*Store, error) {
 	// Auto-migrate: add missing columns
 	migrations := []string{
 		"ALTER TABLE alert_events ADD COLUMN detail TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE prom_checks ADD COLUMN diag_url TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE grafana_configs ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE rocketmq_configs ADD COLUMN notify_new_msg INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE rocketmq_alert_logs ADD COLUMN message_body TEXT NOT NULL DEFAULT ''",

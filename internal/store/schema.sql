@@ -351,6 +351,7 @@ CREATE TABLE IF NOT EXISTS prom_checks (
     notify_enabled      INTEGER NOT NULL DEFAULT 1,
     recovery_notify     INTEGER NOT NULL DEFAULT 1,
     message_template    TEXT    NOT NULL DEFAULT '',
+    diag_url            TEXT    NOT NULL DEFAULT '',  -- 告警时先 GET 它，把响应附进通知
     enabled             INTEGER NOT NULL DEFAULT 1,
     created_at          DATETIME NOT NULL DEFAULT (datetime('now')),
     updated_at          DATETIME NOT NULL DEFAULT (datetime('now')),

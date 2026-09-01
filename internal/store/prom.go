@@ -53,6 +53,10 @@ type PromCheck struct {
 	NotifyEnabled   bool   `json:"notify_enabled"`
 	RecoveryNotify  bool   `json:"recovery_notify"`
 	MessageTemplate string `json:"message_template"`
+	// DiagURL 非空时，告警通知前先 GET 它，把响应片段附进消息。
+	// 用途：日志规则指向各 VM 的样本端口，"新增 error" 的通知里直接带上
+	// 最近的错误内容，不用登机 docker logs。
+	DiagURL string `json:"diag_url"`
 	Enabled         bool   `json:"enabled"`
 
 	CreatedAt time.Time `json:"created_at"`
@@ -151,7 +155,7 @@ func (s *Store) TogglePromTarget(id int64) error {
 const promCheckColumns = `c.id, c.target_id, c.name, c.dimension, c.metric, c.label_filter, c.aggregate,
 	c.expr_kind, c.expr_denominator, c.alert_strategy, c.alert_condition, c.alert_value,
 	c.alert_delta_value, c.alert_delta_percent, c.alert_consecutive, c.severity,
-	c.notify_enabled, c.recovery_notify, c.message_template, c.enabled, c.created_at, c.updated_at`
+	c.notify_enabled, c.recovery_notify, c.message_template, diag_url, c.enabled, c.created_at, c.updated_at`
 
 func scanPromCheck(sc interface{ Scan(...interface{}) error }, withTarget bool) (PromCheck, error) {
 	var c PromCheck
@@ -160,7 +164,7 @@ func scanPromCheck(sc interface{ Scan(...interface{}) error }, withTarget bool) 
 		&c.ID, &c.TargetID, &c.Name, &c.Dimension, &c.Metric, &c.LabelFilter, &c.Aggregate,
 		&c.ExprKind, &c.ExprDenominator, &c.AlertStrategy, &c.AlertCondition, &c.AlertValue,
 		&c.AlertDeltaValue, &c.AlertDeltaPercent, &c.AlertConsecutive, &c.Severity,
-		&c.NotifyEnabled, &c.RecoveryNotify, &c.MessageTemplate, &c.Enabled, &c.CreatedAt, &c.UpdatedAt,
+		&c.NotifyEnabled, &c.RecoveryNotify, &c.MessageTemplate, &c.DiagURL, &c.Enabled, &c.CreatedAt, &c.UpdatedAt,
 	}
 	if withTarget {
 		dest = append(dest, &targetName, &targetURL)
@@ -216,11 +220,11 @@ func (s *Store) CreatePromCheck(c *PromCheck) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO prom_checks
 		(target_id, name, dimension, metric, label_filter, aggregate, expr_kind, expr_denominator,
 		 alert_strategy, alert_condition, alert_value, alert_delta_value, alert_delta_percent,
-		 alert_consecutive, severity, notify_enabled, recovery_notify, message_template, enabled)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 alert_consecutive, severity, notify_enabled, recovery_notify, message_template, diag_url, enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.TargetID, c.Name, c.Dimension, c.Metric, c.LabelFilter, c.Aggregate, c.ExprKind, c.ExprDenominator,
 		c.AlertStrategy, c.AlertCondition, c.AlertValue, c.AlertDeltaValue, c.AlertDeltaPercent,
-		c.AlertConsecutive, c.Severity, c.NotifyEnabled, c.RecoveryNotify, c.MessageTemplate, c.Enabled)
+		c.AlertConsecutive, c.Severity, c.NotifyEnabled, c.RecoveryNotify, c.MessageTemplate, c.DiagURL, c.Enabled)
 	if err != nil {
 		return 0, err
 	}
@@ -232,13 +236,13 @@ func (s *Store) UpdatePromCheck(c *PromCheck) error {
 		target_id = ?, name = ?, dimension = ?, metric = ?, label_filter = ?, aggregate = ?,
 		expr_kind = ?, expr_denominator = ?, alert_strategy = ?, alert_condition = ?, alert_value = ?,
 		alert_delta_value = ?, alert_delta_percent = ?, alert_consecutive = ?, severity = ?,
-		notify_enabled = ?, recovery_notify = ?, message_template = ?, enabled = ?,
+		notify_enabled = ?, recovery_notify = ?, message_template = ?, diag_url = ?, enabled = ?,
 		updated_at = datetime('now')
 		WHERE id = ?`,
 		c.TargetID, c.Name, c.Dimension, c.Metric, c.LabelFilter, c.Aggregate,
 		c.ExprKind, c.ExprDenominator, c.AlertStrategy, c.AlertCondition, c.AlertValue,
 		c.AlertDeltaValue, c.AlertDeltaPercent, c.AlertConsecutive, c.Severity,
-		c.NotifyEnabled, c.RecoveryNotify, c.MessageTemplate, c.Enabled, c.ID)
+		c.NotifyEnabled, c.RecoveryNotify, c.MessageTemplate, c.DiagURL, c.Enabled, c.ID)
 	return err
 }
 

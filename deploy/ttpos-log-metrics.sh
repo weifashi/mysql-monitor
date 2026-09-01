@@ -53,14 +53,22 @@ while read -r cid cname; do
       offset=$((size - 5242880)); chunk=5242880
     fi
     # docker json-file 里应用日志被转义：\"level\":\"error\"；也兼容 logfmt 的 level=error
-    read -r ie iff ip <<< "$(tail -c +$((offset + 1)) "$lp" | head -c "$chunk" \
+    seg="$SD/.seg.$$"
+    tail -c +$((offset + 1)) "$lp" | head -c "$chunk" \
       | grep -a -v -F -f "$EXCL" \
-      | awk '
+      | grep -aE 'level\\":\\"(error|fatal|panic)|level=(error|fatal|panic)|"level":"(error|fatal|panic)|\[error\]|\[ERROR\]|\] ERROR:|PHP Fatal error|\[crit\]|\[alert\]|\[emerg\]' > "$seg" || true
+    read -r ie iff ip <<< "$(awk '
         /level\\":\\"panic|level=panic|"level":"panic/  {p++; next}
         /level\\":\\"fatal|level=fatal|"level":"fatal|PHP Fatal error|\[crit\]|\[alert\]|\[emerg\]/  {f++; next}
-        /level\\":\\"error|level=error|"level":"error|\[error\]|\[ERROR\]|\] ERROR:/  {e++}
-        END{printf "%d %d %d", e+0, f+0, p+0}')"
+        {e++}
+        END{printf "%d %d %d", e+0, f+0, p+0}' "$seg")"
     ce=$((ce + ie)); cf=$((cf + iff)); cp=$((cp + ip))
+    # 命中的行留样：剥掉 docker json 外壳、截长、带容器名前缀，供 :9101 吐给告警通知
+    if [ -s "$seg" ]; then
+      sed 's/^{"log":"//; s/","stream":".*$//' "$seg" | cut -c1-600 \
+        | sed "s/^/[$cname] /" >> "$SD/recent.log"
+    fi
+    rm -f "$seg"
   fi
 
   echo "$size $ce $cf $cp" > "$sf"
@@ -74,6 +82,11 @@ done < <(docker ps --no-trunc --format '{{.ID}} {{.Names}}' 2>/dev/null)
 
 # 已消失容器的状态文件清理（避免无限累积）
 find "$SD" -name '*.state' -mtime +7 -delete 2>/dev/null
+
+# 样本文件只留最近 80 行——它是"最近发生了什么"的窗口，不是日志存储
+if [ -f "$SD/recent.log" ]; then
+  tail -n 80 "$SD/recent.log" > "$SD/recent.log.new" && mv "$SD/recent.log.new" "$SD/recent.log"
+fi
 
 DUR=$(( ($(date +%s%N) - START) / 1000000 ))
 {
