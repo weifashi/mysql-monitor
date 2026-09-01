@@ -53,6 +53,7 @@ type PromManager struct {
 type PromSnap struct {
 	Value   float64   `json:"value"`
 	Matched bool      `json:"matched"`
+	Detail  string    `json:"detail,omitempty"` // 聚合来源（如 container="mariadb-…"）
 	Err     string    `json:"err,omitempty"`
 	At      time.Time `json:"at"`
 }
@@ -335,7 +336,7 @@ func (m *PromManager) scrape(ctx context.Context, target *store.PromTarget) (map
 
 // evaluate 对单条规则求值并按需告警。
 func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck, families map[string][]promSample, elapsed int64) {
-	value, err := computePromValue(check, families)
+	value, detail, err := computePromValue(check, families)
 	if err != nil {
 		st := m.metricState(check.ID)
 		if now := time.Now(); shouldLogPromResult(st, "error", now) {
@@ -358,13 +359,16 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 	matched, reason := evaluatePromRule(value, check, state)
 	state.LastValue = value
 	state.HasLast = true
-	m.setSnap(check.ID, PromSnap{Value: value, Matched: matched})
+	m.setSnap(check.ID, PromSnap{Value: value, Matched: matched, Detail: detail})
 
 	valueStr := formatPromValue(value)
 	prevStatus, hasPrev, _ := m.store.LastPromAlertStatus(check.ID)
 
 	if matched {
 		message := renderPromMessage(target, check, valueStr, reason)
+		if detail != "" {
+			message += "\n来源：" + detail
+		}
 		now := time.Now()
 		if shouldLogPromResult(state, "alert", now) {
 			m.store.InsertPromAlertLog(&store.PromAlertLog{
@@ -398,6 +402,7 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 			TargetID: target.ID, TargetName: target.Name,
 			Dimension: check.Dimension, Severity: check.Severity,
 			Value: valueStr, Threshold: check.AlertValue, Message: message,
+			Detail: detail,
 		}, notified)
 		return
 	}
@@ -473,7 +478,7 @@ func (m *PromManager) TestCheck(target *store.PromTarget, check *store.PromCheck
 	if err != nil {
 		return "", false, "", err
 	}
-	value, err := computePromValue(check, families)
+	value, _, err := computePromValue(check, families)
 	if err != nil {
 		return "", false, "", err
 	}
@@ -620,90 +625,134 @@ func parsePromFloat(s string) (float64, error) {
 //	raw             直接聚合 metric
 //	ratio           metric / denominator
 //	available_ratio 1 - metric/denominator，用于"剩余率"到"使用率"的翻转
-func computePromValue(check *store.PromCheck, families map[string][]promSample) (float64, error) {
-	numerator, err := aggregateMetric(check.Metric, check.LabelFilter, check.Aggregate, families)
+func computePromValue(check *store.PromCheck, families map[string][]promSample) (float64, string, error) {
+	numerator, detail, err := aggregateMetric(check.Metric, check.LabelFilter, check.Aggregate, families)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 
 	kind := strings.ToLower(strings.TrimSpace(check.ExprKind))
 	if kind == "" || kind == "raw" {
-		return numerator, nil
+		return numerator, detail, nil
 	}
 
 	denomName := strings.TrimSpace(check.ExprDenominator)
 	if denomName == "" {
-		return 0, fmt.Errorf("表达式 %s 需要配置分母指标", kind)
+		return 0, "", fmt.Errorf("表达式 %s 需要配置分母指标", kind)
 	}
-	denominator, err := aggregateMetric(denomName, check.LabelFilter, check.Aggregate, families)
+	denominator, _, err := aggregateMetric(denomName, check.LabelFilter, check.Aggregate, families)
 	if err != nil {
-		return 0, fmt.Errorf("分母指标 %s: %w", denomName, err)
+		return 0, "", fmt.Errorf("分母指标 %s: %w", denomName, err)
 	}
 	if denominator == 0 {
-		return 0, fmt.Errorf("分母指标 %s 为 0，无法计算比率", denomName)
+		return 0, "", fmt.Errorf("分母指标 %s 为 0，无法计算比率", denomName)
 	}
 
 	ratio := numerator / denominator
 	if kind == "available_ratio" {
 		ratio = 1 - ratio
 	}
-	return ratio * 100, nil // 比率统一以百分比呈现，阈值也按百分比填
+	return ratio * 100, detail, nil // 比率统一以百分比呈现，阈值也按百分比填
 }
 
-func aggregateMetric(metric, labelFilter, aggregate string, families map[string][]promSample) (float64, error) {
+// aggregateMetric 聚合样本并给出"来源"：max/min/last 是极值/末位样本的标签，
+// sum/avg/count 是贡献最大的样本的标签（多样本时才有意义）。
+//
+// 没有来源之前，告警只能说"erp-01 上有容器到了 85%"，具体哪个容器要人
+// 再去翻 —— 聚合把标签丢了。引擎明明知道极值是谁贡献的，带出来即可。
+func aggregateMetric(metric, labelFilter, aggregate string, families map[string][]promSample) (float64, string, error) {
 	metric = strings.TrimSpace(metric)
 	samples, ok := families[metric]
 	if !ok || len(samples) == 0 {
-		return 0, fmt.Errorf("端点中没有指标 %s", metric)
+		return 0, "", fmt.Errorf("端点中没有指标 %s", metric)
 	}
 
 	filters := parseLabelFilter(labelFilter)
-	matched := make([]float64, 0, len(samples))
+	matched := make([]promSample, 0, len(samples))
 	for _, s := range samples {
 		if matchLabels(s.Labels, filters) {
-			matched = append(matched, s.Value)
+			matched = append(matched, s)
 		}
 	}
 	if len(matched) == 0 {
-		return 0, fmt.Errorf("指标 %s 没有匹配 %s 的样本", metric, labelFilter)
+		return 0, "", fmt.Errorf("指标 %s 没有匹配 %s 的样本", metric, labelFilter)
+	}
+
+	// 单样本时来源没有信息量（标签过滤已经指明了），置空少一行噪音
+	detailOf := func(sm promSample) string {
+		if len(matched) < 2 {
+			return ""
+		}
+		return formatSampleLabels(sm.Labels)
 	}
 
 	switch strings.ToLower(strings.TrimSpace(aggregate)) {
 	case "", "last":
-		return matched[len(matched)-1], nil
-	case "sum":
+		last := matched[len(matched)-1]
+		return last.Value, detailOf(last), nil
+	case "sum", "avg", "count":
 		sum := 0.0
-		for _, v := range matched {
-			sum += v
+		top := matched[0]
+		for _, sm := range matched {
+			sum += sm.Value
+			if sm.Value > top.Value {
+				top = sm
+			}
 		}
-		return sum, nil
-	case "avg":
-		sum := 0.0
-		for _, v := range matched {
-			sum += v
+		switch strings.ToLower(strings.TrimSpace(aggregate)) {
+		case "sum":
+			return sum, detailOf(top), nil
+		case "avg":
+			return sum / float64(len(matched)), detailOf(top), nil
+		default:
+			return float64(len(matched)), "", nil
 		}
-		return sum / float64(len(matched)), nil
 	case "max":
-		max := matched[0]
-		for _, v := range matched {
-			if v > max {
-				max = v
+		top := matched[0]
+		for _, sm := range matched {
+			if sm.Value > top.Value {
+				top = sm
 			}
 		}
-		return max, nil
+		return top.Value, detailOf(top), nil
 	case "min":
-		min := matched[0]
-		for _, v := range matched {
-			if v < min {
-				min = v
+		low := matched[0]
+		for _, sm := range matched {
+			if sm.Value < low.Value {
+				low = sm
 			}
 		}
-		return min, nil
-	case "count":
-		return float64(len(matched)), nil
+		return low.Value, detailOf(low), nil
 	default:
-		return 0, fmt.Errorf("不支持的聚合方式 %s", aggregate)
+		return 0, "", fmt.Errorf("不支持的聚合方式 %s", aggregate)
 	}
+}
+
+// formatSampleLabels 把样本标签压成一行，优先展示能定位对象的那几个。
+func formatSampleLabels(labels map[string]string) string {
+	// container/mountpoint/device 这类标签才是"是哪一个"的答案，排前面
+	priority := []string{"container", "mountpoint", "device", "db_name", "route", "status"}
+	parts := []string{}
+	used := map[string]bool{}
+	for _, k := range priority {
+		if v := labels[k]; v != "" {
+			parts = append(parts, k+"="+v)
+			used[k] = true
+		}
+	}
+	rest := []string{}
+	for k, v := range labels {
+		if !used[k] && v != "" {
+			rest = append(rest, k+"="+v)
+		}
+	}
+	sort.Strings(rest)
+	parts = append(parts, rest...)
+	out := strings.Join(parts, " ")
+	if len(out) > 120 {
+		out = out[:120] + "…"
+	}
+	return out
 }
 
 // parseLabelFilter 解析 device="sda2",mountpoint="/" 形式的过滤条件。

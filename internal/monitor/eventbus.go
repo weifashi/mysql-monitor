@@ -7,7 +7,7 @@ import (
 
 // MonitorEvent represents an event emitted by monitor goroutines.
 type MonitorEvent struct {
-	Type       string      `json:"type"`                 // checking, found_queries, no_queries, slow_query, notified, error
+	Type       string      `json:"type"` // checking, found_queries, no_queries, slow_query, notified, error
 	DatabaseID int64       `json:"database_id"`
 	DBName     string      `json:"db_name"`
 	Message    string      `json:"message"`

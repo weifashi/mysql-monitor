@@ -27,6 +27,7 @@ type objCheck struct {
 	Strategy  string  `json:"strategy"`
 	HasValue  bool    `json:"has_value"`
 	Value     float64 `json:"value"`
+	Detail    string  `json:"detail,omitempty"`
 	Matched   bool    `json:"matched"`
 	Err       string  `json:"err,omitempty"`
 	Risk      bool    `json:"risk"`
@@ -65,6 +66,7 @@ func buildObjChecks(checks []store.PromCheck, snap map[int64]monitor.PromSnap) [
 		if sn, ok := snap[c.ID]; ok {
 			oc.HasValue = sn.Err == ""
 			oc.Value = sn.Value
+			oc.Detail = sn.Detail
 			oc.Matched = sn.Matched
 			oc.Err = sn.Err
 			if oc.HasValue && c.AlertStrategy != "increase" {
@@ -226,6 +228,7 @@ func (s *Server) apiOverview(w http.ResponseWriter, r *http.Request) {
 		Check     string  `json:"check"`
 		Metric    string  `json:"metric"`
 		Value     float64 `json:"value"`
+		Detail    string  `json:"detail,omitempty"`
 		Threshold string  `json:"threshold"`
 		Closeness float64 `json:"closeness"` // 1.0 = 已到阈值
 	}
@@ -256,7 +259,7 @@ func (s *Server) apiOverview(w http.ResponseWriter, r *http.Request) {
 			}
 			risks = append(risks, riskItem{
 				Target: o.Name, Check: c.Name, Metric: c.Metric,
-				Value: c.Value, Threshold: c.Threshold, Closeness: closeness,
+				Value: c.Value, Detail: c.Detail, Threshold: c.Threshold, Closeness: closeness,
 			})
 		}
 	}

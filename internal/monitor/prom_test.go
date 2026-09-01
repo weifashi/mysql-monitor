@@ -94,7 +94,7 @@ func TestAggregateMetric(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		got, err := aggregateMetric("m", "", c.aggregate, families)
+		got, _, err := aggregateMetric("m", "", c.aggregate, families)
 		if err != nil {
 			t.Fatalf("aggregate %q failed: %v", c.aggregate, err)
 		}
@@ -104,24 +104,24 @@ func TestAggregateMetric(t *testing.T) {
 	}
 
 	// 标签过滤
-	got, err := aggregateMetric("m", `d="b"`, "sum", families)
+	got, _, err := aggregateMetric("m", `d="b"`, "sum", families)
 	if err != nil || got != 30 {
 		t.Errorf("label filter failed: got %v err %v", got, err)
 	}
 
 	// 前缀匹配，容器名带随机后缀时用
-	got, err = aggregateMetric("m", `d="a*"`, "sum", families)
+	got, _, err = aggregateMetric("m", `d="a*"`, "sum", families)
 	if err != nil || got != 10 {
 		t.Errorf("prefix filter failed: got %v err %v", got, err)
 	}
 
 	// 指标不存在应报错而不是返回 0，否则会被误判成"低于阈值"
-	if _, err := aggregateMetric("nonexistent", "", "sum", families); err == nil {
+	if _, _, err := aggregateMetric("nonexistent", "", "sum", families); err == nil {
 		t.Error("missing metric should return error, not zero")
 	}
 
 	// 过滤后无样本同样应报错
-	if _, err := aggregateMetric("m", `d="zzz"`, "sum", families); err == nil {
+	if _, _, err := aggregateMetric("m", `d="zzz"`, "sum", families); err == nil {
 		t.Error("no matching sample should return error")
 	}
 }
@@ -134,7 +134,7 @@ func TestComputePromValueRatio(t *testing.T) {
 	}
 
 	// ratio：used/total 以百分比返回
-	v, err := computePromValue(&store.PromCheck{
+	v, _, err := computePromValue(&store.PromCheck{
 		Metric: "used", ExprKind: "ratio", ExprDenominator: "total",
 	}, families)
 	if err != nil || v != 25 {
@@ -142,7 +142,7 @@ func TestComputePromValueRatio(t *testing.T) {
 	}
 
 	// available_ratio：free/total 翻转成使用率
-	v, err = computePromValue(&store.PromCheck{
+	v, _, err = computePromValue(&store.PromCheck{
 		Metric: "free", ExprKind: "available_ratio", ExprDenominator: "total",
 	}, families)
 	if err != nil || v != 75 {
@@ -150,7 +150,7 @@ func TestComputePromValueRatio(t *testing.T) {
 	}
 
 	// raw
-	v, err = computePromValue(&store.PromCheck{Metric: "used", ExprKind: "raw"}, families)
+	v, _, err = computePromValue(&store.PromCheck{Metric: "used", ExprKind: "raw"}, families)
 	if err != nil || v != 25 {
 		t.Errorf("raw = %v (err %v), want 25", v, err)
 	}
@@ -160,7 +160,7 @@ func TestComputePromValueRatio(t *testing.T) {
 		"a": {{Labels: map[string]string{}, Value: 1}},
 		"b": {{Labels: map[string]string{}, Value: 0}},
 	}
-	if _, err := computePromValue(&store.PromCheck{
+	if _, _, err := computePromValue(&store.PromCheck{
 		Metric: "a", ExprKind: "ratio", ExprDenominator: "b",
 	}, zero); err == nil {
 		t.Error("zero denominator should return error")
@@ -349,5 +349,34 @@ func TestSustainedWarmupIsNotRecovery(t *testing.T) {
 	evaluatePromRule(50, check, st)
 	if st.ConsecutiveMatched != 0 {
 		t.Fatal("回落后计数应清零")
+	}
+}
+
+func TestAggregateMetricDetail(t *testing.T) {
+	families := map[string][]promSample{
+		"m": {
+			{Labels: map[string]string{"container": "a"}, Value: 10},
+			{Labels: map[string]string{"container": "mariadb-x"}, Value: 86},
+			{Labels: map[string]string{"container": "c"}, Value: 20},
+		},
+		"single": {{Labels: map[string]string{"container": "only"}, Value: 5}},
+	}
+	// max 要带出极值样本的标签——这就是"85.91% 到底是哪个容器"的答案
+	v, detail, err := aggregateMetric("m", "", "max", families)
+	if err != nil || v != 86 {
+		t.Fatalf("max = %v err %v", v, err)
+	}
+	if detail != `container=mariadb-x` {
+		t.Errorf("max 来源应为极值样本，得到 %q", detail)
+	}
+	// sum 带最大贡献者
+	_, detail, _ = aggregateMetric("m", "", "sum", families)
+	if detail != `container=mariadb-x` {
+		t.Errorf("sum 来源应为最大贡献者，得到 %q", detail)
+	}
+	// 单样本时来源为空：标签过滤已指明对象，再报一遍是噪音
+	_, detail, _ = aggregateMetric("single", "", "max", families)
+	if detail != "" {
+		t.Errorf("单样本来源应为空，得到 %q", detail)
 	}
 }

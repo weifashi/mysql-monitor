@@ -432,6 +432,7 @@ CREATE TABLE IF NOT EXISTS alert_events (
     severity     TEXT    NOT NULL DEFAULT 'warning',
     status       TEXT    NOT NULL DEFAULT 'firing',   -- firing / resolved
     value        TEXT    NOT NULL DEFAULT '',
+    detail       TEXT    NOT NULL DEFAULT '',  -- 聚合来源（如具体是哪个容器）
     peak_value   TEXT    NOT NULL DEFAULT '',
     threshold    TEXT    NOT NULL DEFAULT '',
     message      TEXT    NOT NULL DEFAULT '',

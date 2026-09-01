@@ -5017,8 +5017,9 @@ function firingCard(router, group) {
         h('div', { style: 'font-size:13px;opacity:.75;margin-top:7px;line-height:1.7' },
             multi
                 ? ['命中 ' + group.length + ' 个对象：', group.map(e =>
-                    h('span', { style: 'margin-right:10px;font-family:monospace' }, `${e.target_name} ${e.value}`))]
+                    h('span', { style: 'margin-right:10px;font-family:monospace' }, `${e.target_name} ${e.value}${e.detail ? '（' + e.detail + '）' : ''}`))]
                 : `${first.target_name} · 当前 ${first.value}${first.threshold ? ' · 阈值 ' + first.threshold : ''}${first.peak_value && first.peak_value !== first.value ? ' · 峰值 ' + first.peak_value : ''}`),
+        !multi && first.detail ? h('div', { style: 'font-size:12px;font-family:monospace;opacity:.7;margin-top:4px' }, '来源：' + first.detail) : null,
         h('div', { style: 'margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px' }, [
             h(NTag, { size: 'tiny', bordered: false }, () => ({ prom: '指标', health: '站点', cert: '证书', custom_sql: 'SQL' }[first.source] || first.source)),
             first.dimension ? h(NTag, { size: 'tiny', bordered: false }, () => first.dimension) : null,
@@ -5043,7 +5044,10 @@ const OverviewPage = defineComponent({
         onUnmounted(() => clearInterval(timer));
 
         const riskColumns = [
-            { title: '对象', key: 'target', render: r => r.target.replace(' 主机指标', '').replace(' 应用指标', ' (应用)') },
+            { title: '对象', key: 'target', render: r => h('div', null, [
+                h('div', null, r.target.replace(' 主机指标', '').replace(' 应用指标', ' (应用)')),
+                r.detail ? h('div', { style: 'font-size:11px;font-family:monospace;opacity:.6' }, r.detail) : null,
+            ]) },
             { title: '规则', key: 'check' },
             { title: '当前值', key: 'value', render: r => h('span', { style: 'font-family:monospace' }, (Math.round(r.value * 100) / 100).toString()) },
             { title: '阈值', key: 'threshold', render: r => h('span', { style: 'font-family:monospace' }, r.threshold) },
@@ -5185,7 +5189,10 @@ function objMetricCell(o, def) {
     if (!c) return h('span', { style: 'opacity:.3' }, '–');
     const v = Math.round(c.value * 10) / 10;
     const color = c.matched ? '#d03050' : (c.risk ? '#f0a020' : '');
-    return h('span', { style: `font-family:monospace;${color ? 'color:' + color + ';font-weight:700' : ''}` }, v + (def.pct ? '%' : ''));
+    return h('span', {
+        style: `font-family:monospace;${color ? 'color:' + color + ';font-weight:700' : ''}${c.detail ? ';cursor:help;border-bottom:1px dotted currentColor' : ''}`,
+        title: c.detail || undefined,
+    }, v + (def.pct ? '%' : ''));
 }
 
 function objStatusTag(o) {
@@ -5268,9 +5275,12 @@ const ObjectDetailPage = defineComponent({
             { title: '规则', key: 'name' },
             { title: '指标', key: 'metric', render: c => h('span', { style: 'font-family:monospace;font-size:11.5px;opacity:.7' }, c.metric) },
             {
-                title: '当前值', key: 'value', width: 110, render: c => c.err
+                title: '当前值', key: 'value', width: 130, render: c => c.err
                     ? h(NTooltip, null, { trigger: () => h(NTag, { size: 'tiny', type: 'default' }, () => '无数据'), default: () => c.err })
-                    : h('span', { style: 'font-family:monospace;font-weight:600' }, Math.round(c.value * 100) / 100),
+                    : h('div', null, [
+                        h('span', { style: 'font-family:monospace;font-weight:600' }, Math.round(c.value * 100) / 100),
+                        c.detail ? h('div', { style: 'font-size:10.5px;font-family:monospace;opacity:.6;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', title: c.detail }, c.detail) : null,
+                    ]),
             },
             { title: '条件', key: 'cond', width: 120, render: c => h('span', { style: 'font-family:monospace;font-size:12px' }, c.strategy === 'increase' ? '增长>' + '' : ({ gt: '>', gte: '≥', lt: '<', lte: '≤' }[c.condition] || c.condition) + ' ' + c.threshold) },
             {

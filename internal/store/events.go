@@ -25,6 +25,7 @@ type AlertEvent struct {
 	Severity   string `json:"severity"`
 	Status     string `json:"status"` // firing / resolved
 	Value      string `json:"value"`  // 最近一次的值
+	Detail     string `json:"detail"` // 聚合来源（如具体是哪个容器）
 	PeakValue  string `json:"peak_value"`
 	Threshold  string `json:"threshold"`
 	Message    string `json:"message"`
@@ -56,11 +57,11 @@ func (s *Store) UpsertFiringEvent(e *AlertEvent, notified bool) {
 		}
 		s.db.Exec(`INSERT INTO alert_events
 			(source, check_id, check_name, title, target_id, target_name, dimension,
-			 severity, status, value, peak_value, threshold, message,
+			 severity, status, value, detail, peak_value, threshold, message,
 			 first_at, last_at, notify_count)
-			VALUES (?,?,?,?,?,?,?,?,'firing',?,?,?,?,datetime('now'),datetime('now'),?)`,
+			VALUES (?,?,?,?,?,?,?,?,'firing',?,?,?,?,?,datetime('now'),datetime('now'),?)`,
 			e.Source, e.CheckID, e.CheckName, e.Title, e.TargetID, e.TargetName,
-			e.Dimension, e.Severity, e.Value, e.PeakValue, e.Threshold, e.Message, notifyInc)
+			e.Dimension, e.Severity, e.Value, e.Detail, e.PeakValue, e.Threshold, e.Message, notifyInc)
 		return
 	}
 	if err != nil {
@@ -75,10 +76,10 @@ func (s *Store) UpsertFiringEvent(e *AlertEvent, notified bool) {
 		}
 	}
 	s.db.Exec(`UPDATE alert_events SET
-		value = ?, peak_value = ?, message = ?, last_at = datetime('now'),
+		value = ?, detail = ?, peak_value = ?, message = ?, last_at = datetime('now'),
 		notify_count = notify_count + ?
 		WHERE id = ?`,
-		e.Value, newPeak, e.Message, notifyInc, id)
+		e.Value, e.Detail, newPeak, e.Message, notifyInc, id)
 }
 
 // ResolveEvent 关闭 (source, check_id) 的 firing 事件（若有）。
@@ -91,13 +92,13 @@ func (s *Store) ResolveEvent(source string, checkID int64, finalValue string) {
 }
 
 const alertEventColumns = `id, source, check_id, check_name, title, target_id, target_name,
-	dimension, severity, status, value, peak_value, threshold, message,
+	dimension, severity, status, value, detail, peak_value, threshold, message,
 	first_at, last_at, resolved_at, notify_count`
 
 func scanAlertEvent(sc interface{ Scan(...any) error }) (AlertEvent, error) {
 	var e AlertEvent
 	err := sc.Scan(&e.ID, &e.Source, &e.CheckID, &e.CheckName, &e.Title, &e.TargetID,
-		&e.TargetName, &e.Dimension, &e.Severity, &e.Status, &e.Value, &e.PeakValue,
+		&e.TargetName, &e.Dimension, &e.Severity, &e.Status, &e.Value, &e.Detail, &e.PeakValue,
 		&e.Threshold, &e.Message, &e.FirstAt, &e.LastAt, &e.ResolvedAt, &e.NotifyCount)
 	return e, err
 }
