@@ -4999,20 +4999,19 @@ function firingCard(router, group) {
     const earliest = group.reduce((a, e) => (e.first_at < a ? e.first_at : a), first.first_at);
     const multi = group.length > 1;
     return h('div', {
-        class: 'alert-ev-card',
-        style: `border:1px solid var(--n-border-color,#eee);border-left:4px solid ${sevTagType(first.severity) === 'error' ? '#d03050' : '#f0a020'};border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:10px;background:var(--card-bg,#fff)`,
+        class: 'sen-card sen-ev' + (sevTagType(first.severity) === 'error' ? ' crit' : ''),
     }, [
         h('div', { style: 'display:flex;align-items:baseline;gap:10px;flex-wrap:wrap' }, [
             h('span', { style: 'font-weight:650;font-size:14px' }, first.title || first.check_name),
             h(NTag, { size: 'tiny', type: sevTagType(first.severity) }, () => first.severity),
             h('span', { style: 'margin-left:auto;font-size:12px;opacity:.55;font-family:monospace' }, '已持续 ' + fmtSince(earliest)),
         ]),
-        h('div', { style: 'font-size:13px;opacity:.75;margin-top:5px' },
+        h('div', { style: 'font-size:13px;opacity:.75;margin-top:7px;line-height:1.7' },
             multi
                 ? ['命中 ' + group.length + ' 个对象：', group.map(e =>
                     h('span', { style: 'margin-right:10px;font-family:monospace' }, `${e.target_name} ${e.value}`))]
                 : `${first.target_name} · 当前 ${first.value}${first.threshold ? ' · 阈值 ' + first.threshold : ''}${first.peak_value && first.peak_value !== first.value ? ' · 峰值 ' + first.peak_value : ''}`),
-        h('div', { style: 'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px' }, [
+        h('div', { style: 'margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px' }, [
             h(NTag, { size: 'tiny', bordered: false }, () => ({ prom: '指标', health: '站点', cert: '证书', custom_sql: 'SQL' }[first.source] || first.source)),
             first.dimension ? h(NTag, { size: 'tiny', bordered: false }, () => first.dimension) : null,
             h(NTag, { size: 'tiny', bordered: false, type: first.notify_count > 0 ? 'success' : 'error' },
@@ -5061,45 +5060,45 @@ const OverviewPage = defineComponent({
                     default: () => h(NButton, { size: 'small', type: 'primary', onClick: () => router.push('/notifications') }, () => '去配置'),
                 }) : null,
 
-                h('div', { style: 'font-size:13px;font-weight:700;color:#d03050;margin-bottom:8px' },
+                h('div', { class: 'sen-sec first', style: 'color:#d03050' },
                     groups.length ? `触发中（${groups.length} 个问题 / ${(d.firing || []).length} 条）` : '触发中'),
                 groups.length
                     ? groups.map(g => firingCard(router, g))
-                    : h('div', { style: 'padding:14px;border:1px dashed var(--n-border-color,#ddd);border-radius:8px;opacity:.6;font-size:13px;margin-bottom:6px' }, '当前没有触发中的告警'),
+                    : h('div', { class: 'sen-card', style: 'border-style:dashed;opacity:.65;font-size:13px' }, '✓ 当前没有触发中的告警'),
 
                 d.risks && d.risks.length ? [
-                    h('div', { style: 'font-size:13px;font-weight:700;color:#f0a020;margin:18px 0 8px' }, `容量风险（未触发但已接近阈值）`),
+                    h('div', { class: 'sen-sec', style: 'color:#f0a020' }, `容量风险（未触发但已接近阈值）`),
                     h(NDataTable, { columns: riskColumns, data: d.risks, size: 'small', bordered: false }),
                 ] : null,
 
-                h('div', { style: 'margin-top:22px' }, [
-                    h('div', { style: 'font-size:13px;font-weight:700;margin-bottom:8px;opacity:.75' }, '维度与系统自身'),
-                    h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap' }, [
+                h('div', { style: 'margin-top:4px' }, [
+                    h('div', { class: 'sen-sec', style: 'opacity:.75' }, '维度与系统自身'),
+                    h('div', { style: 'display:flex;gap:12px;flex-wrap:wrap' }, [
                         ...Object.entries(d.dims || {}).map(([dim, v]) => {
                             const name = { host: '主机', container: '容器', app: '应用', business: '业务', database: '数据库', middleware: '中间件' }[dim] || dim;
-                            return h('div', { style: 'border:1px solid var(--n-border-color,#e5e7eb);border-radius:8px;padding:9px 14px;min-width:108px;background:var(--card-bg,#fff)' }, [
-                                h('div', { style: 'font-size:11.5px;opacity:.55' }, name + '规则'),
+                            return h('div', { class: 'sen-card sen-kpi' }, [
+                                h('div', { class: 'k-label' }, name + '规则'),
                                 h('div', { style: 'display:flex;align-items:baseline;gap:8px' }, [
-                                    h('span', { style: 'font-size:19px;font-weight:750;font-family:monospace' }, v[1]),
+                                    h('span', { class: 'k-value' }, v[1]),
                                     v[0] > 0
                                         ? h(NTag, { size: 'tiny', type: 'error', bordered: false }, () => v[0] + ' 触发')
                                         : h(NTag, { size: 'tiny', type: 'success', bordered: false }, () => '正常'),
                                 ]),
                             ]);
                         }),
-                        h('div', { style: 'width:1px;background:var(--n-border-color,#e5e7eb);margin:2px 4px' }),
-                        h('div', { style: 'border:1px solid var(--n-border-color,#e5e7eb);border-radius:8px;padding:9px 14px;min-width:108px;background:var(--card-bg,#fff);cursor:pointer', onClick: () => router.push('/notifications') }, [
-                            h('div', { style: 'font-size:11.5px;opacity:.55' }, '通知渠道'),
+                        h('div', { style: 'width:1px;background:var(--stat-card-border,#eee);margin:6px 6px' }),
+                        h('div', { class: 'sen-card sen-kpi sen-card-click', onClick: () => router.push('/notifications') }, [
+                            h('div', { class: 'k-label' }, '通知渠道'),
                             h('div', { style: 'display:flex;align-items:baseline;gap:8px' }, [
-                                h('span', { style: 'font-size:19px;font-weight:750;font-family:monospace' }, d.self.notify_channels),
+                                h('span', { class: 'k-value' }, d.self.notify_channels),
                                 d.self.notify_channels > 0
                                     ? h(NTag, { size: 'tiny', type: 'success', bordered: false }, () => '可用')
                                     : h(NTag, { size: 'tiny', type: 'error', bordered: false }, () => '未配置'),
                             ]),
                         ]),
-                        h('div', { style: 'border:1px solid var(--n-border-color,#e5e7eb);border-radius:8px;padding:9px 14px;min-width:150px;background:var(--card-bg,#fff)' }, [
-                            h('div', { style: 'font-size:11.5px;opacity:.55' }, '采集器（指标/证书/站点）'),
-                            h('div', { style: 'font-size:19px;font-weight:750;font-family:monospace' },
+                        h('div', { class: 'sen-card sen-kpi', style: 'min-width:170px' }, [
+                            h('div', { class: 'k-label' }, '采集器（指标 / 证书 / 站点）'),
+                            h('div', { class: 'k-value' },
                                 `${d.self.targets_running} / ${d.self.cert_running} / ${d.self.health_running}`),
                         ]),
                     ]),
@@ -5305,21 +5304,21 @@ const ObjectDetailPage = defineComponent({
                     h('span', { style: 'font-size:12px;opacity:.5' },
                         Object.entries(o.labels || {}).filter(([, v]) => v && v !== '-').map(([k, v]) => `${k}=${v}`).join(' · ') + ` · 每 ${o.interval_sec}s`),
                 ]),
-                kpis.length ? h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px' },
+                kpis.length ? h('div', { style: 'display:flex;gap:12px;flex-wrap:wrap;margin:4px 0 20px' },
                     kpis.map(k => h('div', {
-                        style: `border:1px solid ${k.check.matched ? '#f5c2cb' : 'var(--n-border-color,#eee)'};background:${k.check.matched ? 'rgba(208,48,80,.06)' : 'var(--card-bg,#fff)'};border-radius:8px;padding:8px 14px;min-width:96px`,
+                        class: 'sen-card sen-kpi' + (k.check.matched ? ' crit' : ''),
                     }, [
-                        h('div', { style: 'font-size:11px;opacity:.6' }, k.label),
-                        h('div', { style: `font-size:18px;font-weight:750;font-family:monospace;${k.check.matched ? 'color:#d03050' : (k.check.risk ? 'color:#f0a020' : '')}` },
+                        h('div', { class: 'k-label' }, k.label),
+                        h('div', { class: 'k-value', style: k.check.matched ? 'color:#d03050' : (k.check.risk ? 'color:#f0a020' : '') },
                             (Math.round(k.check.value * 10) / 10) + (k.pct ? '%' : '')),
                         k.check.matched ? h('div', { style: 'font-size:10.5px;color:#d03050' }, '▲ 触发中') : null,
                     ]))) : null,
 
-                h('div', { style: 'font-size:13px;font-weight:700;margin-bottom:6px' }, `全部规则（${(o.checks || []).length} 条，来源混排）`),
+                h('div', { class: 'sen-sec' }, `全部规则（${(o.checks || []).length} 条，来源混排）`),
                 h(NDataTable, { columns: checkColumns, data: o.checks || [], size: 'small', bordered: false }),
 
                 d.children && d.children.length ? [
-                    h('div', { style: 'font-size:13px;font-weight:700;margin:16px 0 6px' }, `承载的对象（${d.children.length}）`),
+                    h('div', { class: 'sen-sec' }, `承载的对象（${d.children.length}）`),
                     h(NDataTable, {
                         columns: childColumns, data: d.children, size: 'small', bordered: false,
                         rowProps: c => ({ style: 'cursor:pointer', onClick: () => router.push('/objects/' + c.id) }),
@@ -5327,7 +5326,7 @@ const ObjectDetailPage = defineComponent({
                 ] : null,
 
                 d.events && d.events.length ? [
-                    h('div', { style: 'font-size:13px;font-weight:700;margin:16px 0 6px' }, '告警事件'),
+                    h('div', { class: 'sen-sec' }, '告警事件'),
                     h(NDataTable, { columns: eventColumns, data: d.events, size: 'small', bordered: false }),
                 ] : null,
             ]);

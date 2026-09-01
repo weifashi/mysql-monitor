@@ -757,3 +757,32 @@ html {
         padding: 0 12px;
     }
 }
+
+/* ============================================================
+   重设计页面（总览/告警/监控对象）的卡片体系。
+   对齐 .stat-card 的设计语言：同一组变量、12px 圆角、绿色 hover，
+   替代散落在 app.js 里的内联样式 —— 之前边框硬、留白抠，和整体不搭。
+   ============================================================ */
+.sen-card {
+    background: var(--stat-card-bg);
+    border: 1px solid var(--stat-card-border);
+    border-radius: 12px;
+    box-shadow: var(--stat-card-shadow);
+    padding: 16px 20px;
+}
+.sen-card-click { cursor: pointer; transition: border-color .2s, box-shadow .2s; }
+.sen-card-click:hover { border-color: #36ad6a; box-shadow: 0 2px 8px rgba(54,173,106,.12); }
+
+/* 告警事件卡：左侧色条表级别 */
+.sen-ev { border-left: 4px solid #f0a020; margin-bottom: 12px; }
+.sen-ev.crit { border-left-color: #d03050; }
+
+/* KPI 小卡（总览底部 / 对象详情顶部） */
+.sen-kpi { padding: 12px 18px; min-width: 118px; }
+.sen-kpi .k-label { font-size: 12px; opacity: .55; margin-bottom: 3px; }
+.sen-kpi .k-value { font-size: 22px; font-weight: 750; font-family: ui-monospace, monospace; line-height: 1.25; }
+.sen-kpi.crit { border-color: rgba(208,48,80,.35); background: rgba(208,48,80,.05); }
+
+/* 节标题：给足上下呼吸 */
+.sen-sec { font-size: 13px; font-weight: 700; margin: 28px 0 12px; letter-spacing: .3px; }
+.sen-sec:first-child, .sen-sec.first { margin-top: 4px; }
