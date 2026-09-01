@@ -6,7 +6,13 @@
 #   1) 增量扫描：按容器记 offset，每轮只读新增部分。文件变小（轮转）时归零。
 #   2) 首见跳过历史：新容器第一次见到时 offset 直接设到文件末尾——
 #      否则第一轮会把上限 100MB 的旧日志全算成"新错误"，触发一轮假告警。
-#   3) 排除业务噪音：17 条清单来自生产 Cloud Logging 配置——这些在代码里是
+#   3) 覆盖四类格式（不只结构化日志）：
+#        Go zap JSON        {"level":"error"}          -> error/fatal/panic
+#        nginx error.log    [error] / [crit]/[alert]/[emerg]（后三档更严重，归 fatal）
+#        MySQL/MariaDB      [ERROR]
+#        php-fpm            "] ERROR:" / "PHP Fatal error"
+#      nginx 访问行的 5xx 不在这里数——那由应用指标的 5xx 规则覆盖。
+#   4) 排除业务噪音：17 条清单来自生产 Cloud Logging 配置——这些在代码里是
 #      error 级别、业务上是正常路径，不排掉第一天就会被淹没。
 set -u
 TF="${1:-/var/lib/node_exporter/textfile}"
@@ -51,8 +57,8 @@ while read -r cid cname; do
       | grep -a -v -F -f "$EXCL" \
       | awk '
         /level\\":\\"panic|level=panic|"level":"panic/  {p++; next}
-        /level\\":\\"fatal|level=fatal|"level":"fatal/  {f++; next}
-        /level\\":\\"error|level=error|"level":"error/  {e++}
+        /level\\":\\"fatal|level=fatal|"level":"fatal|PHP Fatal error|\[crit\]|\[alert\]|\[emerg\]/  {f++; next}
+        /level\\":\\"error|level=error|"level":"error|\[error\]|\[ERROR\]|\] ERROR:/  {e++}
         END{printf "%d %d %d", e+0, f+0, p+0}')"
     ce=$((ce + ie)); cf=$((cf + iff)); cp=$((cp + ip))
   fi
