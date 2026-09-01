@@ -5301,8 +5301,8 @@ const ObjectDetailPage = defineComponent({
         onUnmounted(() => clearInterval(timer));
 
         const checkColumns = [
-            { title: '规则', key: 'name' },
-            { title: '指标', key: 'metric', render: c => h('span', { style: 'font-family:monospace;font-size:11.5px;opacity:.7' }, c.metric) },
+            { title: '规则', key: 'name', ellipsis: { tooltip: true } },
+            { title: '指标', key: 'metric', width: 300, ellipsis: { tooltip: true }, render: c => h('span', { style: 'font-family:monospace;font-size:11.5px;opacity:.7' }, c.metric) },
             {
                 title: '当前值', key: 'value', width: 130, render: c => c.err
                     ? h(NTooltip, null, { trigger: () => h(NTag, { size: 'tiny', type: 'default' }, () => '无数据'), default: () => c.err })
@@ -5362,7 +5362,7 @@ const ObjectDetailPage = defineComponent({
                     ]))) : null,
 
                 h('div', { class: 'sen-sec' }, `全部规则（${(o.checks || []).length} 条，来源混排）`),
-                h('div', { style: 'max-width:1150px' }, [h(NDataTable, { columns: checkColumns, data: o.checks || [], size: 'small', bordered: false })]),
+                h('div', { style: 'max-width:1020px' }, [h(NDataTable, { columns: checkColumns, data: o.checks || [], size: 'small', bordered: false })]),
 
                 d.children && d.children.length ? [
                     h('div', { class: 'sen-sec' }, `承载的对象（${d.children.length}）`),
