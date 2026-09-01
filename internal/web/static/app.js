@@ -4944,7 +4944,7 @@ const AppLayout = defineComponent({
                         h(NMenu, { value: activeKey.value, options: menuOptions.value, onUpdateValue: handleMenuUpdate }),
                     ]),
                     // Sub sidebar (when group has children)
-                    currentTabs.value ? h(NLayoutSider, { bordered: true, width: 140, nativeScrollbar: false, contentStyle: 'padding:12px 0;background:var(--content-bg)' }, () => [
+                    currentTabs.value ? h(NLayoutSider, { bordered: true, width: 184, nativeScrollbar: false, contentStyle: 'padding:12px 0;background:var(--content-bg)' }, () => [
                         h(NMenu, {
                             value: routeKey.value,
                             options: currentTabs.value,
