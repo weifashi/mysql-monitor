@@ -212,6 +212,17 @@ func (m *CustomSQLManager) doCheck(cfg *store.CustomSQLCheck) {
 		log.Printf("[CustomSQL %s] insert log error: %v", cfg.Name, err)
 	}
 
+	if logEntry.Status == "alert" || logEntry.Status == "error" {
+		m.store.UpsertFiringEvent(&store.AlertEvent{
+			Source: "custom_sql", CheckID: cfg.ID, CheckName: cfg.Name,
+			Title: cfg.Name, TargetID: cfg.DatabaseID, TargetName: cfg.DBName,
+			Dimension: "database", Severity: "warning",
+			Value: logEntry.Value, Message: logEntry.Message,
+		}, false)
+	} else if logEntry.Status == "ok" && wasAlert {
+		m.store.ResolveEvent("custom_sql", cfg.ID, logEntry.Value)
+	}
+
 	m.emit("custom_sql_result", cfg.ID, cfg.Name, logEntry.Message, logEntry)
 
 	if logEntry.Status == "alert" {

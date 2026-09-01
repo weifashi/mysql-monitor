@@ -1,0 +1,306 @@
+package web
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"ops-sentinel/internal/monitor"
+	"ops-sentinel/internal/store"
+)
+
+// 本文件是「总览 / 告警中心 / 监控对象」三个新页面的聚合接口。
+// 数据来源刻意分成两层：
+//   - 触发中/已恢复 → alert_events 表（事件生命周期，权威）
+//   - 当前值/容量风险 → PromManager 的内存快照（最新鲜，零查询成本）
+
+// objCheck 是对象详情里的一条规则视图。
+type objCheck struct {
+	ID        int64   `json:"id"`
+	Name      string  `json:"name"`
+	Metric    string  `json:"metric"`
+	Dimension string  `json:"dimension"`
+	Severity  string  `json:"severity"`
+	Condition string  `json:"condition"`
+	Threshold string  `json:"threshold"`
+	Strategy  string  `json:"strategy"`
+	HasValue  bool    `json:"has_value"`
+	Value     float64 `json:"value"`
+	Matched   bool    `json:"matched"`
+	Err       string  `json:"err,omitempty"`
+	Risk      bool    `json:"risk"`
+}
+
+// promRisk 判断"没触发但已接近阈值"。只对阈值型数值条件有意义。
+func promRisk(value float64, condition, threshold string, matched bool) bool {
+	if matched {
+		return false
+	}
+	thr, err := strconv.ParseFloat(strings.TrimSpace(threshold), 64)
+	if err != nil || thr == 0 {
+		return false
+	}
+	switch condition {
+	case "lt", "lte":
+		// 越小越危险：进入阈值 15% 以内算风险（如证书剩余天数、可见库数）
+		return value > 0 && value <= thr*1.15
+	default:
+		// 越大越危险：达到阈值 85% 算风险
+		return value >= thr*0.85
+	}
+}
+
+func buildObjChecks(checks []store.PromCheck, snap map[int64]monitor.PromSnap) []objCheck {
+	out := make([]objCheck, 0, len(checks))
+	for _, c := range checks {
+		if !c.Enabled {
+			continue
+		}
+		oc := objCheck{
+			ID: c.ID, Name: c.Name, Metric: c.Metric, Dimension: c.Dimension,
+			Severity: c.Severity, Condition: c.AlertCondition, Threshold: c.AlertValue,
+			Strategy: c.AlertStrategy,
+		}
+		if sn, ok := snap[c.ID]; ok {
+			oc.HasValue = sn.Err == ""
+			oc.Value = sn.Value
+			oc.Matched = sn.Matched
+			oc.Err = sn.Err
+			if oc.HasValue && c.AlertStrategy != "increase" {
+				oc.Risk = promRisk(sn.Value, c.AlertCondition, c.AlertValue, sn.Matched)
+			}
+		}
+		out = append(out, oc)
+	}
+	return out
+}
+
+type objectView struct {
+	ID       int64             `json:"id"`
+	Name     string            `json:"name"`
+	Kind     string            `json:"kind"`
+	Labels   map[string]string `json:"labels"`
+	Running  bool              `json:"running"`
+	Status   string            `json:"status"` // firing / risk / ok / stale
+	Firing   int               `json:"firing"`
+	Risks    int               `json:"risks"`
+	Checks   []objCheck        `json:"checks"`
+	Interval int               `json:"interval_sec"`
+}
+
+func (s *Server) buildObjects() ([]objectView, error) {
+	targets, err := s.store.ListPromTargets()
+	if err != nil {
+		return nil, err
+	}
+	checks, err := s.store.ListPromChecks(nil)
+	if err != nil {
+		return nil, err
+	}
+	snap := s.promMgr.Snapshot()
+
+	byTarget := map[int64][]store.PromCheck{}
+	for _, c := range checks {
+		byTarget[c.TargetID] = append(byTarget[c.TargetID], c)
+	}
+
+	out := make([]objectView, 0, len(targets))
+	for _, t := range targets {
+		if !t.Enabled {
+			continue
+		}
+		labels := map[string]string{}
+		json.Unmarshal([]byte(t.LabelsJSON), &labels)
+
+		ov := objectView{
+			ID: t.ID, Name: t.Name, Kind: t.Kind, Labels: labels,
+			Running: s.promMgr.IsRunning(t.ID), Interval: t.IntervalSec,
+			Checks: buildObjChecks(byTarget[t.ID], snap),
+		}
+		for _, c := range ov.Checks {
+			if c.Matched {
+				ov.Firing++
+			}
+			if c.Risk {
+				ov.Risks++
+			}
+		}
+		switch {
+		case ov.Firing > 0:
+			ov.Status = "firing"
+		case ov.Risks > 0:
+			ov.Status = "risk"
+		case !ov.Running:
+			ov.Status = "stale"
+		default:
+			ov.Status = "ok"
+		}
+		out = append(out, ov)
+	}
+	return out, nil
+}
+
+// GET /api/objects
+func (s *Server) apiObjectsList(w http.ResponseWriter, r *http.Request) {
+	objs, err := s.buildObjects()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, objs)
+}
+
+// GET /api/objects/{id} —— 对象详情：规则 + 事件历史 + 子对象（按 host 标签）
+func (s *Server) apiObjectDetail(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "无效的 ID")
+		return
+	}
+	objs, err := s.buildObjects()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var self *objectView
+	for i := range objs {
+		if objs[i].ID == id {
+			self = &objs[i]
+			break
+		}
+	}
+	if self == nil {
+		jsonError(w, http.StatusNotFound, "对象不存在")
+		return
+	}
+
+	// 子对象：labels.host == 本对象的 labels.vm（物理机 → 它承载的 VM）
+	children := []objectView{}
+	if vm := self.Labels["vm"]; vm != "" {
+		for _, o := range objs {
+			if o.ID != self.ID && o.Labels["host"] == vm {
+				children = append(children, o)
+			}
+		}
+	}
+
+	events, _ := s.store.ListAlertEventsByTarget("prom", id, 50)
+	jsonOK(w, map[string]any{
+		"object":   self,
+		"children": children,
+		"events":   events,
+	})
+}
+
+// GET /api/alert-events?status=firing|resolved
+func (s *Server) apiAlertEvents(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	if status != "" && status != "firing" && status != "resolved" {
+		jsonError(w, http.StatusBadRequest, "status 只能是 firing / resolved")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	events, err := s.store.ListAlertEvents(status, limit)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, events)
+}
+
+// GET /api/overview —— 总览页一次拉全
+func (s *Server) apiOverview(w http.ResponseWriter, r *http.Request) {
+	firing, _ := s.store.ListAlertEvents("firing", 100)
+	critical, warning := s.store.CountFiringBySeverity()
+
+	objs, err := s.buildObjects()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// 容量风险：全部对象里 risk=true 的规则，按"离阈值多近"排序取前 8
+	type riskItem struct {
+		Target    string  `json:"target"`
+		Check     string  `json:"check"`
+		Metric    string  `json:"metric"`
+		Value     float64 `json:"value"`
+		Threshold string  `json:"threshold"`
+		Closeness float64 `json:"closeness"` // 1.0 = 已到阈值
+	}
+	risks := []riskItem{}
+	okRules := 0
+	dims := map[string][2]int{} // dimension -> [firing, total]
+	for _, o := range objs {
+		for _, c := range o.Checks {
+			d := dims[c.Dimension]
+			d[1]++
+			if c.Matched {
+				d[0]++
+			} else if c.HasValue {
+				okRules++
+			}
+			dims[c.Dimension] = d
+			if !c.Risk {
+				continue
+			}
+			thr, _ := strconv.ParseFloat(strings.TrimSpace(c.Threshold), 64)
+			closeness := 0.0
+			if thr != 0 {
+				if c.Condition == "lt" || c.Condition == "lte" {
+					closeness = thr / c.Value
+				} else {
+					closeness = c.Value / thr
+				}
+			}
+			risks = append(risks, riskItem{
+				Target: o.Name, Check: c.Name, Metric: c.Metric,
+				Value: c.Value, Threshold: c.Threshold, Closeness: closeness,
+			})
+		}
+	}
+	// 简单选择排序取前 8（规模 <300，无需引依赖）
+	for i := 0; i < len(risks) && i < 8; i++ {
+		max := i
+		for j := i + 1; j < len(risks); j++ {
+			if risks[j].Closeness > risks[max].Closeness {
+				max = j
+			}
+		}
+		risks[i], risks[max] = risks[max], risks[i]
+	}
+	if len(risks) > 8 {
+		risks = risks[:8]
+	}
+
+	notifyCount, _ := s.store.CountEnabledNotifications()
+
+	jsonOK(w, map[string]any{
+		"summary": map[string]any{
+			"firing_critical": critical,
+			"firing_warning":  warning,
+			"risk":            len(risks),
+			"ok_rules":        okRules,
+		},
+		"firing":  firing,
+		"risks":   risks,
+		"dims":    dims,
+		"objects": len(objs),
+		"self": map[string]any{
+			"notify_channels": notifyCount,
+			"targets_running": s.promMgr.RunningCount(),
+			"cert_running":    s.certMgr.RunningCount(),
+			"health_running":  s.healthCheckMgr.RunningCount(),
+		},
+	})
+}
+
+// GET /api/alert-summary —— 顶栏状态条轮询用，够轻才敢 30 秒一拉
+func (s *Server) apiAlertSummary(w http.ResponseWriter, r *http.Request) {
+	critical, warning := s.store.CountFiringBySeverity()
+	jsonOK(w, map[string]int{
+		"critical": critical,
+		"warning":  warning,
+	})
+}

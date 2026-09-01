@@ -167,6 +167,21 @@ func (m *CertManager) doCheck(id int64) {
 	}
 
 	// 证书状态变化缓慢，每天检查一次即可；只在状态跃迁时推送，避免每天重复刷屏
+	if isAlert {
+		sev := "warning"
+		if result.Status == "critical" || result.Status == "error" {
+			sev = "critical"
+		}
+		m.store.UpsertFiringEvent(&store.AlertEvent{
+			Source: "cert", CheckID: cfg.ID, CheckName: cfg.Name,
+			Title: cfg.Name, TargetID: cfg.ID, TargetName: cfg.Endpoint,
+			Dimension: "cert", Severity: sev,
+			Value: fmt.Sprintf("剩余 %d 天", result.DaysLeft), Message: result.Message,
+		}, false)
+	} else if wasAlert {
+		m.store.ResolveEvent("cert", cfg.ID, fmt.Sprintf("剩余 %d 天", result.DaysLeft))
+	}
+
 	if isAlert && (!hasPrev || prevStatus != result.Status) {
 		if err := m.dispatcher.SendGlobalNotifications(result.Message); err != nil {
 			log.Printf("[cert] notify failed for %s: %v", cfg.Name, err)

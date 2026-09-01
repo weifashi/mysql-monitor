@@ -516,6 +516,9 @@ func (s *Store) runPurge() {
 	if n, err := s.PurgeOldCertCheckLogs(); err == nil && n > 0 {
 		log.Printf("purged %d old cert check logs", n)
 	}
+	if n, err := s.PurgeOldAlertEvents(); err == nil && n > 0 {
+		log.Printf("purged %d old alert events", n)
+	}
 	s.CleanupOldNotifiedPIDs()
 }
 
@@ -1622,4 +1625,11 @@ func (s *Store) InitDefaultSettings() {
 			s.SetSetting(k, v)
 		}
 	}
+}
+
+// CountEnabledNotifications 给总览页"系统自身健康"用：0 = 告警发不出去。
+func (s *Store) CountEnabledNotifications() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM notification_configs WHERE enabled = 1`).Scan(&n)
+	return n, err
 }

@@ -243,7 +243,7 @@ const LoginPage = defineComponent({
             error.value = '';
             try {
                 await api.post('/api/auth/login', form);
-                window.location.hash = '#/dashboard';
+                window.location.hash = '#/overview';
             } catch (e) {
                 error.value = e.message;
             } finally {
@@ -4751,6 +4751,28 @@ const AppLayout = defineComponent({
         const user = ref(null);
         const siderCollapsed = ref(_isMobile.value);
 
+        // 顶栏状态条：值班的人无论在哪一页都不该错过新告警
+        const alertSummary = ref({ critical: 0, warning: 0 });
+        let _sumTimer = null;
+        async function loadAlertSummary() {
+            if (route.path === '/login') return;   // 未登录时轮询只会制造 401 噪音
+            try { alertSummary.value = await api.get('/api/alert-summary'); } catch {}
+        }
+        onMounted(() => { loadAlertSummary(); _sumTimer = setInterval(loadAlertSummary, 30000); });
+        onUnmounted(() => clearInterval(_sumTimer));
+        function statusStrip() {
+            const sm = alertSummary.value;
+            const pill = (bg, fg, text) => h('span', {
+                style: `background:${bg};color:${fg};border-radius:12px;padding:2px 10px;font-size:12px;font-weight:700;font-family:monospace;cursor:pointer`,
+                onClick: () => router.push('/alerts'),
+            }, text);
+            const pills = [];
+            if (sm.critical > 0) pills.push(pill('#fdd8de', '#b91c3c', '● ' + sm.critical));
+            if (sm.warning > 0) pills.push(pill('#fdeecb', '#a05a03', '▲ ' + sm.warning));
+            if (!pills.length) pills.push(pill('#d6f2e2', '#0e7a3f', '✓ 正常'));
+            return h('div', { style: 'display:flex;gap:6px;margin-left:14px;align-items:center' }, pills);
+        }
+
         onMounted(async () => {
             try { user.value = await api.get('/api/auth/me'); } catch (e) {
                 if (e.message !== 'network_error' && route.path !== '/login') router.push('/login');
@@ -4760,37 +4782,36 @@ const AppLayout = defineComponent({
 
         watch(_isMobile, (mobile) => { siderCollapsed.value = mobile; });
 
-        const menuOptions = computed(() => [
-            { label: '仪表盘', key: 'dashboard' },
-            { label: '健康检查', key: 'g-healthcheck' },
-            { label: '指标监控', key: 'g-metrics' },
-            { label: 'MySQL', key: 'g-mysql' },
-            { label: 'Cloud Logging', key: 'g-cloud-logging' },
-            isUISettingEnabled('show_rocketmq_menu') ? { label: 'RocketMQ', key: 'g-rocketmq' } : null,
-            isUISettingEnabled('show_grafana_menu') ? { label: 'Grafana', key: 'g-grafana' } : null,
-            { label: '运行日志', key: 'monitor-logs' },
-            { label: '系统', key: 'g-system' },
-        ].filter(Boolean));
+        const menuOptions = computed(() => {
+            const firing = alertSummary.value.critical + alertSummary.value.warning;
+            return [
+                { label: '总览', key: 'overview' },
+                { label: () => h('span', null, firing > 0 ? `告警 (${firing})` : '告警'), key: 'alerts' },
+                { label: '监控对象', key: 'objects' },
+                { label: '规则与配置', key: 'g-rules' },
+                isUISettingEnabled('show_rocketmq_menu') ? { label: 'RocketMQ', key: 'g-rocketmq' } : null,
+                isUISettingEnabled('show_grafana_menu') ? { label: 'Grafana', key: 'g-grafana' } : null,
+                { label: '系统', key: 'g-system' },
+            ].filter(Boolean);
+        });
 
         const groupTabs = {
-            'g-metrics': [
+            'g-rules': [
                 { label: '采集目标', key: 'prom-targets' },
                 { label: '告警规则', key: 'prom-checks' },
-                { label: '告警日志', key: 'prom-logs' },
+                { label: '评估流水', key: 'prom-logs' },
                 { label: '证书检查', key: 'cert-checks' },
-            ],
-            'g-mysql': [
+                { label: '健康检查', key: 'health-checks' },
+                { label: '检查日志', key: 'health-checks-logs' },
                 { label: '数据库', key: 'databases' },
                 { label: '慢SQL', key: 'slow-queries' },
                 { label: '已忽略SQL', key: 'ignored-sql' },
                 { label: '自定义SQL', key: 'custom-sql' },
                 { label: 'SQL结果', key: 'custom-sql-logs' },
-            ],
-            'g-cloud-logging': [
-                { label: '配置', key: 'cloud-logging-configs' },
-                { label: '查询', key: 'cloud-logging-query' },
-                { label: '监控', key: 'cloud-logging-checks' },
-                { label: '告警日志', key: 'cloud-logging-logs' },
+                { label: 'CL配置', key: 'cloud-logging-configs' },
+                { label: 'CL查询', key: 'cloud-logging-query' },
+                { label: 'CL监控', key: 'cloud-logging-checks' },
+                { label: 'CL日志', key: 'cloud-logging-logs' },
             ],
             'g-rocketmq': [
                 { label: 'MQ 配置', key: 'rocketmq' },
@@ -4800,12 +4821,9 @@ const AppLayout = defineComponent({
                 { label: '告警配置', key: 'grafana' },
                 { label: '告警日志', key: 'grafana-alerts' },
             ],
-            'g-healthcheck': [
-                { label: '检查配置', key: 'health-checks' },
-                { label: '检查日志', key: 'health-checks-logs' },
-            ],
             'g-system': [
                 { label: '通知配置', key: 'notifications' },
+                { label: '运行日志', key: 'monitor-logs' },
                 { label: '操作记录', key: 'audit-logs' },
                 { label: '系统设置', key: 'settings' },
             ],
@@ -4815,8 +4833,12 @@ const AppLayout = defineComponent({
             for (const t of tabs) routeToGroup[t.key] = g;
         }
 
-        const routeKey = computed(() => route.path.replace('/', '') || 'dashboard');
-        const activeKey = computed(() => routeToGroup[routeKey.value] || routeKey.value);
+        const routeKey = computed(() => route.path.replace('/', '') || 'overview');
+        const activeKey = computed(() => {
+            const rk = routeKey.value;
+            if (rk.startsWith('objects')) return 'objects';
+            return routeToGroup[rk] || rk;
+        });
         function isGroupVisible(group) {
             if (group === 'g-rocketmq') return isUISettingEnabled('show_rocketmq_menu');
             if (group === 'g-grafana') return isUISettingEnabled('show_grafana_menu');
@@ -4852,6 +4874,7 @@ const AppLayout = defineComponent({
                         h('div', { class: 'topbar-left' }, [
                             h(NButton, { quaternary: true, size: 'small', onClick: () => siderCollapsed.value = false, style: 'font-size:18px' }, () => '\u2630'),
                             h('span', { style: 'font-size:14px;font-weight:600' }, 'Ops Monitor'),
+                            statusStrip(),
                         ]),
                         h('div', { class: 'topbar-right' }, [
                             h(NButton, { quaternary: true, circle: true, size: 'small', onClick: toggleTheme }, () => themeIcon()),
@@ -4888,9 +4911,10 @@ const AppLayout = defineComponent({
             return h('div', { style: 'height:100vh;overflow:hidden' }, [
                 // Full-width top bar: logo left, user info right
                 h('div', { class: 'topbar' }, [
-                    h('div', { class: 'topbar-left', style: 'cursor:pointer', onClick: () => router.push('/dashboard') }, [
+                    h('div', { class: 'topbar-left', style: 'cursor:pointer', onClick: () => router.push('/overview') }, [
                         h('div', { class: 'sider-logo' }, 'O'),
                         h('span', { class: 'sider-title' }, 'Ops Monitor'),
+                        statusStrip(),
                     ]),
                     h('div', { class: 'topbar-right' }, [
                         h(NButton, { quaternary: true, circle: true, size: 'small', onClick: toggleTheme }, () => themeIcon()),
@@ -4926,11 +4950,378 @@ const AppLayout = defineComponent({
 });
 
 // ============================================================
+// 重设计三页：总览 / 告警中心 / 监控对象（+详情）
+// 数据分两层：触发中/已恢复走 alert_events（事件生命周期），
+// 当前值/容量风险走 PromManager 内存快照（最新鲜）。
+// ============================================================
+
+function fmtSince(iso) {
+    if (!iso) return '';
+    const ms = Date.now() - new Date(iso).getTime();
+    if (ms < 0 || isNaN(ms)) return '';
+    const m = Math.floor(ms / 60000);
+    if (m < 1) return '刚刚';
+    if (m < 60) return m + ' 分钟';
+    const hrs = Math.floor(m / 60);
+    if (hrs < 48) return hrs + ' 小时';
+    return Math.floor(hrs / 24) + ' 天';
+}
+
+function sevTagType(sev) {
+    return (sev === 'critical' || sev === 'error') ? 'error' : 'warning';
+}
+
+// 同一条规则在多个对象上触发 → 聚合成一件事（按去掉对象前缀的 title）
+function groupEvents(events) {
+    const groups = new Map();
+    for (const e of events) {
+        const key = (e.title || e.check_name) + '|' + e.source;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(e);
+    }
+    return [...groups.values()];
+}
+
+function firingCard(router, group) {
+    const first = group[0];
+    const earliest = group.reduce((a, e) => (e.first_at < a ? e.first_at : a), first.first_at);
+    const multi = group.length > 1;
+    return h('div', {
+        class: 'alert-ev-card',
+        style: `border:1px solid var(--n-border-color,#eee);border-left:4px solid ${sevTagType(first.severity) === 'error' ? '#d03050' : '#f0a020'};border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:10px;background:var(--card-bg,#fff)`,
+    }, [
+        h('div', { style: 'display:flex;align-items:baseline;gap:10px;flex-wrap:wrap' }, [
+            h('span', { style: 'font-weight:650;font-size:14px' }, first.title || first.check_name),
+            h(NTag, { size: 'tiny', type: sevTagType(first.severity) }, () => first.severity),
+            h('span', { style: 'margin-left:auto;font-size:12px;opacity:.55;font-family:monospace' }, '已持续 ' + fmtSince(earliest)),
+        ]),
+        h('div', { style: 'font-size:13px;opacity:.75;margin-top:5px' },
+            multi
+                ? ['命中 ' + group.length + ' 个对象：', group.map(e =>
+                    h('span', { style: 'margin-right:10px;font-family:monospace' }, `${e.target_name} ${e.value}`))]
+                : `${first.target_name} · 当前 ${first.value}${first.threshold ? ' · 阈值 ' + first.threshold : ''}${first.peak_value && first.peak_value !== first.value ? ' · 峰值 ' + first.peak_value : ''}`),
+        h('div', { style: 'margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px' }, [
+            h(NTag, { size: 'tiny', bordered: false }, () => ({ prom: '指标', health: '站点', cert: '证书', custom_sql: 'SQL' }[first.source] || first.source)),
+            first.dimension ? h(NTag, { size: 'tiny', bordered: false }, () => first.dimension) : null,
+            h(NTag, { size: 'tiny', bordered: false, type: first.notify_count > 0 ? 'success' : 'error' },
+                () => first.notify_count > 0 ? `已通知 ${first.notify_count} 次` : '通知 0 次'),
+            first.source === 'prom' && first.target_id ? h(NButton, { size: 'tiny', quaternary: true, type: 'primary', onClick: () => router.push('/objects/' + first.target_id) }, () => '查看对象 ›') : null,
+        ]),
+    ]);
+}
+
+const OverviewPage = defineComponent({
+    setup() {
+        const router = VueRouter.useRouter();
+        const data = ref(null);
+        const loading = ref(true);
+        let timer = null;
+        async function load() {
+            try { data.value = await api.get('/api/overview'); } catch {}
+            loading.value = false;
+        }
+        onMounted(() => { load(); timer = setInterval(load, 30000); });
+        onUnmounted(() => clearInterval(timer));
+
+        const riskColumns = [
+            { title: '对象', key: 'target', render: r => r.target.replace(' 主机指标', '').replace(' 应用指标', ' (应用)') },
+            { title: '规则', key: 'check' },
+            { title: '当前值', key: 'value', render: r => h('span', { style: 'font-family:monospace' }, (Math.round(r.value * 100) / 100).toString()) },
+            { title: '阈值', key: 'threshold', render: r => h('span', { style: 'font-family:monospace' }, r.threshold) },
+            {
+                title: '距告警', key: 'closeness', render: r =>
+                    h(NTag, { size: 'small', type: r.closeness >= 0.95 ? 'error' : 'warning', bordered: false },
+                        () => Math.round(r.closeness * 100) + '%'),
+            },
+        ];
+
+        return () => h(NSpin, { show: loading.value }, () => {
+            const d = data.value;
+            if (!d) return h('div', { style: 'height:200px' });
+            const groups = groupEvents(d.firing || []);
+            return h('div', { class: 'page-body' }, [
+                h('div', { class: 'page-header' }, [
+                    h('h3', { class: 'page-title' }, '总览'),
+                    h('span', { style: 'font-size:12px;opacity:.5' }, `${d.self.targets_running} 采集目标在线 · ${d.summary.ok_rules} 条规则正常`),
+                ]),
+
+                d.self.notify_channels === 0 ? h(NAlert, { type: 'error', style: 'margin-bottom:14px', title: '通知渠道未配置 —— 所有告警只落库，不会发给任何人' }, {
+                    default: () => h(NButton, { size: 'small', type: 'primary', onClick: () => router.push('/notifications') }, () => '去配置'),
+                }) : null,
+
+                h('div', { style: 'font-size:13px;font-weight:700;color:#d03050;margin-bottom:8px' },
+                    groups.length ? `触发中（${groups.length} 个问题 / ${(d.firing || []).length} 条）` : '触发中'),
+                groups.length
+                    ? groups.map(g => firingCard(router, g))
+                    : h('div', { style: 'padding:14px;border:1px dashed var(--n-border-color,#ddd);border-radius:8px;opacity:.6;font-size:13px;margin-bottom:6px' }, '当前没有触发中的告警'),
+
+                d.risks && d.risks.length ? [
+                    h('div', { style: 'font-size:13px;font-weight:700;color:#f0a020;margin:18px 0 8px' }, `容量风险（未触发但已接近阈值）`),
+                    h(NDataTable, { columns: riskColumns, data: d.risks, size: 'small', bordered: false }),
+                ] : null,
+
+                h('div', { style: 'display:flex;gap:16px;flex-wrap:wrap;margin-top:20px' }, [
+                    h('div', { style: 'flex:1;min-width:240px' }, [
+                        h('div', { style: 'font-size:13px;font-weight:700;margin-bottom:6px' }, '按维度'),
+                        ...Object.entries(d.dims || {}).map(([dim, v]) =>
+                            h('div', { style: 'display:flex;justify-content:space-between;font-size:13px;padding:5px 2px;border-bottom:1px solid var(--n-border-color,#f3f3f3)' }, [
+                                h('span', null, dim + ' · ' + v[1] + ' 条规则'),
+                                v[0] > 0 ? h(NTag, { size: 'tiny', type: 'error', bordered: false }, () => v[0] + ' 触发') : h(NTag, { size: 'tiny', type: 'success', bordered: false }, () => '正常'),
+                            ])),
+                    ]),
+                    h('div', { style: 'flex:1;min-width:240px' }, [
+                        h('div', { style: 'font-size:13px;font-weight:700;margin-bottom:6px' }, '系统自身'),
+                        h('div', { style: 'font-size:13px;padding:5px 2px;border-bottom:1px solid var(--n-border-color,#f3f3f3);display:flex;justify-content:space-between' }, [
+                            h('span', null, '通知渠道'),
+                            d.self.notify_channels > 0 ? h(NTag, { size: 'tiny', type: 'success', bordered: false }, () => d.self.notify_channels + ' 个') : h(NTag, { size: 'tiny', type: 'error', bordered: false }, () => '未配置'),
+                        ]),
+                        h('div', { style: 'font-size:13px;padding:5px 2px;border-bottom:1px solid var(--n-border-color,#f3f3f3);display:flex;justify-content:space-between' }, [
+                            h('span', null, '采集器（指标 / 证书 / 站点）'),
+                            h('span', { style: 'font-family:monospace' }, `${d.self.targets_running} / ${d.self.cert_running} / ${d.self.health_running}`),
+                        ]),
+                    ]),
+                ]),
+            ]);
+        });
+    },
+});
+
+const AlertsPage = defineComponent({
+    setup() {
+        const router = VueRouter.useRouter();
+        const mode = ref('firing');
+        const events = ref([]);
+        const loading = ref(true);
+        let timer = null;
+        async function load() {
+            try { events.value = await api.get('/api/alert-events?status=' + mode.value) || []; } catch {}
+            loading.value = false;
+        }
+        watch(mode, () => { loading.value = true; load(); });
+        onMounted(() => { load(); timer = setInterval(load, 30000); });
+        onUnmounted(() => clearInterval(timer));
+
+        const resolvedColumns = [
+            { title: '规则', key: 'check_name' },
+            { title: '对象', key: 'target_name' },
+            { title: '来源', key: 'source', width: 70, render: r => ({ prom: '指标', health: '站点', cert: '证书', custom_sql: 'SQL' }[r.source] || r.source) },
+            { title: '峰值', key: 'peak_value', width: 110, render: r => h('span', { style: 'font-family:monospace' }, r.peak_value || r.value) },
+            { title: '首次触发', key: 'first_at', width: 150, render: r => (r.first_at || '').replace('T', ' ').slice(0, 16) },
+            { title: '持续', key: 'dur', width: 90, render: r => r.resolved_at ? fmtSince2(r.first_at, r.resolved_at) : '' },
+            { title: '恢复于', key: 'resolved_at', width: 150, render: r => (r.resolved_at || '').replace('T', ' ').slice(0, 16) },
+        ];
+        function fmtSince2(a, b) {
+            const m = Math.floor((new Date(b) - new Date(a)) / 60000);
+            if (m < 60) return m + ' 分钟';
+            const hrs = Math.floor(m / 60);
+            return hrs < 48 ? hrs + ' 小时' : Math.floor(hrs / 24) + ' 天';
+        }
+
+        return () => h('div', { class: 'page-body' }, [
+            h('div', { class: 'page-header' }, [
+                h('h3', { class: 'page-title' }, '告警'),
+                h('div', { style: 'display:flex;gap:8px;align-items:center' }, [
+                    h(NButton, { size: 'small', type: mode.value === 'firing' ? 'primary' : 'default', secondary: mode.value !== 'firing', onClick: () => mode.value = 'firing' }, () => '触发中'),
+                    h(NButton, { size: 'small', type: mode.value === 'resolved' ? 'primary' : 'default', secondary: mode.value !== 'resolved', onClick: () => mode.value = 'resolved' }, () => '已恢复'),
+                    h(NButton, { size: 'small', quaternary: true, onClick: () => router.push('/prom-logs') }, () => '评估流水 ›'),
+                ]),
+            ]),
+            h(NSpin, { show: loading.value }, () => {
+                if (mode.value === 'firing') {
+                    const groups = groupEvents(events.value);
+                    return groups.length
+                        ? h('div', null, groups.map(g => firingCard(router, g)))
+                        : h(NEmpty, { description: '当前没有触发中的告警', style: 'margin:60px 0' });
+                }
+                return events.value.length
+                    ? h(NDataTable, { columns: resolvedColumns, data: events.value, size: 'small', bordered: false })
+                    : h(NEmpty, { description: '暂无已恢复的事件', style: 'margin:60px 0' });
+            }),
+        ]);
+    },
+});
+
+// 对象列表列的关键水位：按指标名匹配，稳定（规则名可改，指标名不会）
+const OBJ_METRIC_COLS = [
+    { label: '内存', metric: 'node_memory_MemAvailable_bytes', pct: true },
+    { label: 'Swap', metric: 'node_memory_SwapFree_bytes', pct: true },
+    { label: '根分区', metric: 'node_filesystem_avail_bytes', pct: true },
+    { label: '负载', metric: 'node_load1', pct: false },
+    { label: '容器最高', metric: 'ttpos_container_memory_usage_ratio', pct: true },
+];
+
+function objMetricCell(o, def) {
+    const c = (o.checks || []).find(x => x.metric === def.metric && x.has_value);
+    if (!c) return h('span', { style: 'opacity:.3' }, '–');
+    const v = Math.round(c.value * 10) / 10;
+    const color = c.matched ? '#d03050' : (c.risk ? '#f0a020' : '');
+    return h('span', { style: `font-family:monospace;${color ? 'color:' + color + ';font-weight:700' : ''}` }, v + (def.pct ? '%' : ''));
+}
+
+function objStatusTag(o) {
+    const map = { firing: ['error', '告警'], risk: ['warning', '风险'], stale: ['default', '停止'], ok: ['success', '正常'] };
+    const [type, label] = map[o.status] || map.ok;
+    return h(NTag, { size: 'small', type, bordered: false }, () => label);
+}
+
+const ObjectsPage = defineComponent({
+    setup() {
+        const router = VueRouter.useRouter();
+        const objects = ref([]);
+        const kind = ref('');
+        const loading = ref(true);
+        let timer = null;
+        async function load() {
+            try { objects.value = await api.get('/api/objects') || []; } catch {}
+            loading.value = false;
+        }
+        onMounted(() => { load(); timer = setInterval(load, 30000); });
+        onUnmounted(() => clearInterval(timer));
+
+        const kinds = computed(() => [...new Set(objects.value.map(o => o.kind))]);
+        const filtered = computed(() => {
+            const list = kind.value ? objects.value.filter(o => o.kind === kind.value) : objects.value;
+            const rank = { firing: 0, risk: 1, stale: 2, ok: 3 };
+            return [...list].sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || a.name.localeCompare(b.name));
+        });
+
+        const columns = computed(() => [
+            {
+                title: '对象', key: 'name', render: o => h('div', null, [
+                    h('span', { style: 'font-weight:600' }, o.name.replace(' 主机指标', '').replace(' 应用指标', '')),
+                    h('span', { style: 'font-size:11px;opacity:.5;margin-left:8px' },
+                        [o.kind, o.labels && o.labels.host && o.labels.host !== '-' ? '@' + o.labels.host : '', o.labels && o.labels.role].filter(Boolean).join(' · ')),
+                ]),
+            },
+            { title: '状态', key: 'status', width: 70, render: objStatusTag },
+            ...OBJ_METRIC_COLS.map(def => ({ title: def.label, key: def.metric, width: 84, render: o => objMetricCell(o, def) })),
+            { title: '触发/风险', key: 'fr', width: 84, render: o => h('span', { style: 'font-family:monospace' }, [
+                o.firing ? h('span', { style: 'color:#d03050;font-weight:700' }, o.firing) : '0', ' / ',
+                o.risks ? h('span', { style: 'color:#f0a020;font-weight:700' }, o.risks) : '0']) },
+            { title: '规则', key: 'rules', width: 60, render: o => (o.checks || []).length + ' 条' },
+        ]);
+
+        return () => h('div', { class: 'page-body' }, [
+            h('div', { class: 'page-header' }, [
+                h('h3', { class: 'page-title' }, '监控对象'),
+                h('div', { style: 'display:flex;gap:6px' }, [
+                    h(NButton, { size: 'small', secondary: kind.value !== '', type: kind.value === '' ? 'primary' : 'default', onClick: () => kind.value = '' }, () => `全部 ${objects.value.length}`),
+                    ...kinds.value.map(k => h(NButton, { size: 'small', secondary: kind.value !== k, type: kind.value === k ? 'primary' : 'default', onClick: () => kind.value = k },
+                        () => `${k} ${objects.value.filter(o => o.kind === k).length}`)),
+                ]),
+            ]),
+            h(NSpin, { show: loading.value }, () =>
+                h(NDataTable, {
+                    columns: columns.value, data: filtered.value, size: 'small', bordered: false,
+                    rowProps: o => ({ style: 'cursor:pointer', onClick: () => router.push('/objects/' + o.id) }),
+                })),
+        ]);
+    },
+});
+
+const ObjectDetailPage = defineComponent({
+    setup() {
+        const router = VueRouter.useRouter();
+        const route = VueRouter.useRoute();
+        const data = ref(null);
+        const loading = ref(true);
+        let timer = null;
+        async function load() {
+            try { data.value = await api.get('/api/objects/' + route.params.id); } catch { data.value = null; }
+            loading.value = false;
+        }
+        watch(() => route.params.id, () => { if (route.params.id) { loading.value = true; load(); } });
+        onMounted(() => { load(); timer = setInterval(load, 30000); });
+        onUnmounted(() => clearInterval(timer));
+
+        const checkColumns = [
+            { title: '规则', key: 'name' },
+            { title: '指标', key: 'metric', render: c => h('span', { style: 'font-family:monospace;font-size:11.5px;opacity:.7' }, c.metric) },
+            {
+                title: '当前值', key: 'value', width: 110, render: c => c.err
+                    ? h(NTooltip, null, { trigger: () => h(NTag, { size: 'tiny', type: 'default' }, () => '无数据'), default: () => c.err })
+                    : h('span', { style: 'font-family:monospace;font-weight:600' }, Math.round(c.value * 100) / 100),
+            },
+            { title: '条件', key: 'cond', width: 120, render: c => h('span', { style: 'font-family:monospace;font-size:12px' }, c.strategy === 'increase' ? '增长>' + '' : ({ gt: '>', gte: '≥', lt: '<', lte: '≤' }[c.condition] || c.condition) + ' ' + c.threshold) },
+            {
+                title: '状态', key: 'st', width: 76, render: c => c.matched
+                    ? h(NTag, { size: 'small', type: 'error', bordered: false }, () => '触发中')
+                    : (c.risk ? h(NTag, { size: 'small', type: 'warning', bordered: false }, () => '接近')
+                        : h(NTag, { size: 'small', type: 'success', bordered: false }, () => '正常')),
+            },
+        ];
+        const eventColumns = [
+            { title: '规则', key: 'check_name' },
+            { title: '状态', key: 'status', width: 80, render: e => e.status === 'firing' ? h(NTag, { size: 'tiny', type: 'error', bordered: false }, () => '触发中') : h(NTag, { size: 'tiny', bordered: false }, () => '已恢复') },
+            { title: '峰值', key: 'peak_value', width: 100, render: e => h('span', { style: 'font-family:monospace' }, e.peak_value || e.value) },
+            { title: '首次', key: 'first_at', width: 150, render: e => (e.first_at || '').replace('T', ' ').slice(0, 16) },
+            { title: '恢复', key: 'resolved_at', width: 150, render: e => e.resolved_at ? e.resolved_at.replace('T', ' ').slice(0, 16) : '—' },
+        ];
+        const childColumns = [
+            { title: '对象', key: 'name', render: o => o.name.replace(' 主机指标', '').replace(' 应用指标', '') },
+            { title: '角色', key: 'role', width: 100, render: o => (o.labels && o.labels.role) || '' },
+            { title: '状态', key: 'status', width: 76, render: objStatusTag },
+            ...OBJ_METRIC_COLS.slice(0, 4).map(def => ({ title: def.label, key: def.metric, width: 84, render: o => objMetricCell(o, def) })),
+        ];
+
+        return () => h(NSpin, { show: loading.value }, () => {
+            const d = data.value;
+            if (!d) return h('div', { style: 'height:200px' });
+            const o = d.object;
+            const kpis = OBJ_METRIC_COLS.map(def => {
+                const c = (o.checks || []).find(x => x.metric === def.metric && x.has_value);
+                return c ? { label: def.label, check: c, pct: def.pct } : null;
+            }).filter(Boolean);
+            return h('div', { class: 'page-body' }, [
+                h('div', { class: 'page-header' }, [
+                    h('h3', { class: 'page-title', style: 'display:flex;align-items:center;gap:8px' }, [
+                        h(NButton, { size: 'small', quaternary: true, onClick: () => router.push('/objects') }, () => '‹'),
+                        o.name.replace(' 主机指标', '').replace(' 应用指标', ' (应用)'),
+                        objStatusTag(o),
+                    ]),
+                    h('span', { style: 'font-size:12px;opacity:.5' },
+                        Object.entries(o.labels || {}).filter(([, v]) => v && v !== '-').map(([k, v]) => `${k}=${v}`).join(' · ') + ` · 每 ${o.interval_sec}s`),
+                ]),
+                kpis.length ? h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px' },
+                    kpis.map(k => h('div', {
+                        style: `border:1px solid ${k.check.matched ? '#f5c2cb' : 'var(--n-border-color,#eee)'};background:${k.check.matched ? 'rgba(208,48,80,.06)' : 'var(--card-bg,#fff)'};border-radius:8px;padding:8px 14px;min-width:96px`,
+                    }, [
+                        h('div', { style: 'font-size:11px;opacity:.6' }, k.label),
+                        h('div', { style: `font-size:18px;font-weight:750;font-family:monospace;${k.check.matched ? 'color:#d03050' : (k.check.risk ? 'color:#f0a020' : '')}` },
+                            (Math.round(k.check.value * 10) / 10) + (k.pct ? '%' : '')),
+                        k.check.matched ? h('div', { style: 'font-size:10.5px;color:#d03050' }, '▲ 触发中') : null,
+                    ]))) : null,
+
+                h('div', { style: 'font-size:13px;font-weight:700;margin-bottom:6px' }, `全部规则（${(o.checks || []).length} 条，来源混排）`),
+                h(NDataTable, { columns: checkColumns, data: o.checks || [], size: 'small', bordered: false }),
+
+                d.children && d.children.length ? [
+                    h('div', { style: 'font-size:13px;font-weight:700;margin:16px 0 6px' }, `承载的对象（${d.children.length}）`),
+                    h(NDataTable, {
+                        columns: childColumns, data: d.children, size: 'small', bordered: false,
+                        rowProps: c => ({ style: 'cursor:pointer', onClick: () => router.push('/objects/' + c.id) }),
+                    }),
+                ] : null,
+
+                d.events && d.events.length ? [
+                    h('div', { style: 'font-size:13px;font-weight:700;margin:16px 0 6px' }, '告警事件'),
+                    h(NDataTable, { columns: eventColumns, data: d.events, size: 'small', bordered: false }),
+                ] : null,
+            ]);
+        });
+    },
+});
+
+// ============================================================
 // Router
 // ============================================================
 const routes = [
-    { path: '/', redirect: '/dashboard' },
+    { path: '/', redirect: '/overview' },
     { path: '/login', component: LoginPage },
+    { path: '/overview', component: OverviewPage },
+    { path: '/alerts', component: AlertsPage },
+    { path: '/objects', component: ObjectsPage },
+    { path: '/objects/:id', component: ObjectDetailPage },
     { path: '/dashboard', component: DashboardPage },
     { path: '/databases', component: DatabasesPage },
     { path: '/notifications', component: NotificationsPage },

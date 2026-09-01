@@ -327,3 +327,27 @@ func TestShouldLogPromResult(t *testing.T) {
 		t.Error("状态缺失时应落库")
 	}
 }
+
+func TestSustainedWarmupIsNotRecovery(t *testing.T) {
+	// 重启后 sustained 计数从零热身：阈值仍超标但 matched=false。
+	// 这段时间不能被当成"恢复"，否则每次重启都会群发一轮恢复通知、
+	// 把 firing 事件错误关闭再重开。
+	check := &store.PromCheck{
+		AlertStrategy: "sustained", AlertCondition: "gt",
+		AlertValue: "90", AlertConsecutive: 3,
+	}
+	st := &promMetricState{}
+	matched, _ := evaluatePromRule(96, check, st)
+	if matched {
+		t.Fatal("第 1 轮不该 matched")
+	}
+	// 热身中：ConsecutiveMatched 已 >0，evaluate 里的 warmingUp 守卫依赖这一点
+	if st.ConsecutiveMatched != 1 {
+		t.Fatalf("热身计数应为 1，得到 %d", st.ConsecutiveMatched)
+	}
+	// 真恢复：值回落后计数清零，此时才允许 resolve
+	evaluatePromRule(50, check, st)
+	if st.ConsecutiveMatched != 0 {
+		t.Fatal("回落后计数应清零")
+	}
+}

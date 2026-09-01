@@ -415,3 +415,30 @@ CREATE TABLE IF NOT EXISTS cert_check_logs (
 
 CREATE INDEX IF NOT EXISTS idx_cert_check_logs_detected ON cert_check_logs(detected_at);
 CREATE INDEX IF NOT EXISTS idx_cert_check_logs_check ON cert_check_logs(check_id, detected_at DESC);
+
+-- ============================================================
+-- 告警事件：把「触发 → 持续 → 恢复」收敛成一行，替代从流水里聚合。
+-- 同一 (source, check_id) 同时最多一条 firing。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS alert_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    source       TEXT    NOT NULL,             -- prom / health / custom_sql / cert
+    check_id     INTEGER NOT NULL,
+    check_name   TEXT    NOT NULL DEFAULT '',
+    title        TEXT    NOT NULL DEFAULT '',  -- 规则名去掉对象前缀，用于跨对象聚合
+    target_id    INTEGER NOT NULL DEFAULT 0,
+    target_name  TEXT    NOT NULL DEFAULT '',
+    dimension    TEXT    NOT NULL DEFAULT '',
+    severity     TEXT    NOT NULL DEFAULT 'warning',
+    status       TEXT    NOT NULL DEFAULT 'firing',   -- firing / resolved
+    value        TEXT    NOT NULL DEFAULT '',
+    peak_value   TEXT    NOT NULL DEFAULT '',
+    threshold    TEXT    NOT NULL DEFAULT '',
+    message      TEXT    NOT NULL DEFAULT '',
+    first_at     DATETIME NOT NULL DEFAULT (datetime('now')),
+    last_at      DATETIME NOT NULL DEFAULT (datetime('now')),
+    resolved_at  DATETIME,
+    notify_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_alert_events_status ON alert_events(status, last_at);
+CREATE INDEX IF NOT EXISTS idx_alert_events_check  ON alert_events(source, check_id, status);

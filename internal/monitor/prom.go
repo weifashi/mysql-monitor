@@ -41,7 +41,48 @@ type PromManager struct {
 	stateMu sync.Mutex
 	states  map[int64]*promMetricState
 
+	// 每条规则最近一次求值的实时快照，供"监控对象/容量风险"接口用。
+	// 从内存读而不是查流水表：更新鲜（流水写入已限流到 10 分钟心跳）、零查询成本。
+	snapMu   sync.Mutex
+	snapshot map[int64]PromSnap
+
 	client *http.Client
+}
+
+// PromSnap 是单条规则的最近求值结果。
+type PromSnap struct {
+	Value   float64   `json:"value"`
+	Matched bool      `json:"matched"`
+	Err     string    `json:"err,omitempty"`
+	At      time.Time `json:"at"`
+}
+
+// Snapshot 返回全部规则的最近求值快照（拷贝）。
+func (m *PromManager) Snapshot() map[int64]PromSnap {
+	m.snapMu.Lock()
+	defer m.snapMu.Unlock()
+	out := make(map[int64]PromSnap, len(m.snapshot))
+	for k, v := range m.snapshot {
+		out[k] = v
+	}
+	return out
+}
+
+func (m *PromManager) setSnap(id int64, v PromSnap) {
+	v.At = time.Now()
+	m.snapMu.Lock()
+	m.snapshot[id] = v
+	m.snapMu.Unlock()
+}
+
+// promEventTitle 把规则名里的对象前缀去掉，让同一条规则在不同对象上
+// 触发时能聚合成一件事（"ph01 内存使用率>90%" 与 "ph02 …" → "内存使用率>90%"）。
+func promEventTitle(target *store.PromTarget, checkName string) string {
+	labels := parseJSONStringMap(target.LabelsJSON)
+	if vm := labels["vm"]; vm != "" && strings.HasPrefix(checkName, vm+" ") {
+		return strings.TrimPrefix(checkName, vm+" ")
+	}
+	return checkName
 }
 
 // promMetricState 保存跨轮次的状态：连续命中次数用于 sustained 策略，
@@ -82,6 +123,7 @@ func NewPromManager(s *store.Store, d *notify.Dispatcher, eb *EventBus) *PromMan
 		eventBus:   eb,
 		monitors:   make(map[int64]context.CancelFunc),
 		states:     make(map[int64]*promMetricState),
+		snapshot:   make(map[int64]PromSnap),
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -225,18 +267,23 @@ func (m *PromManager) scrapeOnce(ctx context.Context, targetID int64) {
 
 	if scrapeErr != nil {
 		m.emit("prom_scrape_error", target.ID, target.Name, scrapeErr.Error(), nil)
-		// 抓取失败对每条启用的规则都记一条错误，便于在日志页定位
+		// 抓取失败对每条启用的规则都记一条错误，便于在日志页定位（同样限流）
 		for _, c := range checks {
 			if !c.Enabled {
 				continue
 			}
-			m.store.InsertPromAlertLog(&store.PromAlertLog{
-				CheckID: c.ID, CheckName: c.Name,
-				TargetID: target.ID, TargetName: target.Name,
-				Dimension: c.Dimension, Severity: c.Severity,
-				Status: "error", Metric: c.Metric,
-				Error: scrapeErr.Error(), DurationMs: elapsed,
-			})
+			st := m.metricState(c.ID)
+			if now := time.Now(); shouldLogPromResult(st, "error", now) {
+				m.store.InsertPromAlertLog(&store.PromAlertLog{
+					CheckID: c.ID, CheckName: c.Name,
+					TargetID: target.ID, TargetName: target.Name,
+					Dimension: c.Dimension, Severity: c.Severity,
+					Status: "error", Metric: c.Metric,
+					Error: scrapeErr.Error(), DurationMs: elapsed,
+				})
+				st.LastLoggedStatus, st.LastLoggedAt = "error", now
+			}
+			m.setSnap(c.ID, PromSnap{Err: scrapeErr.Error()})
 		}
 		return
 	}
@@ -301,6 +348,7 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 			})
 			st.LastLoggedStatus, st.LastLoggedAt = "error", now
 		}
+		m.setSnap(check.ID, PromSnap{Err: err.Error()})
 		m.emit("prom_check_error", target.ID, target.Name,
 			fmt.Sprintf("%s: %v", check.Name, err), nil)
 		return
@@ -310,6 +358,7 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 	matched, reason := evaluatePromRule(value, check, state)
 	state.LastValue = value
 	state.HasLast = true
+	m.setSnap(check.ID, PromSnap{Value: value, Matched: matched})
 
 	valueStr := formatPromValue(value)
 	prevStatus, hasPrev, _ := m.store.LastPromAlertStatus(check.ID)
@@ -335,11 +384,21 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 		})
 
 		// 持续告警时不重复推送，只在状态由非 alert 变为 alert 时通知一次
+		notified := false
 		if check.NotifyEnabled && !(hasPrev && prevStatus == "alert") {
 			if err := m.dispatcher.SendGlobalNotifications(message); err != nil {
 				log.Printf("[prom] notify failed for check %s: %v", check.Name, err)
+			} else {
+				notified = true
 			}
 		}
+		m.store.UpsertFiringEvent(&store.AlertEvent{
+			Source: "prom", CheckID: check.ID, CheckName: check.Name,
+			Title:    promEventTitle(target, check.Name),
+			TargetID: target.ID, TargetName: target.Name,
+			Dimension: check.Dimension, Severity: check.Severity,
+			Value: valueStr, Threshold: check.AlertValue, Message: message,
+		}, notified)
 		return
 	}
 
@@ -355,7 +414,15 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 		state.LastLoggedStatus, state.LastLoggedAt = "ok", nowOK
 	}
 
-	if hasPrev && prevStatus == "alert" && check.RecoveryNotify && check.NotifyEnabled {
+	// sustained 规则的连续计数在内存里，重启后从零热身。热身期内阈值其实
+	// 仍然超标（ConsecutiveMatched > 0），这不是恢复——不能关事件、更不能发
+	// 恢复通知，否则每次重启都会先"全恢复"再在 2~3 轮后"全触发"一遍。
+	warmingUp := strings.ToLower(strings.TrimSpace(check.AlertStrategy)) == "sustained" &&
+		state.ConsecutiveMatched > 0
+	if hasPrev && prevStatus == "alert" && !warmingUp {
+		m.store.ResolveEvent("prom", check.ID, valueStr)
+	}
+	if hasPrev && prevStatus == "alert" && !warmingUp && check.RecoveryNotify && check.NotifyEnabled {
 		msg := fmt.Sprintf("[恢复] %s / %s\n指标：%s\n当前值：%s",
 			target.Name, check.Name, check.Metric, valueStr)
 		if err := m.dispatcher.SendGlobalNotifications(msg); err != nil {

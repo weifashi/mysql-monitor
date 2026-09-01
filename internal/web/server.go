@@ -232,6 +232,13 @@ func (s *Server) Routes() http.Handler {
 	api.HandleFunc("POST /api/cert-checks/test", s.apiCertCheckTest)
 	api.HandleFunc("GET /api/cert-checks/logs", s.apiCertCheckLogs)
 
+	// 总览 / 告警中心 / 监控对象（三步重设计的聚合接口）
+	api.HandleFunc("GET /api/overview", s.apiOverview)
+	api.HandleFunc("GET /api/alert-summary", s.apiAlertSummary)
+	api.HandleFunc("GET /api/alert-events", s.apiAlertEvents)
+	api.HandleFunc("GET /api/objects", s.apiObjectsList)
+	api.HandleFunc("GET /api/objects/{id}", s.apiObjectDetail)
+
 	// Grafana
 	api.HandleFunc("GET /api/grafana", s.apiGrafanaList)
 	api.HandleFunc("POST /api/grafana", s.apiGrafanaCreate)

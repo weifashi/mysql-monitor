@@ -214,6 +214,7 @@ func (m *HealthCheckManager) doCheck(cfg *store.HealthCheck) {
 		m.emit("healthcheck_success", cfg.ID, cfg.Name, fmt.Sprintf("服务正常 (HTTP %d, %dms)", result.HTTPStatus, result.LatencyMs), nil)
 
 		if wasDown {
+			m.store.ResolveEvent("health", cfg.ID, fmt.Sprintf("HTTP %d", result.HTTPStatus))
 			recoveryMsg := fmt.Sprintf("服务恢复通知\n\n服务: %s\nURL: %s\n状态: 已恢复正常", cfg.Name, cfg.URL)
 			if sendErr := m.dispatcher.SendScopedNotifications("health", cfg.ID, recoveryMsg); sendErr != nil {
 				log.Printf("[HealthCheck %s] recovery notification failed: %v", cfg.Name, sendErr)
@@ -231,7 +232,14 @@ func (m *HealthCheckManager) doCheck(cfg *store.HealthCheck) {
 		}
 		m.emit("healthcheck_error", cfg.ID, cfg.Name, fmt.Sprintf("服务异常: %s", errMsg), nil)
 
-		if !m.isDownNotified(cfg.ID) {
+		firstDown := !m.isDownNotified(cfg.ID)
+		m.store.UpsertFiringEvent(&store.AlertEvent{
+			Source: "health", CheckID: cfg.ID, CheckName: cfg.Name,
+			Title: cfg.Name, TargetID: cfg.ID, TargetName: cfg.Name,
+			Dimension: "site", Severity: "critical",
+			Value: errMsg, Message: errMsg,
+		}, firstDown)
+		if firstDown {
 			actionSummary, notifyActionSummary := runHealthTriggerActions(cfg)
 			diagnosticsSection := ""
 			if notifyActionSummary != "" {
