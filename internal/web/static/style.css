@@ -797,12 +797,9 @@ html {
 [data-theme="dark"] .strip-y { background: rgba(240,160,32,.20); color: #f8c780; }
 [data-theme="dark"] .strip-g { background: rgba(54,173,106,.18); color: #7fd8a8; }
 
-/* 主内容统一居中，上限 1920px：普通屏铺满，2K 宽屏只留窄边。
-   页内所有卡片、表格左右边缘对齐。此前逐表限宽（1020~1280 五个档）
-   和 1360 一刀切都让宽屏出现大片空白，一并废除。 */
+/* 主内容不设宽度上限，铺满可用区（用户明确要求，2026-09-02）。
+   页内卡片、表格靠列定宽与省略号自我约束，不再用容器限宽。 */
 .content-wrap {
-    max-width: 1920px;
-    margin: 0 auto;
     width: 100%;
     height: 100%;
     display: flex;
