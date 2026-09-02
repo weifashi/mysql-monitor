@@ -23,3 +23,18 @@ func TestSanitizeFeishuBlockedSleepFunction(t *testing.T) {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
+
+func TestFeishuLevelTemplate(t *testing.T) {
+	cases := map[string]string{
+		"critical": "red", "error": "red",
+		"warning": "orange",
+		"recovery": "green",
+		"info": "blue", "test": "blue",
+		"": "", "unknown": "",
+	}
+	for in, want := range cases {
+		if got := feishuLevelTemplate(in); got != want {
+			t.Errorf("feishuLevelTemplate(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

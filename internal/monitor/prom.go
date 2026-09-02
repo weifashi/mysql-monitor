@@ -432,7 +432,7 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 			if diag := m.fetchDiagnostic(check.DiagURL); diag != "" {
 				message += "\n\n最近错误样本：\n" + diag
 			}
-			if err := m.dispatcher.SendGlobalNotifications(message); err != nil {
+			if err := m.dispatcher.SendGlobalNotifications(message, check.Severity); err != nil {
 				log.Printf("[prom] notify failed for check %s: %v", check.Name, err)
 			} else {
 				notified = true
@@ -472,7 +472,7 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 	if hasPrev && prevStatus == "alert" && !warmingUp && check.RecoveryNotify && check.NotifyEnabled {
 		msg := fmt.Sprintf("[恢复] %s / %s\n指标：%s\n当前值：%s",
 			target.Name, check.Name, check.Metric, valueStr)
-		if err := m.dispatcher.SendGlobalNotifications(msg); err != nil {
+		if err := m.dispatcher.SendGlobalNotifications(msg, "recovery"); err != nil {
 			log.Printf("[prom] recovery notify failed for check %s: %v", check.Name, err)
 		}
 		m.emit("prom_recovered", target.ID, target.Name, msg, nil)

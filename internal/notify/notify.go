@@ -32,7 +32,7 @@ func NewDispatcher(s *store.Store) *Dispatcher {
 	return &Dispatcher{store: s}
 }
 
-func (d *Dispatcher) SendNotifications(databaseID int64, message string) error {
+func (d *Dispatcher) SendNotifications(databaseID int64, message string, level ...string) error {
 	configs, err := d.store.GetEffectiveNotifications(databaseID)
 	if err != nil {
 		return fmt.Errorf("load notification configs: %w", err)
@@ -42,11 +42,11 @@ func (d *Dispatcher) SendNotifications(databaseID int64, message string) error {
 		return nil
 	}
 	log.Printf("notification dispatch: database_id=%d configs=%d", databaseID, len(configs))
-	return d.dispatchToConfigs(configs, message)
+	return d.dispatchToConfigs(configs, message, firstLevel(level))
 }
 
 // SendGlobalNotifications sends message using global notification configs (scope_type='all').
-func (d *Dispatcher) SendGlobalNotifications(message string) error {
+func (d *Dispatcher) SendGlobalNotifications(message string, level ...string) error {
 	configs, err := d.store.GetGlobalNotifications()
 	if err != nil {
 		return fmt.Errorf("load global notification configs: %w", err)
@@ -56,11 +56,11 @@ func (d *Dispatcher) SendGlobalNotifications(message string) error {
 		return nil
 	}
 	log.Printf("global notification dispatch: configs=%d", len(configs))
-	return d.dispatchToConfigs(configs, message)
+	return d.dispatchToConfigs(configs, message, firstLevel(level))
 }
 
 // SendScopedNotifications sends message using scope-specific + global notification configs.
-func (d *Dispatcher) SendScopedNotifications(scopeType string, scopeID int64, message string) error {
+func (d *Dispatcher) SendScopedNotifications(scopeType string, scopeID int64, message string, level ...string) error {
 	configs, err := d.store.GetScopedNotifications(scopeType, scopeID)
 	if err != nil {
 		return fmt.Errorf("load scoped notification configs: %w", err)
@@ -70,10 +70,18 @@ func (d *Dispatcher) SendScopedNotifications(scopeType string, scopeID int64, me
 		return nil
 	}
 	log.Printf("notification dispatch: scope=%s scope_id=%d configs=%d", scopeType, scopeID, len(configs))
-	return d.dispatchToConfigs(configs, message)
+	return d.dispatchToConfigs(configs, message, firstLevel(level))
 }
 
-func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, message string) error {
+// firstLevel 取 variadic 级别参数的第一个；不传返回空串（飞书侧回落关键词启发式）。
+func firstLevel(level []string) string {
+	if len(level) > 0 {
+		return level[0]
+	}
+	return ""
+}
+
+func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, message string, level string) error {
 	var lastErr error
 	successCount := 0
 	for _, cfg := range configs {
@@ -106,7 +114,7 @@ func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, messa
 			}
 			target := notificationTarget(c.Webhook)
 			log.Printf("sending feishu notification config_id=%d scope=%s database_id=%v target=%s", cfg.ID, cfg.ScopeType, cfg.DatabaseID, target)
-			if err := SendFeishu(c, message); err != nil {
+			if err := SendFeishu(c, message, level); err != nil {
 				wrappedErr := fmt.Errorf("feishu target=%s send failed: %w", target, err)
 				log.Printf("%v", wrappedErr)
 				lastErr = wrappedErr
@@ -201,7 +209,7 @@ func SendTestNotification(nc *store.NotificationConfig) error {
 		if err := json.Unmarshal(nc.ConfigJSON, &c); err != nil {
 			return fmt.Errorf("parse config: %w", err)
 		}
-		return SendFeishu(c, message)
+		return SendFeishu(c, message, "test")
 	case "email":
 		var c store.EmailConfig
 		if err := json.Unmarshal(nc.ConfigJSON, &c); err != nil {

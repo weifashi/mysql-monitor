@@ -18,7 +18,7 @@ import (
 
 var feishuBlockedSleepPattern = regexp.MustCompile(`(?i)\bsleep\s*\(`)
 
-func SendFeishu(cfg store.FeishuConfig, message string) error {
+func SendFeishu(cfg store.FeishuConfig, message string, level string) error {
 	type textContent struct {
 		Text string `json:"text"`
 	}
@@ -32,7 +32,7 @@ func SendFeishu(cfg store.FeishuConfig, message string) error {
 
 	body := fsBody{
 		MsgType: "interactive",
-		Card:    buildFeishuCard(message),
+		Card:    buildFeishuCard(message, level),
 	}
 
 	if strings.TrimSpace(cfg.Secret) != "" {
@@ -86,10 +86,15 @@ func SendFeishu(cfg store.FeishuConfig, message string) error {
 	return nil
 }
 
-func buildFeishuCard(message string) map[string]any {
+func buildFeishuCard(message string, level string) map[string]any {
 	title, body, codeTitle, codeText := splitFeishuMessage(message)
 	title = feishuSafeTitle(title)
-	template := feishuTemplate(title, body)
+	// 调用方显式给了级别就用它（与页面告警色条一致），没给才靠关键词猜——
+	// 自定义消息模板里往往没有"告警/异常"这类词，猜不中会落到默认蓝色。
+	template := feishuLevelTemplate(level)
+	if template == "" {
+		template = feishuTemplate(title, body)
+	}
 	elements := []map[string]any{}
 
 	if strings.TrimSpace(body) != "" {
@@ -185,6 +190,23 @@ func splitFeishuMessage(message string) (title, body, codeTitle, codeText string
 		title = "Ops Sentinel 通知"
 	}
 	return title, body, "", ""
+}
+
+// feishuLevelTemplate 显式级别 → 卡片头色：critical 红 / warning 橙 /
+// recovery 绿 / info、test 蓝。对齐页面告警卡的色条语义。
+func feishuLevelTemplate(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "critical", "error":
+		return "red"
+	case "warning", "warn":
+		return "orange"
+	case "recovery", "recovered", "ok":
+		return "green"
+	case "info", "test":
+		return "blue"
+	default:
+		return ""
+	}
 }
 
 func feishuTemplate(title, body string) string {

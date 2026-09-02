@@ -183,7 +183,7 @@ func (m *CertManager) doCheck(id int64) {
 	}
 
 	if isAlert && (!hasPrev || prevStatus != result.Status) {
-		if err := m.dispatcher.SendGlobalNotifications(result.Message); err != nil {
+		if err := m.dispatcher.SendGlobalNotifications(result.Message, result.Status); err != nil {
 			log.Printf("[cert] notify failed for %s: %v", cfg.Name, err)
 		}
 		return
@@ -192,7 +192,7 @@ func (m *CertManager) doCheck(id int64) {
 	if !isAlert && wasAlert {
 		msg := fmt.Sprintf("[恢复] 证书 %s\n%s 已恢复正常，剩余 %d 天",
 			cfg.Name, cfg.Endpoint, result.DaysLeft)
-		if err := m.dispatcher.SendGlobalNotifications(msg); err != nil {
+		if err := m.dispatcher.SendGlobalNotifications(msg, "recovery"); err != nil {
 			log.Printf("[cert] recovery notify failed for %s: %v", cfg.Name, err)
 		}
 	}
