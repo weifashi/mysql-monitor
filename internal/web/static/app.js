@@ -2963,7 +2963,7 @@ const PromChecksPage = defineComponent({
             alert_strategy: 'threshold', alert_condition: 'gt', alert_value: '',
             alert_delta_value: '', alert_delta_percent: '', alert_consecutive: 1,
             severity: 'warning', notify_enabled: true, recovery_notify: true, message_template: '',
-            diag_url: '',
+            diag_url: '', absent_as_zero: false,
         });
         const form = reactive(emptyForm());
 
@@ -3006,6 +3006,7 @@ const PromChecksPage = defineComponent({
                 notify_enabled: !!row.notify_enabled, recovery_notify: !!row.recovery_notify,
                 message_template: row.message_template || '',
                 diag_url: row.diag_url || '',
+                absent_as_zero: !!row.absent_as_zero,
             });
             showModal.value = true;
         }
@@ -3232,6 +3233,11 @@ const PromChecksPage = defineComponent({
                     value: form.diag_url, onUpdateValue: v => form.diag_url = v,
                     placeholder: '可选。告警通知前 GET 此地址，把响应附进消息（如各 VM 的 :9101 错误样本）',
                 })),
+                h(NFormItem, { label: '无数据按 0 评估' }, () => h(NSpace, { align: 'center' }, () => [
+                    h(NSwitch, { value: form.absent_as_zero, onUpdateValue: v => form.absent_as_zero = v }),
+                    h(NText, { depth: 3, style: 'font-size:12px' }, () =>
+                        '序列缺失时按 0 参与评估。掉线检测（up 类指标 < 1）必开：容器停止后序列直接消失，不开则永远不告警'),
+                ])),
                 testResult.value ? h(NFormItem, { label: '测试结果' }, () => (
                     testResult.value.success
                         ? h(NAlert, { type: testResult.value.matched ? 'warning' : 'success' }, () =>

@@ -62,6 +62,19 @@ while read -r cid cname; do
 done < /tmp/.ctr_names.$$
 rm -f /tmp/.ctr_names.$$
 
+# 容器运行状态：docker ps -a 含已停止的容器（cgroup 目录随停止消失，上面
+# 的循环看不到它们）。停止=0 让「掉线」规则有值可评；容器被彻底删除时
+# 序列消失，由告警引擎的 absent_as_zero 兜底。
+{
+  echo "# HELP ttpos_container_up 容器运行状态（1=running，其它=0）"
+  echo "# TYPE ttpos_container_up gauge"
+} >> "$TMP"
+docker ps -a --format '{{.Names}} {{.State}}' 2>/dev/null | while read -r cname cstate; do
+  [ -z "$cname" ] && continue
+  if [ "$cstate" = "running" ]; then up=1; else up=0; fi
+  echo "ttpos_container_up{vm=\"$VM\",container=\"$cname\"} $up" >> "$TMP"
+done
+
 {
   echo "# HELP ttpos_container_metrics_containers 本次采集到的容器数"
   echo "# TYPE ttpos_container_metrics_containers gauge"

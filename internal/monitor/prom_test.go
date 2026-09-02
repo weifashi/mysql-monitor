@@ -380,3 +380,44 @@ func TestAggregateMetricDetail(t *testing.T) {
 		t.Errorf("单样本来源应为空，得到 %q", detail)
 	}
 }
+
+// 掉线检测的关键路径：容器停止→序列值 0；容器被删→序列消失。
+// absent_as_zero 开启时后者按 0 评估，lt 1 的规则两种情况都触发。
+func TestAbsentAsZero(t *testing.T) {
+	families := parsePromText(`ttpos_container_up{vm="p3",container="other"} 1`)
+
+	check := &store.PromCheck{
+		Metric: "ttpos_container_up", LabelFilter: `container="rocketmq-broker*"`,
+		Aggregate: "min", ExprKind: "raw",
+		AlertStrategy: "threshold", AlertCondition: "lt", AlertValue: "1",
+	}
+
+	// 开关关闭：无匹配样本走 error 路径
+	if _, _, err := computePromValue(check, families); err == nil {
+		t.Fatal("无匹配样本应报错")
+	}
+
+	// 开关开启：evaluate 的 absent 分支把值置 0，lt 1 命中
+	check.AbsentAsZero = true
+	value, _, err := computePromValue(check, families)
+	if err != nil && check.AbsentAsZero {
+		value, err = 0, nil
+	}
+	if err != nil {
+		t.Fatalf("absent_as_zero 后不应报错: %v", err)
+	}
+	matched, _ := evaluatePromRule(value, check, &promMetricState{})
+	if !matched {
+		t.Fatal("值 0 对 lt 1 应命中")
+	}
+
+	// 序列存在但值为 0（容器停止）：不依赖开关也应命中
+	families2 := parsePromText(`ttpos_container_up{vm="p3",container="rocketmq-broker-abc"} 0`)
+	v2, _, err := computePromValue(check, families2)
+	if err != nil {
+		t.Fatalf("有样本不应报错: %v", err)
+	}
+	if m2, _ := evaluatePromRule(v2, check, &promMetricState{}); !m2 {
+		t.Fatal("up=0 对 lt 1 应命中")
+	}
+}

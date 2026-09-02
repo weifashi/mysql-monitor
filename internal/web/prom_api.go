@@ -232,6 +232,7 @@ type promCheckRequest struct {
 	RecoveryNotify    *bool  `json:"recovery_notify"`
 	MessageTemplate   string `json:"message_template"`
 	DiagURL           string `json:"diag_url"`
+	AbsentAsZero      *bool  `json:"absent_as_zero"`
 	Enabled           *bool  `json:"enabled"`
 }
 
@@ -253,6 +254,9 @@ func (req *promCheckRequest) applyTo(c *store.PromCheck) {
 	c.Severity = defaultIfEmpty(req.Severity, "warning")
 	c.MessageTemplate = req.MessageTemplate
 	c.DiagURL = strings.TrimSpace(req.DiagURL)
+	if req.AbsentAsZero != nil {
+		c.AbsentAsZero = *req.AbsentAsZero
+	}
 	if req.NotifyEnabled != nil {
 		c.NotifyEnabled = *req.NotifyEnabled
 	}

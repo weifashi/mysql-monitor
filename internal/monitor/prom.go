@@ -369,6 +369,11 @@ func (m *PromManager) fetchDiagnostic(diagURL string) string {
 // evaluate 对单条规则求值并按需告警。
 func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck, families map[string][]promSample, elapsed int64) {
 	value, detail, err := computePromValue(check, families)
+	if err != nil && check.AbsentAsZero {
+		// 序列缺失按 0 评估：容器停止/被删后它的指标序列直接消失，
+		// 掉线规则（up 类指标 lt 1）靠这里才能触发而不是静默进 error。
+		value, detail, err = 0, "指标序列缺失，按 0 评估", nil
+	}
 	if err != nil {
 		st := m.metricState(check.ID)
 		if now := time.Now(); shouldLogPromResult(st, "error", now) {
@@ -516,6 +521,9 @@ func (m *PromManager) TestCheck(target *store.PromTarget, check *store.PromCheck
 		return "", false, "", err
 	}
 	value, _, err := computePromValue(check, families)
+	if err != nil && check.AbsentAsZero {
+		value, err = 0, nil
+	}
 	if err != nil {
 		return "", false, "", err
 	}
