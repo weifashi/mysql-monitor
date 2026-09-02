@@ -45,8 +45,11 @@ func SendFeishu(cfg store.FeishuConfig, message string, level string) error {
 	if err != nil {
 		return fmt.Errorf("json marshal: %w", err)
 	}
+	return postFeishu(cfg.Webhook, data)
+}
 
-	resp, err := http.Post(cfg.Webhook, "application/json", bytes.NewBuffer(data))
+func postFeishu(webhook string, data []byte) error {
+	resp, err := http.Post(webhook, "application/json", bytes.NewBuffer(data))
 	if err != nil {
 		return fmt.Errorf("http post: %w", err)
 	}
@@ -84,6 +87,74 @@ func SendFeishu(cfg store.FeishuConfig, message string, level string) error {
 		return fmt.Errorf("feishu api code=%d: %s", apiCode, errMsg)
 	}
 	return nil
+}
+
+// SendFeishuCard 发送结构化告警卡片：彩色头 + 字段行 + 可选备注/代码块 + 查看详情。
+func SendFeishuCard(cfg store.FeishuConfig, card *AlertCard, baseURL string) error {
+	template := feishuLevelTemplate(card.Level)
+	if template == "" {
+		template = "wathet"
+	}
+
+	elements := []map[string]any{}
+	if len(card.Fields) > 0 {
+		var lines []string
+		for _, kv := range card.Fields {
+			lines = append(lines, "**"+escapeLarkMarkdown(kv[0])+"**: "+escapeLarkMarkdown(sanitizeFeishuBlockedText(kv[1])))
+		}
+		elements = append(elements, map[string]any{
+			"tag":  "div",
+			"text": map[string]string{"tag": "lark_md", "content": strings.Join(lines, "\n")},
+		})
+	}
+	if note := strings.TrimSpace(card.Note); note != "" {
+		elements = append(elements, map[string]any{
+			"tag":  "div",
+			"text": map[string]string{"tag": "lark_md", "content": escapeLarkMarkdown(sanitizeFeishuBlockedText(note))},
+		})
+	}
+	if code := strings.TrimSpace(card.Code); code != "" {
+		elements = append(elements,
+			map[string]any{"tag": "hr"},
+			map[string]any{
+				"tag":  "div",
+				"text": map[string]string{"tag": "lark_md", "content": "```text\n" + sanitizeCodeFence(truncateFeishuCodeBlock(code, 2600)) + "\n```"},
+			})
+	}
+	if url := card.detailURL(baseURL); url != "" {
+		elements = append(elements, map[string]any{
+			"tag":  "div",
+			"text": map[string]string{"tag": "lark_md", "content": "[查看详情](" + url + ")"},
+		})
+	}
+	if len(elements) == 0 {
+		elements = append(elements, map[string]any{
+			"tag":  "div",
+			"text": map[string]string{"tag": "lark_md", "content": escapeLarkMarkdown(card.Title)},
+		})
+	}
+
+	body := map[string]any{
+		"msg_type": "interactive",
+		"card": map[string]any{
+			"config": map[string]any{"wide_screen_mode": true},
+			"header": map[string]any{
+				"template": template,
+				"title":    map[string]string{"tag": "plain_text", "content": card.titlePrefix() + card.Title},
+			},
+			"elements": elements,
+		},
+	}
+	if strings.TrimSpace(cfg.Secret) != "" {
+		sec := time.Now().Unix()
+		body["timestamp"] = fmt.Sprintf("%d", sec)
+		body["sign"] = feishuSign(sec, cfg.Secret)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("json marshal: %w", err)
+	}
+	return postFeishu(cfg.Webhook, data)
 }
 
 func buildFeishuCard(message string, level string) map[string]any {

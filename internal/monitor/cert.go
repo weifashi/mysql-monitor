@@ -183,16 +183,34 @@ func (m *CertManager) doCheck(id int64) {
 	}
 
 	if isAlert && (!hasPrev || prevStatus != result.Status) {
-		if err := m.dispatcher.SendGlobalNotifications(result.Message, result.Status); err != nil {
+		card := &notify.AlertCard{
+			Title: "证书 " + cfg.Name, Level: result.Status,
+			Fields: [][2]string{
+				{"端点", cfg.Endpoint},
+				{"剩余天数", fmt.Sprintf("%d 天", result.DaysLeft)},
+				{"状态", result.Status},
+				{"检查时间", time.Now().Format("2006-01-02 15:04:05")},
+			},
+			Note:       result.Message,
+			DetailPath: "/#/cert-checks",
+		}
+		if err := m.dispatcher.SendGlobalAlertCard(card); err != nil {
 			log.Printf("[cert] notify failed for %s: %v", cfg.Name, err)
 		}
 		return
 	}
 
 	if !isAlert && wasAlert {
-		msg := fmt.Sprintf("[恢复] 证书 %s\n%s 已恢复正常，剩余 %d 天",
-			cfg.Name, cfg.Endpoint, result.DaysLeft)
-		if err := m.dispatcher.SendGlobalNotifications(msg, "recovery"); err != nil {
+		card := &notify.AlertCard{
+			Title: "证书 " + cfg.Name, Level: "recovery",
+			Fields: [][2]string{
+				{"端点", cfg.Endpoint},
+				{"剩余天数", fmt.Sprintf("%d 天", result.DaysLeft)},
+				{"恢复时间", time.Now().Format("2006-01-02 15:04:05")},
+			},
+			DetailPath: "/#/cert-checks",
+		}
+		if err := m.dispatcher.SendGlobalAlertCard(card); err != nil {
 			log.Printf("[cert] recovery notify failed for %s: %v", cfg.Name, err)
 		}
 	}

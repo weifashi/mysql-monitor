@@ -88,6 +88,7 @@ func main() {
 	}
 
 	dispatcher := notify.NewDispatcher(s)
+	dispatcher.PublicBaseURL = publicBaseURL
 	eventBus := monitor.NewEventBus()
 	mgr := monitor.NewManager(s, dispatcher, eventBus)
 

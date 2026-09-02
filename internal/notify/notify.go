@@ -26,6 +26,8 @@ type LongQuery struct {
 
 type Dispatcher struct {
 	store *store.Store
+	// PublicBaseURL 用于告警卡片里的「查看详情」链接（如 https://sentinel.ttpos.org）。
+	PublicBaseURL string
 }
 
 func NewDispatcher(s *store.Store) *Dispatcher {
@@ -162,6 +164,38 @@ func (d *Dispatcher) dispatchToConfigs(configs []store.NotificationConfig, messa
 		if lastErr != nil {
 			log.Printf("notification partially failed: success=%d last_error=%v", successCount, lastErr)
 		}
+		return nil
+	}
+	return lastErr
+}
+
+// dispatchCard 按通道类型分发结构化卡片：飞书走卡片渲染，其余降级为文本。
+func (d *Dispatcher) dispatchCard(configs []store.NotificationConfig, card *AlertCard) error {
+	var lastErr error
+	successCount := 0
+	plain := card.PlainText(d.PublicBaseURL)
+	for _, cfg := range configs {
+		if cfg.Type == "feishu" {
+			var c store.FeishuConfig
+			if err := json.Unmarshal(cfg.ConfigJSON, &c); err != nil || c.Webhook == "" {
+				continue
+			}
+			if err := SendFeishuCard(c, card, d.PublicBaseURL); err != nil {
+				wrappedErr := fmt.Errorf("feishu target=%s send failed: %w", notificationTarget(c.Webhook), err)
+				log.Printf("%v", wrappedErr)
+				lastErr = wrappedErr
+			} else {
+				successCount++
+			}
+			continue
+		}
+		if err := d.dispatchToConfigs([]store.NotificationConfig{cfg}, plain, card.Level); err != nil {
+			lastErr = err
+		} else {
+			successCount++
+		}
+	}
+	if successCount > 0 {
 		return nil
 	}
 	return lastErr

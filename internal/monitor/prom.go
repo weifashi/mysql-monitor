@@ -427,12 +427,22 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 		// 持续告警时不重复推送，只在状态由非 alert 变为 alert 时通知一次
 		notified := false
 		if check.NotifyEnabled && !(hasPrev && prevStatus == "alert") {
-			// 通知前拉诊断内容（如各 VM 的错误样本端口），附进消息——
-			// 人收到告警时错误内容已经在里面，不用再登机 docker logs。
-			if diag := m.fetchDiagnostic(check.DiagURL); diag != "" {
-				message += "\n\n最近错误样本：\n" + diag
+			card := &notify.AlertCard{
+				Title: check.Name, Level: check.Severity,
+				Fields: [][2]string{
+					{"实例", target.Name},
+					{"指标", check.Metric},
+					{"当前值", valueStr},
+					{"触发条件", reason},
+					{"开始", time.Now().Format("2006-01-02 15:04:05")},
+				},
+				Note:       messageNote(check, message, detail),
+				DetailPath: fmt.Sprintf("/#/objects/%d", target.ID),
 			}
-			if err := m.dispatcher.SendGlobalNotifications(message, check.Severity); err != nil {
+			// 通知前拉诊断内容（如各 VM 的错误样本端口），附进卡片——
+			// 人收到告警时错误内容已经在里面，不用再登机 docker logs。
+			card.Code = m.fetchDiagnostic(check.DiagURL)
+			if err := m.dispatcher.SendGlobalAlertCard(card); err != nil {
 				log.Printf("[prom] notify failed for check %s: %v", check.Name, err)
 			} else {
 				notified = true
@@ -470,12 +480,21 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 		m.store.ResolveEvent("prom", check.ID, valueStr)
 	}
 	if hasPrev && prevStatus == "alert" && !warmingUp && check.RecoveryNotify && check.NotifyEnabled {
-		msg := fmt.Sprintf("[恢复] %s / %s\n指标：%s\n当前值：%s",
-			target.Name, check.Name, check.Metric, valueStr)
-		if err := m.dispatcher.SendGlobalNotifications(msg, "recovery"); err != nil {
+		card := &notify.AlertCard{
+			Title: check.Name, Level: "recovery",
+			Fields: [][2]string{
+				{"实例", target.Name},
+				{"指标", check.Metric},
+				{"当前值", valueStr},
+				{"恢复时间", time.Now().Format("2006-01-02 15:04:05")},
+			},
+			DetailPath: fmt.Sprintf("/#/objects/%d", target.ID),
+		}
+		if err := m.dispatcher.SendGlobalAlertCard(card); err != nil {
 			log.Printf("[prom] recovery notify failed for check %s: %v", check.Name, err)
 		}
-		m.emit("prom_recovered", target.ID, target.Name, msg, nil)
+		m.emit("prom_recovered", target.ID, target.Name,
+			fmt.Sprintf("[恢复] %s / %s 当前值 %s", target.Name, check.Name, valueStr), nil)
 	}
 }
 
@@ -944,6 +963,19 @@ func formatPromValue(v float64) string {
 		return strconv.FormatFloat(v, 'f', -1, 64)
 	}
 	return strconv.FormatFloat(v, 'f', 2, 64)
+}
+
+// messageNote 决定卡片备注：有自定义模板时用其渲染结果（含业务处置指引），
+// 默认消息与字段行重复，只保留聚合来源。
+func messageNote(check *store.PromCheck, rendered, detail string) string {
+	var parts []string
+	if strings.TrimSpace(check.MessageTemplate) != "" {
+		parts = append(parts, strings.TrimSpace(rendered))
+	}
+	if strings.TrimSpace(detail) != "" {
+		parts = append(parts, "来源："+detail)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func renderPromMessage(target *store.PromTarget, check *store.PromCheck, value, reason string) string {
