@@ -2891,6 +2891,8 @@ const PromTargetsPage = defineComponent({
                 loading: loading.value, maxHeight: 'calc(100vh - 220px)',
                 scrollX: _isMobile.value ? 700 : undefined,
             }),
+            items.value.length ? h('div', { style: 'margin-top:10px;font-size:12.5px;opacity:.65;text-align:right' },
+                `共 ${items.value.length} 个目标 · ${items.value.filter(r => r.running).length} 运行中 · 合计 ${items.value.reduce((n, r) => n + (r.check_count || 0), 0)} 条规则`) : null,
             h(NModal, {
                 show: showModal.value, 'onUpdate:show': v => showModal.value = v,
                 preset: 'card', title: editingId.value ? '编辑采集目标' : '添加采集目标',
