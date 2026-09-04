@@ -54,6 +54,9 @@ const api = {
         }
         if (res.status === 401) {
             _sessionValid = false;
+            // 会话失效（改管理员账号/服务重启）时主动踢回登录页——
+            // 否则已打开的页面所有请求静默失败，看起来像"没有数据"
+            if (!location.hash.startsWith('#/login')) location.hash = '#/login';
             throw new Error('unauthorized');
         }
         const data = await res.json();
