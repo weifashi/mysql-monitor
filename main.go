@@ -141,6 +141,29 @@ func main() {
 		log.Printf("failed to start prometheus monitors: %v", err)
 	}
 
+	// 指标时序采样：每分钟把全部规则快照存一个点，趋势图数据源（保留 72h）
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				snap := promMgr.Snapshot()
+				samples := make(map[int64]float64, len(snap))
+				for id, sn := range snap {
+					if sn.Err == "" {
+						samples[id] = sn.Value
+					}
+				}
+				if err := s.InsertMetricSamples(time.Now().Unix(), samples); err != nil {
+					log.Printf("metric sampling failed: %v", err)
+				}
+			}
+		}
+	}()
+
 	certMgr := monitor.NewCertManager(s, dispatcher, eventBus)
 	if err := certMgr.StartAll(); err != nil {
 		log.Printf("failed to start certificate monitors: %v", err)

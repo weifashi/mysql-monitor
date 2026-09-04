@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"ops-sentinel/internal/monitor"
 	"ops-sentinel/internal/store"
@@ -199,6 +200,64 @@ func (s *Server) apiObjectDetail(w http.ResponseWriter, r *http.Request) {
 		"children": children,
 		"events":   events,
 	})
+}
+
+// GET /api/objects/{id}/sparklines?hours=6 —— 对象详情页：全部规则的 6h 迷你时序
+func (s *Server) apiObjectSparklines(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "无效的 ID")
+		return
+	}
+	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+	if hours <= 0 || hours > 72 {
+		hours = 6
+	}
+	checks, err := s.store.ListPromChecks(&id)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ids := make([]int64, 0, len(checks))
+	for _, c := range checks {
+		ids = append(ids, c.ID)
+	}
+	bucket := 300
+	if hours > 12 {
+		bucket = 900
+	}
+	series, err := s.store.ListMetricSamplesByChecks(ids, time.Now().Add(-time.Duration(hours)*time.Hour), bucket)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, series)
+}
+
+// GET /api/prom-checks/{id}/samples?hours=24 —— 单规则大图
+func (s *Server) apiPromCheckSamples(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "无效的 ID")
+		return
+	}
+	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+	if hours <= 0 || hours > 72 {
+		hours = 24
+	}
+	bucket := 60
+	if hours > 6 {
+		bucket = 300
+	}
+	if hours > 24 {
+		bucket = 900
+	}
+	points, err := s.store.ListMetricSamples(id, time.Now().Add(-time.Duration(hours)*time.Hour), bucket)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, points)
 }
 
 // GET /api/alert-events?status=firing|resolved

@@ -5076,6 +5076,37 @@ function groupEvents(events) {
     return [...groups.values()];
 }
 
+// svgLine 把 [[t,v],...] 画成内联 SVG 折线（无依赖）。
+// w/h 是 viewBox 尺寸；fill 为 true 画渐变面积。
+function svgLine(points, w, hg, opts) {
+    if (!points || points.length < 2) return null;
+    const vs = points.map(p => p.v);
+    let min = Math.min(...vs), max = Math.max(...vs);
+    if (max === min) { max += 1; min -= 1; }
+    const pad = (max - min) * 0.08;
+    min -= pad; max += pad;
+    const t0 = points[0].t, t1 = points[points.length - 1].t || t0 + 1;
+    const X = t => ((t - t0) / (t1 - t0 || 1)) * w;
+    const Y = v => hg - ((v - min) / (max - min)) * hg;
+    const pts = points.map(p => X(p.t).toFixed(1) + ',' + Y(p.v).toFixed(1)).join(' ');
+    const color = (opts && opts.color) || '#36ad6a';
+    const children = [];
+    if (opts && opts.fill) {
+        children.push(h('polygon', {
+            points: '0,' + hg + ' ' + pts + ' ' + w + ',' + hg,
+            fill: color, opacity: 0.12,
+        }));
+    }
+    children.push(h('polyline', {
+        points: pts, fill: 'none', stroke: color,
+        'stroke-width': (opts && opts.width) || 1.5, 'stroke-linejoin': 'round',
+    }));
+    return h('svg', {
+        viewBox: '0 0 ' + w + ' ' + hg, preserveAspectRatio: 'none',
+        style: (opts && opts.style) || ('width:' + w + 'px;height:' + hg + 'px;display:block'),
+    }, children);
+}
+
 // detailKeyValue 从聚合来源里取主标签值（container=xxx 的 xxx），
 // Coolify 容器名末段是 20+ 位随机串，剥掉再展示；完整值仍在悬停里。
 function detailKeyValue(detail) {
@@ -5394,18 +5425,39 @@ const ObjectDetailPage = defineComponent({
         const route = VueRouter.useRoute();
         const data = ref(null);
         const loading = ref(true);
+        const sparks = ref({});          // check_id -> [{t,v},...]
+        const trend = ref(null);         // 大图弹窗：{check, points, hours}
+        const trendLoading = ref(false);
         let timer = null;
         async function load() {
             try { data.value = await api.get('/api/objects/' + route.params.id); } catch { data.value = null; }
             loading.value = false;
+            try { sparks.value = await api.get('/api/objects/' + route.params.id + '/sparklines?hours=6') || {}; } catch {}
+        }
+        async function openTrend(check, hours) {
+            trend.value = { check, points: trend.value && trend.value.check.id === check.id ? trend.value.points : [], hours };
+            trendLoading.value = true;
+            try {
+                trend.value = { check, hours, points: await api.get('/api/prom-checks/' + check.id + '/samples?hours=' + hours) || [] };
+            } catch { trend.value = { check, hours, points: [] }; }
+            trendLoading.value = false;
         }
         watch(() => route.params.id, () => { if (route.params.id) { loading.value = true; load(); } });
         onMounted(() => { load(); timer = setInterval(load, 30000); });
         onUnmounted(() => clearInterval(timer));
 
-        const checkColumns = [
+        // computed：sparklines 异步加载后触发表格重渲（静态数组不会）
+        const checkColumns = computed(() => [
             { title: '规则', key: 'name', ellipsis: { tooltip: true } },
             { title: '指标', key: 'metric', width: 300, ellipsis: { tooltip: true }, render: c => h('span', { style: 'font-family:monospace;font-size:11.5px;opacity:.7' }, c.metric) },
+            {
+                title: '趋势 6h', key: 'spark', width: 140, render: c => {
+                    const pts = sparks.value[c.id];
+                    if (!pts || pts.length < 2) return h('span', { style: 'opacity:.3;font-size:11px' }, '—');
+                    return h('div', { style: 'cursor:pointer', title: '点击看大图', onClick: () => openTrend(c, 24) },
+                        [svgLine(pts, 120, 26, { color: c.matched ? '#d03050' : '#36ad6a', fill: true })]);
+                },
+            },
             {
                 title: '当前值', key: 'value', width: 130, render: c => c.err
                     ? h(NTooltip, null, { trigger: () => h(NTag, { size: 'tiny', type: 'default' }, () => '无数据'), default: () => c.err })
@@ -5421,7 +5473,7 @@ const ObjectDetailPage = defineComponent({
                     : (c.risk ? h(NTag, { size: 'small', type: 'warning', bordered: false }, () => '接近')
                         : h(NTag, { size: 'small', type: 'success', bordered: false }, () => '正常')),
             },
-        ];
+        ]);
         const eventColumns = [
             { title: '规则', key: 'check_name' },
             { title: '状态', key: 'status', width: 80, render: e => e.status === 'firing' ? h(NTag, { size: 'tiny', type: 'error', bordered: false }, () => '触发中') : h(NTag, { size: 'tiny', bordered: false }, () => '已恢复') },
@@ -5465,7 +5517,7 @@ const ObjectDetailPage = defineComponent({
                     ]))) : null,
 
                 h('div', { class: 'sen-sec' }, `全部规则（${(o.checks || []).length} 条，来源混排）`),
-                h(NDataTable, { columns: checkColumns, data: o.checks || [], size: 'small', bordered: false }),
+                h(NDataTable, { columns: checkColumns.value, data: o.checks || [], size: 'small', bordered: false }),
 
                 d.children && d.children.length ? [
                     h('div', { class: 'sen-sec' }, `承载的对象（${d.children.length}）`),
@@ -5479,6 +5531,28 @@ const ObjectDetailPage = defineComponent({
                     h('div', { class: 'sen-sec' }, '告警事件'),
                     h(NDataTable, { columns: eventColumns, data: d.events, size: 'small', bordered: false }),
                 ] : null,
+
+                h(NModal, {
+                    show: !!trend.value, 'onUpdate:show': v => { if (!v) trend.value = null; },
+                    preset: 'card', title: trend.value ? trend.value.check.name : '',
+                    style: 'width:860px;max-width:96vw', segmented: true,
+                }, () => trend.value ? h('div', null, [
+                    h(NSpace, { style: 'margin-bottom:10px' }, () => [24, 72].map(hs =>
+                        h(NButton, { size: 'tiny', type: trend.value.hours === hs ? 'primary' : 'default', secondary: trend.value.hours !== hs, onClick: () => openTrend(trend.value.check, hs) },
+                            () => '最近 ' + hs + ' 小时'))),
+                    h(NSpin, { show: trendLoading.value }, () =>
+                        trend.value.points.length >= 2
+                            ? h('div', null, [
+                                svgLine(trend.value.points, 800, 240, { fill: true, width: 2, style: 'width:100%;height:240px;display:block' }),
+                                h('div', { style: 'display:flex;justify-content:space-between;font-size:11px;opacity:.55;font-family:monospace;margin-top:4px' }, [
+                                    h('span', null, new Date(trend.value.points[0].t * 1000).toLocaleString()),
+                                    h('span', null, '峰值 ' + Math.round(Math.max(...trend.value.points.map(p => p.v)) * 100) / 100 +
+                                        ' · 均值 ' + Math.round(trend.value.points.reduce((a, p) => a + p.v, 0) / trend.value.points.length * 100) / 100),
+                                    h('span', null, new Date(trend.value.points[trend.value.points.length - 1].t * 1000).toLocaleString()),
+                                ]),
+                            ])
+                            : h(NEmpty, { description: '样本还不够（每分钟采一点，稍后再来）', style: 'margin:60px 0' })),
+                ]) : null),
             ]);
         });
     },

@@ -130,6 +130,12 @@ func New(dataDir string) (*Store, error) {
 		"ALTER TABLE alert_events ADD COLUMN detail TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE prom_checks ADD COLUMN diag_url TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE prom_checks ADD COLUMN absent_as_zero INTEGER NOT NULL DEFAULT 0",
+		`CREATE TABLE IF NOT EXISTS metric_samples (
+			check_id INTEGER NOT NULL,
+			ts       INTEGER NOT NULL,
+			value    REAL    NOT NULL
+		)`,
+		"CREATE INDEX IF NOT EXISTS idx_metric_samples_check_ts ON metric_samples (check_id, ts)",
 		"ALTER TABLE grafana_configs ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE rocketmq_configs ADD COLUMN notify_new_msg INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE rocketmq_alert_logs ADD COLUMN message_body TEXT NOT NULL DEFAULT ''",
@@ -521,6 +527,9 @@ func (s *Store) runPurge() {
 	}
 	if n, err := s.PurgeOldAlertEvents(); err == nil && n > 0 {
 		log.Printf("purged %d old alert events", n)
+	}
+	if n, err := s.PurgeOldMetricSamples(); err == nil && n > 0 {
+		log.Printf("purged %d old metric samples", n)
 	}
 	s.CleanupOldNotifiedPIDs()
 }

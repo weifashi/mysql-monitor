@@ -445,3 +445,13 @@ CREATE TABLE IF NOT EXISTS alert_events (
 );
 CREATE INDEX IF NOT EXISTS idx_alert_events_status ON alert_events(status, last_at);
 CREATE INDEX IF NOT EXISTS idx_alert_events_check  ON alert_events(source, check_id, status);
+
+-- ============================================================
+-- 指标时序采样：趋势图数据源。每分钟全量规则各存一点，保留 72h。
+-- ============================================================
+CREATE TABLE IF NOT EXISTS metric_samples (
+    check_id INTEGER NOT NULL,
+    ts       INTEGER NOT NULL,
+    value    REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_metric_samples_check_ts ON metric_samples (check_id, ts);
