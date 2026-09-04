@@ -98,6 +98,9 @@ func (s *Store) UpdateCertCheck(c *CertCheck) error {
 
 func (s *Store) DeleteCertCheck(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM cert_checks WHERE id = ?`, id)
+	if err == nil {
+		s.db.Exec(`DELETE FROM alert_events WHERE source = 'cert' AND check_id = ?`, id)
+	}
 	return err
 }
 

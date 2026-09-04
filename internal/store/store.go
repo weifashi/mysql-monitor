@@ -286,6 +286,10 @@ func (s *Store) UpdateDatabase(d *Database) error {
 }
 
 func (s *Store) DeleteDatabase(id int64) error {
+	// 级联会带走 custom_sql_checks，先把它们的告警事件清掉（9-02 删演练库
+	// 时 19 条 firing 僵尸卡在告警页，就是漏了这一步）
+	s.db.Exec(`DELETE FROM alert_events WHERE source = 'custom_sql'
+		AND check_id IN (SELECT id FROM custom_sql_checks WHERE database_id = ?)`, id)
 	_, err := s.db.Exec(`DELETE FROM databases WHERE id=?`, id)
 	return err
 }
@@ -988,6 +992,9 @@ func normalizeHealthCheckDefaults(h *HealthCheck) {
 
 func (s *Store) DeleteHealthCheck(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM health_checks WHERE id=?`, id)
+	if err == nil {
+		s.db.Exec(`DELETE FROM alert_events WHERE source = 'health' AND check_id = ?`, id)
+	}
 	return err
 }
 
@@ -1349,6 +1356,9 @@ func normalizeCustomSQLCheckDefaults(c *CustomSQLCheck) {
 
 func (s *Store) DeleteCustomSQLCheck(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM custom_sql_checks WHERE id=?`, id)
+	if err == nil {
+		s.db.Exec(`DELETE FROM alert_events WHERE source = 'custom_sql' AND check_id = ?`, id)
+	}
 	return err
 }
 

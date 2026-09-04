@@ -252,6 +252,11 @@ func (s *Store) UpdatePromCheck(c *PromCheck) error {
 
 func (s *Store) DeletePromCheck(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM prom_checks WHERE id = ?`, id)
+	if err == nil {
+		// 不清的话该规则已 firing 的事件永远没人 resolve，僵尸卡在告警页
+		s.db.Exec(`DELETE FROM alert_events WHERE source = 'prom' AND check_id = ?`, id)
+		s.db.Exec(`DELETE FROM metric_samples WHERE check_id = ?`, id)
+	}
 	return err
 }
 
