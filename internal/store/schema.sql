@@ -282,6 +282,7 @@ CREATE TABLE IF NOT EXISTS custom_sql_checks (
     notify_enabled   INTEGER NOT NULL DEFAULT 1,
     recovery_notify  INTEGER NOT NULL DEFAULT 1,
     message_template TEXT    NOT NULL DEFAULT '',
+    diag_sql            TEXT    NOT NULL DEFAULT '',  -- 告警时执行并附进通知的诊断查询
     enabled          INTEGER NOT NULL DEFAULT 1,
     created_at       DATETIME NOT NULL DEFAULT (datetime('now')),
     updated_at       DATETIME NOT NULL DEFAULT (datetime('now')),

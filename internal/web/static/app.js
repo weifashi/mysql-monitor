@@ -1082,6 +1082,7 @@ const CustomSQLPage = defineComponent({
             notify_enabled: true,
             recovery_notify: true,
             message_template: '',
+            diag_sql: '',
             diag_url: '',
         });
         const message = useMessage();
@@ -1155,6 +1156,7 @@ const CustomSQLPage = defineComponent({
                 notify_enabled: true,
                 recovery_notify: true,
                 message_template: '',
+                diag_sql: '',
             diag_url: '',
             });
         }
@@ -1185,6 +1187,7 @@ const CustomSQLPage = defineComponent({
                 notify_enabled: row.notify_enabled !== false,
                 recovery_notify: row.recovery_notify !== false,
                 message_template: row.message_template || '',
+                diag_sql: row.diag_sql || '',
             });
             showModal.value = true;
         }

@@ -195,11 +195,24 @@ func (m *CustomSQLManager) doCheck(cfg *store.CustomSQLCheck) {
 	wasAlert := m.isAlertNotified(cfg.ID) || (hasPreviousStatus && previousStatus != "ok")
 
 	notifyDiagnostics := ""
+	// 诊断 SQL：计数器型告警只有数字，这里在同一库跑一条附加查询
+	// （如 digest top5），把"具体是谁"直接带进通知。只在将发通知的
+	// 这一次执行，避免持续告警期间反复查库。
+	if logEntry.Status == "alert" && strings.TrimSpace(cfg.DiagSQL) != "" && !m.isAlertNotified(cfg.ID) {
+		if diag := runCustomSQLDiag(m.store, cfg); diag != "" {
+			notifyDiagnostics = diag
+			logEntry.Message = truncateForLog(logEntry.Message, "\n\n诊断输出:\n"+diag, 8000)
+		}
+	}
 	if logEntry.Status == "alert" && !m.isActionTriggered(cfg.ID) {
 		actionSummary, notifyActionSummary := runCustomSQLTriggerActions(cfg)
 		if actionSummary != "" {
 			logEntry.Message = truncateForLog(logEntry.Message, "\n\n触发操作:\n"+actionSummary, 8000)
-			notifyDiagnostics = notifyActionSummary
+			if notifyDiagnostics != "" {
+				notifyDiagnostics += "\n" + notifyActionSummary
+			} else {
+				notifyDiagnostics = notifyActionSummary
+			}
 			m.setActionTriggered(cfg.ID, true)
 			m.emit("custom_sql_action", cfg.ID, cfg.Name, "已执行异常触发操作", map[string]string{"summary": actionSummary})
 		}
@@ -380,6 +393,81 @@ func renderCustomSQLMessageTemplate(tpl string, cfg *store.CustomSQLCheck, logEn
 	}
 	if strings.TrimSpace(diagnostics) != "" && !hasDiagnosticsPlaceholder {
 		out += "\n\n诊断输出:\n" + strings.TrimSpace(diagnostics)
+	}
+	return out
+}
+
+// runCustomSQLDiag 执行规则的诊断 SQL：只读事务、5 秒限时、最多 10 行、
+// 输出截 2000 字符。失败不阻塞告警，把错误文本附上便于排查。
+func runCustomSQLDiag(s *store.Store, cfg *store.CustomSQLCheck) string {
+	diagSQL := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cfg.DiagSQL), ";"))
+	if diagSQL == "" {
+		return ""
+	}
+	if err := ValidateCustomSQL(diagSQL); err != nil {
+		return "诊断 SQL 校验失败: " + err.Error()
+	}
+	dbCfg, err := s.GetDatabase(cfg.DatabaseID)
+	if err != nil {
+		return "诊断执行失败: " + err.Error()
+	}
+	db, err := sql.Open("mysql", customSQLDSN(dbCfg, cfg.DBName))
+	if err != nil {
+		return "诊断执行失败: " + err.Error()
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return "诊断执行失败: " + err.Error()
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, diagSQL)
+	if err != nil {
+		return "诊断执行失败: " + err.Error()
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return "诊断执行失败: " + err.Error()
+	}
+	var b strings.Builder
+	count := 0
+	for rows.Next() && count < 10 {
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+		if rows.Scan(ptrs...) != nil {
+			continue
+		}
+		parts := make([]string, 0, len(cols))
+		for i, c := range cols {
+			v := vals[i]
+			sv := "NULL"
+			switch t := v.(type) {
+			case []byte:
+				sv = string(t)
+			case nil:
+			default:
+				sv = fmt.Sprintf("%v", t)
+			}
+			parts = append(parts, c+"="+sv)
+		}
+		b.WriteString(strings.Join(parts, " | ") + "\n")
+		count++
+	}
+	out := strings.TrimSpace(b.String())
+	if out == "" {
+		return "诊断查询无结果"
+	}
+	if len(out) > 2000 {
+		out = out[:2000] + "…"
 	}
 	return out
 }

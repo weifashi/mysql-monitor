@@ -2153,6 +2153,7 @@ func (s *Server) apiCustomSQLCreate(w http.ResponseWriter, r *http.Request) {
 		NotifyEnabled     *bool  `json:"notify_enabled"`
 		RecoveryNotify    *bool  `json:"recovery_notify"`
 		MessageTemplate   string `json:"message_template"`
+		DiagSQL           string `json:"diag_sql"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json")
@@ -2163,6 +2164,7 @@ func (s *Server) apiCustomSQLCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.Enabled = true
+	cfg.DiagSQL = strings.TrimSpace(req.DiagSQL)
 	id, err := s.store.CreateCustomSQLCheck(cfg)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
@@ -2204,6 +2206,7 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 		NotifyEnabled     *bool   `json:"notify_enabled"`
 		RecoveryNotify    *bool   `json:"recovery_notify"`
 		MessageTemplate   *string `json:"message_template"`
+		DiagSQL           *string `json:"diag_sql"`
 		Enabled           *bool   `json:"enabled"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
@@ -2264,6 +2267,9 @@ func (s *Server) apiCustomSQLUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MessageTemplate != nil {
 		existing.MessageTemplate = *req.MessageTemplate
+	}
+	if req.DiagSQL != nil {
+		existing.DiagSQL = strings.TrimSpace(*req.DiagSQL)
 	}
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
