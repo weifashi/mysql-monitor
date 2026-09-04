@@ -75,9 +75,11 @@ func (s *Store) UpsertFiringEvent(e *AlertEvent, notified bool) {
 			newPeak = e.Value
 		}
 	}
-	// threshold/target_name 一并刷新：老事件是在规则改配置前创建的，不刷会一直展示旧值/空值
+	// threshold/target_name 一并刷新：老事件是在规则改配置前创建的，不刷会一直展示旧值/空值。
+	// message 传空表示"本轮没生成完整消息（如未拉诊断样本），保留上一轮的"。
 	s.db.Exec(`UPDATE alert_events SET
-		value = ?, detail = ?, peak_value = ?, message = ?, threshold = ?, target_name = ?,
+		value = ?, detail = ?, peak_value = ?, message = COALESCE(NULLIF(?, ''), message),
+		threshold = ?, target_name = ?,
 		last_at = datetime('now'), notify_count = notify_count + ?
 		WHERE id = ?`,
 		e.Value, e.Detail, newPeak, e.Message, e.Threshold, e.TargetName, notifyInc, id)

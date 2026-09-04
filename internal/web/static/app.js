@@ -3331,7 +3331,15 @@ const PromLogsPage = defineComponent({
             { title: '指标', key: 'metric', ellipsis: { tooltip: true }, render: r => h('span', { class: 'mono', style: 'font-size:12px' }, r.metric) },
             { title: '当前值', key: 'value', width: 110, render: r => h('span', { class: 'mono' }, r.value || '-') },
             { title: '阈值', key: 'threshold', width: 80, render: r => r.threshold || '-' },
-            { title: '说明', key: 'message', ellipsis: { tooltip: true }, render: r => r.error || r.message || '-' },
+            { title: '说明', key: 'message', ellipsis: { tooltip: true }, render: r => {
+                const txt = r.error || r.message || '-';
+                // 带错误样本的多行消息：单元格只放首行，悬停给可滚动的等宽全文
+                if (!txt.includes('\n')) return txt;
+                return h(NTooltip, { style: 'max-width:680px' }, {
+                    trigger: () => h('span', { style: 'cursor:help' }, txt.split('\n')[0] + ' …'),
+                    default: () => h('pre', { style: 'margin:0;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:420px;overflow:auto' }, txt),
+                });
+            } },
         ]);
 
         return () => h('div', null, [

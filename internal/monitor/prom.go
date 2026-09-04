@@ -425,13 +425,31 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 			message += "\n来源：" + detail
 		}
 		now := time.Now()
-		if shouldLogPromResult(state, "alert", now) {
+		willLog := shouldLogPromResult(state, "alert", now)
+		willNotify := check.NotifyEnabled && !(hasPrev && prevStatus == "alert")
+		// 诊断内容（如各 VM 的错误样本端口）拉一次，流水/事件/通知卡三处共用：
+		// 在流水和告警中心也能直接看到具体错误，不用等飞书或登机 docker logs。
+		diag := ""
+		if willLog || willNotify {
+			diag = m.fetchDiagnostic(check.DiagURL)
+		}
+		logMessage := message
+		if diag != "" {
+			logMessage += "\n\n错误样本：\n" + diag
+		}
+		// 事件 message 只在拉过诊断的轮次更新（空 = store 保留上一轮），
+		// 避免静默轮用不带样本的消息把样本冲掉。
+		eventMessage := ""
+		if willLog || willNotify {
+			eventMessage = logMessage
+		}
+		if willLog {
 			m.store.InsertPromAlertLog(&store.PromAlertLog{
 				CheckID: check.ID, CheckName: check.Name,
 				TargetID: target.ID, TargetName: target.Name,
 				Dimension: check.Dimension, Severity: check.Severity,
 				Status: "alert", Metric: check.Metric, Value: valueStr,
-				Threshold: check.AlertValue, Message: message, DurationMs: elapsed,
+				Threshold: check.AlertValue, Message: logMessage, DurationMs: elapsed,
 			})
 			state.LastLoggedStatus, state.LastLoggedAt = "alert", now
 		}
@@ -444,7 +462,7 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 
 		// 持续告警时不重复推送，只在状态由非 alert 变为 alert 时通知一次
 		notified := false
-		if check.NotifyEnabled && !(hasPrev && prevStatus == "alert") {
+		if willNotify {
 			card := &notify.AlertCard{
 				Title: check.Name, Level: check.Severity,
 				Fields: [][2]string{
@@ -457,9 +475,7 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 				Note:       messageNote(check, message, detail),
 				DetailPath: fmt.Sprintf("/#/objects/%d", target.ID),
 			}
-			// 通知前拉诊断内容（如各 VM 的错误样本端口），附进卡片——
-			// 人收到告警时错误内容已经在里面，不用再登机 docker logs。
-			card.Code = m.fetchDiagnostic(check.DiagURL)
+			card.Code = diag
 			if err := m.dispatcher.SendGlobalAlertCard(card); err != nil {
 				log.Printf("[prom] notify failed for check %s: %v", check.Name, err)
 			} else {
@@ -471,7 +487,7 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 			Title:    promEventTitle(target, check.Name),
 			TargetID: target.ID, TargetName: target.Name,
 			Dimension: check.Dimension, Severity: check.Severity,
-			Value: valueStr, Threshold: check.AlertValue, Message: message,
+			Value: valueStr, Threshold: check.AlertValue, Message: eventMessage,
 			Detail: detail,
 		}, notified)
 		return
