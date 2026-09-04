@@ -5212,14 +5212,14 @@ function firingCard(router, group) {
         }, first.message.length > 160 ? first.message.slice(0, 160) + '…' : first.message) : null,
         !multi && first.detail ? h('div', { style: 'font-size:12px;font-family:monospace;opacity:.7;margin-top:4px' }, '来源：' + first.detail) : null,
         h('div', { style: 'margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px' }, [
-            h(NTag, { size: 'tiny', bordered: false }, () => ({ prom: '指标', health: '站点', cert: '证书', custom_sql: 'SQL' }[first.source] || first.source)),
+            h(NTag, { size: 'tiny', bordered: false }, () => ({ prom: '指标', prom_target: '采集目标', health: '站点', cert: '证书', custom_sql: 'SQL' }[first.source] || first.source)),
             first.dimension ? h(NTag, { size: 'tiny', bordered: false }, () => first.dimension) : null,
             h(NTag, { size: 'tiny', bordered: false, type: first.notify_count > 0 ? 'success' : 'default' },
                 () => first.notify_count > 0 ? `已通知 ${first.notify_count} 次` : '未通知'),
             (() => {
                 // 各来源跳到能解释这条告警的页面：prom 有对象详情，其余跳规则/流水页
                 let to = null, label = null;
-                if (first.source === 'prom' && first.target_id) { to = '/objects/' + first.target_id; label = '查看对象 ›'; }
+                if ((first.source === 'prom' || first.source === 'prom_target') && first.target_id) { to = '/objects/' + first.target_id; label = '查看对象 ›'; }
                 else if (first.source === 'custom_sql') { to = '/custom-sql-logs'; label = '查看流水 ›'; }
                 else if (first.source === 'health') { to = '/health-checks-logs'; label = '查看流水 ›'; }
                 else if (first.source === 'cert') { to = '/cert-checks'; label = '查看证书 ›'; }
@@ -5341,7 +5341,7 @@ const AlertsPage = defineComponent({
                 h('span', null, r.check_name),
                 r.detail ? h('span', { style: 'font-size:11px;font-family:monospace;opacity:.55;margin-left:8px' }, r.detail) : null,
             ]) },
-            { title: '来源', key: 'source', width: 64, render: r => ({ prom: '指标', health: '站点', cert: '证书', custom_sql: 'SQL' }[r.source] || r.source) },
+            { title: '来源', key: 'source', width: 64, render: r => ({ prom: '指标', prom_target: '采集目标', health: '站点', cert: '证书', custom_sql: 'SQL' }[r.source] || r.source) },
             { title: '峰值', key: 'peak_value', width: 170, render: r => {
                 const v = r.peak_value || r.value || '';
                 return h('span', {

@@ -39,6 +39,10 @@ type PromManager struct {
 	monitors map[int64]context.CancelFunc
 
 	stateMu sync.Mutex
+	// targetHealth 跟踪每个采集目标的连续抓取失败：整机/VM 宕机时所有
+	// 规则只会静默进 error，这里把「目标不可达」升级成正式告警。
+	thMu          sync.Mutex
+	targetHealths map[int64]*targetHealth
 	states  map[int64]*promMetricState
 
 	// 每条规则最近一次求值的实时快照，供"监控对象/容量风险"接口用。
@@ -119,6 +123,7 @@ func shouldLogPromResult(st *promMetricState, status string, now time.Time) bool
 
 func NewPromManager(s *store.Store, d *notify.Dispatcher, eb *EventBus) *PromManager {
 	return &PromManager{
+		targetHealths: make(map[int64]*targetHealth),
 		store:      s,
 		dispatcher: d,
 		eventBus:   eb,
@@ -265,6 +270,7 @@ func (m *PromManager) scrapeOnce(ctx context.Context, targetID int64) {
 
 	families, scrapeErr := m.scrape(ctx, target)
 	elapsed := time.Since(start).Milliseconds()
+	m.onScrapeResult(target, scrapeErr)
 
 	if scrapeErr != nil {
 		m.emit("prom_scrape_error", target.ID, target.Name, scrapeErr.Error(), nil)
@@ -534,6 +540,76 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 		m.emit("prom_recovered", target.ID, target.Name,
 			fmt.Sprintf("[恢复] %s / %s 当前值 %s", target.Name, check.Name, valueStr), nil)
 	}
+}
+
+type targetHealth struct {
+	ConsecFails int
+	Alerting    bool
+}
+
+// targetScrapeFailThreshold 连续失败这么多轮才告警，过滤单次网络抖动。
+const targetScrapeFailThreshold = 3
+
+// onScrapeResult 维护目标可达性状态机：连续失败 N 次开告警事件并通知，
+// 恢复后自动 resolve + 恢复通知。事件用独立的 source=prom_target 命名空间。
+func (m *PromManager) onScrapeResult(target *store.PromTarget, scrapeErr error) {
+	m.thMu.Lock()
+	th, ok := m.targetHealths[target.ID]
+	if !ok {
+		th = &targetHealth{}
+		m.targetHealths[target.ID] = th
+	}
+	m.thMu.Unlock()
+
+	if scrapeErr != nil {
+		th.ConsecFails++
+		if th.ConsecFails == targetScrapeFailThreshold && !th.Alerting {
+			th.Alerting = true
+			card := &notify.AlertCard{
+				Title: target.Name + " 采集目标不可达", Level: "critical",
+				Fields: [][2]string{
+					{"目标", target.URL},
+					{"连续失败", fmt.Sprintf("%d 次", th.ConsecFails)},
+					{"错误", scrapeErr.Error()},
+					{"开始", time.Now().Format("2006-01-02 15:04:05")},
+				},
+				Note:       "该目标下所有规则此刻都采不到数（整机宕机 / node_exporter 停了 / 网络不通）。它恢复前这台机器等于没有监控",
+				DetailPath: fmt.Sprintf("/#/objects/%d", target.ID),
+			}
+			notified := false
+			if err := m.dispatcher.SendGlobalAlertCard(card); err != nil {
+				log.Printf("[prom] target-down notify failed for %s: %v", target.Name, err)
+			} else {
+				notified = true
+			}
+			m.store.UpsertFiringEvent(&store.AlertEvent{
+				Source: "prom_target", CheckID: target.ID,
+				CheckName: target.Name + " 采集目标不可达",
+				Title:    target.Name + " 采集目标不可达",
+				TargetID: target.ID, TargetName: target.Name,
+				Dimension: "target", Severity: "critical",
+				Value: scrapeErr.Error(), Threshold: "", Message: card.PlainText(""),
+			}, notified)
+		}
+		return
+	}
+
+	if th.Alerting {
+		th.Alerting = false
+		m.store.ResolveEvent("prom_target", target.ID, "恢复")
+		card := &notify.AlertCard{
+			Title: target.Name + " 采集目标不可达", Level: "recovery",
+			Fields: [][2]string{
+				{"目标", target.URL},
+				{"恢复时间", time.Now().Format("2006-01-02 15:04:05")},
+			},
+			DetailPath: fmt.Sprintf("/#/objects/%d", target.ID),
+		}
+		if err := m.dispatcher.SendGlobalAlertCard(card); err != nil {
+			log.Printf("[prom] target-down recovery notify failed for %s: %v", target.Name, err)
+		}
+	}
+	th.ConsecFails = 0
 }
 
 func (m *PromManager) metricState(checkID int64) *promMetricState {
