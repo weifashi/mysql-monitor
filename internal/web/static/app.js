@@ -767,7 +767,11 @@ const SlowQueriesPage = defineComponent({
         return () => h('div', { class: 'page-body log-page-fit' }, [
             h('div', { class: 'log-page-header', style: _isMobile.value ? 'display:block;margin-bottom:12px' : undefined }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:' + (_isMobile.value ? '8px' : '0') }, [
-                    h('h3', { class: 'page-title' }, '慢SQL日志'),
+                    h('h3', { class: 'page-title' }, 'SQL流水'),
+                    h('div', { style: 'display:flex;gap:6px' }, [
+                        h(NButton, { size: 'small', secondary: true, onClick: () => location.hash = '#/custom-sql-logs' }, () => '结果'),
+                        h(NButton, { size: 'small', type: 'primary' }, () => '慢SQL'),
+                    ]),
                     h(NText, { depth: 3 }, () => '共 ' + data.value.total + ' 条'),
                     h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
                         h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
@@ -1748,7 +1752,11 @@ const CustomSQLLogsPage = defineComponent({
         return () => h('div', { class: 'page-body log-page-fit' }, [
             h('div', { class: 'log-page-header', style: _isMobile.value ? 'display:block;margin-bottom:12px' : undefined }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:' + (_isMobile.value ? '8px' : '0') }, [
-                    h('h3', { class: 'page-title' }, 'SQL结果日志'),
+                    h('h3', { class: 'page-title' }, 'SQL流水'),
+                    h('div', { style: 'display:flex;gap:6px' }, [
+                        h(NButton, { size: 'small', type: 'primary' }, () => '结果'),
+                        h(NButton, { size: 'small', secondary: true, onClick: () => location.hash = '#/slow-queries' }, () => '慢SQL'),
+                    ]),
                     h(NText, { depth: 3 }, () => '共 ' + data.value.total + ' 条'),
                     h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
                         h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
@@ -4899,10 +4907,9 @@ const AppLayout = defineComponent({
                 ] },
                 { type: 'group', label: 'MySQL', key: 'sec-mysql', children: [
                     { label: '数据库', key: 'databases' },
-                    { label: '慢SQL', key: 'slow-queries' },
                     { label: '已忽略SQL', key: 'ignored-sql' },
                     { label: '自定义SQL', key: 'custom-sql' },
-                    { label: 'SQL结果', key: 'custom-sql-logs' },
+                    { label: 'SQL流水', key: 'custom-sql-logs' },
                 ] },
                 { type: 'group', label: 'Cloud Logging', key: 'sec-cl', children: [
                     { label: '配置', key: 'cloud-logging-configs' },
