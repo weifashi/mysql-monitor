@@ -214,6 +214,7 @@ func (s *Server) Routes() http.Handler {
 	api.HandleFunc("POST /api/prom-targets/{id}/toggle", s.apiPromTargetToggle)
 	api.HandleFunc("POST /api/prom-targets/test", s.apiPromTargetTest)
 
+	api.HandleFunc("GET /api/sql-stream", s.apiSQLStream)
 	api.HandleFunc("GET /api/prom-checks", s.apiPromCheckList)
 	api.HandleFunc("GET /api/prom-checks/{id}/samples", s.apiPromCheckSamples)
 	api.HandleFunc("GET /api/objects/{id}/sparklines", s.apiObjectSparklines)

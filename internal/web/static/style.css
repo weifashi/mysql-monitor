@@ -802,12 +802,9 @@ html {
 .content-wrap {
     width: 100%;
     /* min- 而非 height:100%：内容超一屏时容器要跟着长，否则内容
-       溢出到容器外，NLayout 的底部 padding 留在半空、贴底没有间隔 */
+       溢出到容器外，NLayout 的底部 padding 留在半空、贴底没有间隔。
+       不能用 flex 列布局：子元素一旦成为 flex item，满高日志页的显式
+       height: calc(100vh-136px) 会被 flex-basis 覆盖，表格百分比高度链
+       断裂——表体缩成 0，行在 DOM 里但全被裁掉（看起来像"没有数据"）。 */
     min-height: 100%;
-    display: flex;
-    flex-direction: column;
-}
-.content-wrap > * {
-    flex: 1;
-    min-height: 0;
 }

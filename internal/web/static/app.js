@@ -767,11 +767,7 @@ const SlowQueriesPage = defineComponent({
         return () => h('div', { class: 'page-body log-page-fit' }, [
             h('div', { class: 'log-page-header', style: _isMobile.value ? 'display:block;margin-bottom:12px' : undefined }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:' + (_isMobile.value ? '8px' : '0') }, [
-                    h('h3', { class: 'page-title' }, 'SQL流水'),
-                    h('div', { style: 'display:flex;gap:6px' }, [
-                        h(NButton, { size: 'small', secondary: true, onClick: () => location.hash = '#/custom-sql-logs' }, () => '结果'),
-                        h(NButton, { size: 'small', type: 'primary' }, () => '慢SQL'),
-                    ]),
+                    h('h3', { class: 'page-title' }, '慢SQL日志'),
                     h(NText, { depth: 3 }, () => '共 ' + data.value.total + ' 条'),
                     h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
                         h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
@@ -1669,94 +1665,83 @@ const CustomSQLPage = defineComponent({
 // --- Custom SQL Logs ---
 const CustomSQLLogsPage = defineComponent({
     setup() {
+        // 「SQL流水」合并视图：自定义 SQL 结果 + 慢查询一张表按时间归并
         const data = ref({ data: [], total: 0, page: 1, total_pages: 0 });
-        const checks = ref([]);
+        const dbs = ref([]);
         const loading = ref(true);
-        const filterCheck = ref(null);
+        const filterDB = ref(null);
         const page = ref(1);
         const clearing = ref(false);
         const message = useMessage();
 
         const { connected, messages, stop } = useWebSocket('/ws/custom-sql-logs');
         onUnmounted(stop);
-
+        // WS 只当"有新数据"的信号用：第 1 页时节流重拉，避免两种行结构手工拼装
+        let reloadTimer = null;
         watch(() => messages.value.length, () => {
-            const latest = messages.value[messages.value.length - 1];
-            if (latest && latest.type === 'custom_sql_result' && latest.data) {
-                if (!latest.data.detected_at || isInvalidTime(latest.data.detected_at)) {
-                    latest.data.detected_at = new Date().toISOString();
-                }
-                if (!filterCheck.value || latest.database_id === filterCheck.value) {
-                    data.value.data.unshift(latest.data);
-                    if (data.value.data.length > 200) data.value.data.length = 200;
-                    data.value.total++;
-                }
-            }
-            if (messages.value.length > 500) messages.value.splice(0, messages.value.length - 500);
+            if (page.value !== 1 || reloadTimer) return;
+            reloadTimer = setTimeout(() => { reloadTimer = null; load(); }, 2000);
         });
 
         async function load() {
             loading.value = true;
             try {
-                let url = '/api/custom-sql/logs?page=' + page.value;
-                if (filterCheck.value) url += '&check_id=' + filterCheck.value;
+                let url = '/api/sql-stream?page=' + page.value;
+                if (filterDB.value) url += '&db_id=' + filterDB.value;
                 data.value = await api.get(url);
-                checks.value = await api.get('/api/custom-sql');
+                dbs.value = await api.get('/api/databases') || [];
             } catch {}
             loading.value = false;
         }
         onMounted(load);
-        watch([page, filterCheck], () => load());
+        watch([page, filterDB], () => load());
 
-        const checkOptions = computed(() => [
-            { label: '全部', value: null },
-            ...checks.value.map(c => ({ label: c.name, value: c.id }))
+        const dbOptions = computed(() => [
+            { label: '全部数据库', value: null },
+            ...dbs.value.map(d => ({ label: d.name, value: d.id })),
         ]);
-        const selectedCheckName = computed(() => {
-            const item = checks.value.find(c => c.id === filterCheck.value);
-            return item ? item.name : '';
-        });
 
-        async function clearResultLogs() {
+        async function clearAll() {
             clearing.value = true;
             try {
-                let url = '/api/custom-sql/logs';
-                if (filterCheck.value) url += '?check_id=' + filterCheck.value;
-                const res = await api.del(url);
-                message.success('已清空 ' + (res.deleted || 0) + ' 条结果日志');
+                const r1 = await api.del('/api/custom-sql/logs');
+                let n = r1.deleted || 0;
+                try { const r2 = await api.del('/api/slow-queries'); n += r2.deleted || 0; } catch {}
+                message.success('已清空 ' + n + ' 条流水');
                 page.value = 1;
-                data.value = { data: [], total: 0, page: 1, total_pages: 0 };
                 await load();
-            } catch (e) {
-                message.error(e.message);
-            }
+            } catch (e) { message.error(e.message); }
             clearing.value = false;
         }
 
         const columns = useColumns([
-            { title: '检测时间', key: 'detected_at', width: 140, render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => formatTime(row.detected_at)) },
-            // 规则名通常带着"<数据库> · "前缀（与数据库列重复），去掉后单行就放得下
-            { title: '规则', key: 'check_name', width: 230, ellipsis: { tooltip: true }, render: row => {
-                const n = row.check_name || '';
+            { title: '检测时间', key: 'detected_at', width: 130, render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => formatTime(row.detected_at)) },
+            { title: '类型', key: 'kind', width: 70, render: row => row.kind === 'slow'
+                ? h(NTag, { type: 'warning', size: 'small', bordered: false }, () => '慢SQL')
+                : h(NTag, { size: 'small', bordered: false }, () => '结果') },
+            { title: '数据库', key: 'database_name', width: 170, ellipsis: { tooltip: true }, _hideOnMobile: true },
+            // 内容主体：结果行是规则名（去掉与数据库重复的前缀），慢SQL行是 SQL 文本
+            { title: '规则 / SQL', key: 'title', width: 320, ellipsis: { tooltip: true }, render: row => {
+                if (row.kind === 'slow') return h('code', { style: 'font-family:var(--font-mono);font-size:11.5px' }, row.title);
+                const n = row.title || '';
                 const db = row.database_name || '';
                 return db && n.startsWith(db + ' · ') ? n.slice(db.length + 3) : n;
             } },
-            { title: '数据库', key: 'database_name', width: 150, ellipsis: { tooltip: true }, _hideOnMobile: true },
-            { title: '状态', key: 'status', width: 80, render: row => row.status === 'alert' ? h(NTag, { type: 'error', size: 'small' }, () => '告警') : row.status === 'error' ? h(NTag, { type: 'warning', size: 'small' }, () => '错误') : h(NTag, { type: 'success', size: 'small' }, () => '正常') },
-            { title: '当前值', key: 'value', width: 300, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;word-break:break-word;line-height:1.55' }, String(row.value || '').replace(/;\s*/g, ';\n')) },
-            { title: '条件', key: 'condition', width: 90, _hideOnMobile: true, render: row => (row.condition || '') + (row.expected_value ? ' ' + row.expected_value : '') },
-            { title: '结果', key: 'message', ellipsis: { tooltip: true }, render: row => row.error || row.message },
-            { title: '耗时', key: 'duration_ms', width: 80, _hideOnMobile: true, render: row => row.duration_ms + 'ms' },
+            { title: '状态', key: 'status', width: 80, render: row =>
+                row.status === 'alert' ? h(NTag, { type: 'error', size: 'small' }, () => '告警')
+                : row.status === 'error' ? h(NTag, { type: 'warning', size: 'small' }, () => '错误')
+                : row.status === 'slow' ? h(NTag, { type: 'warning', size: 'small' }, () => '慢')
+                : h(NTag, { type: 'success', size: 'small' }, () => '正常') },
+            { title: '值 / 来源', key: 'value', width: 260, render: row => h('code', { style: 'font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;word-break:break-word;line-height:1.55' }, String(row.value || '').replace(/;\s*/g, ';\n')) },
+            { title: '结果', key: 'message', ellipsis: { tooltip: true }, render: row => row.message },
+            { title: '耗时', key: 'duration_ms', width: 90, _hideOnMobile: true, render: row =>
+                row.kind === 'slow' ? h('span', { style: 'color:#f0a020;font-weight:600' }, row.exec_sec.toFixed(1) + 's') : row.duration_ms + 'ms' },
         ]);
 
         return () => h('div', { class: 'page-body log-page-fit' }, [
             h('div', { class: 'log-page-header', style: _isMobile.value ? 'display:block;margin-bottom:12px' : undefined }, [
                 h('div', { style: 'display:flex;align-items:center;gap:12px;margin-bottom:' + (_isMobile.value ? '8px' : '0') }, [
                     h('h3', { class: 'page-title' }, 'SQL流水'),
-                    h('div', { style: 'display:flex;gap:6px' }, [
-                        h(NButton, { size: 'small', type: 'primary' }, () => '结果'),
-                        h(NButton, { size: 'small', secondary: true, onClick: () => location.hash = '#/slow-queries' }, () => '慢SQL'),
-                    ]),
                     h(NText, { depth: 3 }, () => '共 ' + data.value.total + ' 条'),
                     h('div', { style: 'display:flex;align-items:center;gap:4px;font-size:12px;opacity:0.5' }, [
                         h('span', { class: connected.value ? 'ws-dot connected' : 'ws-dot disconnected' }),
@@ -1764,11 +1749,11 @@ const CustomSQLLogsPage = defineComponent({
                     ]),
                 ]),
                 h('div', { style: _isMobile.value ? 'display:flex;gap:8px;width:100%' : 'display:flex;gap:8px;align-items:center' }, [
-                    h(NPopconfirm, { onPositiveClick: clearResultLogs }, {
+                    h(NPopconfirm, { onPositiveClick: clearAll }, {
                         trigger: () => h(NButton, { size: 'small', secondary: true, type: 'error', loading: clearing.value, disabled: loading.value || data.value.total === 0 }, () => '清空'),
-                        default: () => filterCheck.value ? '确定清空规则「' + selectedCheckName.value + '」的结果日志？' : '确定清空全部 SQL 结果日志？'
+                        default: () => '确定清空全部 SQL 流水（结果 + 慢SQL）？'
                     }),
-                    h(NSelect, { value: filterCheck.value, 'onUpdate:value': v => { filterCheck.value = v; page.value = 1; }, options: checkOptions.value, style: _isMobile.value ? 'flex:1;min-width:0' : 'width:220px', placeholder: '筛选规则', clearable: true, size: 'small' }),
+                    h(NSelect, { value: filterDB.value, 'onUpdate:value': v => { filterDB.value = v; page.value = 1; }, options: dbOptions.value, style: _isMobile.value ? 'flex:1;min-width:0' : 'width:200px', placeholder: '筛选数据库', clearable: true, size: 'small' }),
                 ]),
             ]),
             h('div', { class: 'log-page-table' }, [

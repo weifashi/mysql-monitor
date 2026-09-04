@@ -660,3 +660,21 @@ func defaultIfZero(v, fallback int) int {
 	}
 	return v
 }
+
+// apiSQLStream 「SQL流水」合并视图：自定义 SQL 结果 + 慢查询按时间归并分页。
+func (s *Server) apiSQLStream(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	dbID, _ := strconv.ParseInt(r.URL.Query().Get("db_id"), 10, 64)
+	rows, total, err := s.store.ListSQLStream(dbID, page, 20)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if page <= 0 {
+		page = 1
+	}
+	jsonOK(w, map[string]any{
+		"data": rows, "total": total, "page": page,
+		"total_pages": (total + 19) / 20,
+	})
+}
