@@ -42,6 +42,12 @@ func promRisk(value float64, condition, threshold string, matched bool) bool {
 	if err != nil || thr == 0 {
 		return false
 	}
+	// 布尔型指标（0/1 开关，如 node_timex_sync_status、各种漂移标志）没有
+	// "逐渐逼近阈值"的过程：健康值恰好落在阈值边界上，接近度公式会把
+	// 完全健康的状态算成 100% 风险。跳过。
+	if (value == 0 || value == 1) && (thr == 0 || thr == 1) {
+		return false
+	}
 	switch condition {
 	case "lt", "lte":
 		// 越小越危险：进入阈值 15% 以内算风险（如证书剩余天数、可见库数）
