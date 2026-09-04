@@ -287,6 +287,12 @@ func (s *Store) UpdateDatabase(d *Database) error {
 	return err
 }
 
+// ToggleNotificationConfig 切换通知渠道启停。
+func (s *Store) ToggleNotificationConfig(id int64) error {
+	_, err := s.db.Exec(`UPDATE notification_configs SET enabled = 1 - enabled, updated_at = datetime('now') WHERE id = ?`, id)
+	return err
+}
+
 func (s *Store) DeleteDatabase(id int64) error {
 	// 级联会带走 custom_sql_checks，先把它们的告警事件清掉（9-02 删演练库
 	// 时 19 条 firing 僵尸卡在告警页，就是漏了这一步）

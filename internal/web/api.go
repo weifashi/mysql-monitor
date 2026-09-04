@@ -664,6 +664,19 @@ func (s *Server) apiNotificationUpdate(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
+func (s *Server) apiNotificationToggle(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.ToggleNotificationConfig(id); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "toggle", "notification", id, "切换通知配置启停")
+	jsonOK(w, map[string]string{"status": "ok"})
+}
+
 func (s *Server) apiNotificationDelete(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {

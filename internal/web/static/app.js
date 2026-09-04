@@ -639,7 +639,13 @@ const NotificationsPage = defineComponent({
                 return h('span', [h(NTag, { size: 'small', type: 'info' }, () => label), row.scope_name ? h('span', { style: 'margin-left:4px;font-size:12px' }, row.scope_name) : null]);
             }, _hideOnMobile: true },
             { title: '配置摘要', key: 'config_summary', render: row => h(NText, { depth: 3, style: 'font-size:12px' }, () => row.config_summary) },
-            { title: '状态', key: 'enabled', width: 70, _hideOnMobile: true, render: row => row.enabled ? h(NTag, { type: 'success', size: 'small' }, () => '启用') : h(NTag, { size: 'small' }, () => '禁用') },
+            { title: '状态', key: 'enabled', width: 90, _hideOnMobile: true, render: row => h(NSwitch, {
+                value: !!row.enabled, size: 'small',
+                onUpdateValue: async () => {
+                    try { await api.post('/api/notifications/' + row.id + '/toggle'); await load(); }
+                    catch (e) { window.$message && window.$message.error(e.message); }
+                },
+            }) },
             { title: '操作', key: 'actions', width: _isMobile.value ? 140 : 250, render: row => h(NSpace, { size: 'small' }, () => [
                 h(NButton, { size: 'small', secondary: true, onClick: () => openEdit(row) }, () => '编辑'),
                 h(NButton, { size: 'small', secondary: true, onClick: () => openClone(row) }, () => '复制'),

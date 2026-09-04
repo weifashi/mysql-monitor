@@ -132,6 +132,7 @@ func (s *Server) Routes() http.Handler {
 	api.HandleFunc("GET /api/notifications", s.apiNotificationsList)
 	api.HandleFunc("POST /api/notifications", s.apiNotificationCreate)
 	api.HandleFunc("PUT /api/notifications/{id}", s.apiNotificationUpdate)
+	api.HandleFunc("POST /api/notifications/{id}/toggle", s.apiNotificationToggle)
 	api.HandleFunc("DELETE /api/notifications/{id}", s.apiNotificationDelete)
 	api.HandleFunc("POST /api/notifications/{id}/test", s.apiNotificationTest)
 	api.HandleFunc("GET /api/notification-scopes", s.apiNotificationScopes)
