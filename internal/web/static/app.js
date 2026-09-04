@@ -5076,6 +5076,20 @@ function groupEvents(events) {
     return [...groups.values()];
 }
 
+// detailKeyValue 从聚合来源里取主标签值（container=xxx 的 xxx），
+// Coolify 容器名末段是 20+ 位随机串，剥掉再展示；完整值仍在悬停里。
+function detailKeyValue(detail) {
+    if (!detail) return '';
+    const m = detail.match(/[a-z_]+=(\S+)/);
+    if (!m) return '';
+    let v = m[1];
+    const parts = v.split('-');
+    if (parts.length > 1 && /^[a-z0-9]{14,}$/.test(parts[parts.length - 1])) {
+        v = parts.slice(0, -1).join('-');
+    }
+    return v.length > 26 ? v.slice(0, 26) + '…' : v;
+}
+
 function firingCard(router, group) {
     const first = group[0];
     const earliest = group.reduce((a, e) => (e.first_at < a ? e.first_at : a), first.first_at);
@@ -5096,6 +5110,7 @@ function firingCard(router, group) {
                     title: e.detail || undefined,
                 }, [
                     h('span', null, (e.target_name || '').replace(' 主机指标', '').replace(' 应用指标', '')),
+                    detailKeyValue(e.detail) ? h('span', { style: 'font-family:monospace;font-size:11.5px;opacity:.65' }, detailKeyValue(e.detail)) : null,
                     h('span', { style: 'font-family:monospace;font-weight:600' }, e.value),
                 ]))),
         ]) : h('div', { style: 'font-size:13px;opacity:.75;margin-top:7px;line-height:1.7' },
