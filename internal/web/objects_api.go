@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -47,6 +48,13 @@ func promRisk(value float64, condition, threshold string, matched bool) bool {
 	// "逐渐逼近阈值"的过程：健康值恰好落在阈值边界上，接近度公式会把
 	// 完全健康的状态算成 100% 风险。跳过。
 	if (value == 0 || value == 1) && (thr == 0 || thr == 1) {
+		return false
+	}
+	// 计数型状态指标同理（活跃 broker 数、在线成员数这类 lt 小整数规则）：
+	// 健康值恰好等于阈值是常态，会永远显示 100% 风险；而它们是跳变不是渐变，
+	// 真跌落时规则本体立即告警，这张表给不了预警窗口。恰好等于阈值的整数
+	// lt 规则一律不算风险。
+	if condition == "lt" && value == thr && value == math.Trunc(value) {
 		return false
 	}
 	switch condition {
