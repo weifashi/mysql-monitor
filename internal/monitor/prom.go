@@ -393,6 +393,24 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 	}
 
 	state := m.metricState(check.ID)
+
+	// 仅观测：存快照供趋势图采样，跳过告警判定与事件/通知
+	if check.ObserveOnly {
+		state.LastValue, state.HasLast = value, true
+		m.setSnap(check.ID, PromSnap{Value: value, Matched: false, Detail: detail})
+		if now := time.Now(); shouldLogPromResult(state, "ok", now) {
+			m.store.InsertPromAlertLog(&store.PromAlertLog{
+				CheckID: check.ID, CheckName: check.Name,
+				TargetID: target.ID, TargetName: target.Name,
+				Dimension: check.Dimension, Severity: check.Severity,
+				Status: "ok", Metric: check.Metric, Value: formatPromValue(value),
+				DurationMs: elapsed,
+			})
+			state.LastLoggedStatus, state.LastLoggedAt = "ok", now
+		}
+		return
+	}
+
 	matched, reason := evaluatePromRule(value, check, state)
 	state.LastValue = value
 	state.HasLast = true

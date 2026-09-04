@@ -233,6 +233,7 @@ type promCheckRequest struct {
 	MessageTemplate   string `json:"message_template"`
 	DiagURL           string `json:"diag_url"`
 	AbsentAsZero      *bool  `json:"absent_as_zero"`
+	ObserveOnly       *bool  `json:"observe_only"`
 	Enabled           *bool  `json:"enabled"`
 }
 
@@ -256,6 +257,9 @@ func (req *promCheckRequest) applyTo(c *store.PromCheck) {
 	c.DiagURL = strings.TrimSpace(req.DiagURL)
 	if req.AbsentAsZero != nil {
 		c.AbsentAsZero = *req.AbsentAsZero
+	}
+	if req.ObserveOnly != nil {
+		c.ObserveOnly = *req.ObserveOnly
 	}
 	if req.NotifyEnabled != nil {
 		c.NotifyEnabled = *req.NotifyEnabled

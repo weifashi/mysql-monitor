@@ -2968,7 +2968,7 @@ const PromChecksPage = defineComponent({
             alert_strategy: 'threshold', alert_condition: 'gt', alert_value: '',
             alert_delta_value: '', alert_delta_percent: '', alert_consecutive: 1,
             severity: 'warning', notify_enabled: true, recovery_notify: true, message_template: '',
-            diag_url: '', absent_as_zero: false,
+            diag_url: '', absent_as_zero: false, observe_only: false,
         });
         const form = reactive(emptyForm());
 
@@ -3016,6 +3016,7 @@ const PromChecksPage = defineComponent({
                 message_template: row.message_template || '',
                 diag_url: row.diag_url || '',
                 absent_as_zero: !!row.absent_as_zero,
+                observe_only: !!row.observe_only,
             });
             showModal.value = true;
         }
@@ -3080,6 +3081,7 @@ const PromChecksPage = defineComponent({
             {
                 title: '条件', key: 'cond', width: 150,
                 render: r => {
+                    if (r.observe_only) return h('span', { style: 'opacity:.45;font-size:12px' }, '—');
                     if (r.alert_strategy === 'increase') {
                         return h('span', { class: 'mono', style: 'font-size:12px' },
                             '增量 ≥ ' + (r.alert_delta_value || r.alert_delta_percent + '%'));
@@ -3091,7 +3093,9 @@ const PromChecksPage = defineComponent({
             },
             {
                 title: '级别', key: 'severity', width: 90,
-                render: r => h(NTag, { size: 'small', type: promSeverityType(r.severity), bordered: false }, () => r.severity),
+                render: r => r.observe_only
+                    ? h(NTag, { size: 'small', bordered: false }, () => '观测')
+                    : h(NTag, { size: 'small', type: promSeverityType(r.severity), bordered: false }, () => r.severity),
             },
             {
                 title: '状态', key: 'enabled', width: 80,
@@ -3213,7 +3217,12 @@ const PromChecksPage = defineComponent({
                     placeholder: 'node_memory_SwapTotal_bytes（结果为百分比，阈值按 % 填）',
                 })) : null,
                 h(NDivider, { style: 'margin:4px 0' }),
-                h(NGrid, { cols: 2, xGap: 12 }, () => [
+                h(NFormItem, { label: '仅观测' }, () => h(NSpace, { align: 'center' }, () => [
+                    h(NSwitch, { value: form.observe_only, onUpdateValue: v => form.observe_only = v }),
+                    h(NText, { depth: 3, style: 'font-size:12px' }, () =>
+                        '只采样出趋势图，不做告警判定（无阈值、不进事件、不通知）。适合请求量、TPS 这类看走势的指标'),
+                ])),
+                form.observe_only ? null : h(NGrid, { cols: 2, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '告警策略' }, () => h(NSelect, {
                         value: form.alert_strategy, onUpdateValue: v => form.alert_strategy = v, options: PROM_STRATEGIES,
                     }))),
@@ -3221,7 +3230,7 @@ const PromChecksPage = defineComponent({
                         value: form.severity, onUpdateValue: v => form.severity = v, options: PROM_SEVERITIES,
                     }))),
                 ]),
-                isIncrease.value
+                form.observe_only ? null : isIncrease.value
                     ? h(NGrid, { cols: 2, xGap: 12 }, () => [
                         h(NGi, null, () => h(NFormItem, { label: '增量阈值' }, () => h(NInput, {
                             value: form.alert_delta_value, onUpdateValue: v => form.alert_delta_value = v,
@@ -3245,7 +3254,7 @@ const PromChecksPage = defineComponent({
                             disabled: form.alert_strategy !== 'sustained',
                         }))),
                     ]),
-                h(NGrid, { cols: 2, xGap: 12 }, () => [
+                form.observe_only ? null : h(NGrid, { cols: 2, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '触发通知' }, () => h(NSwitch, {
                         value: form.notify_enabled, onUpdateValue: v => form.notify_enabled = v,
                     }))),
@@ -3253,16 +3262,16 @@ const PromChecksPage = defineComponent({
                         value: form.recovery_notify, onUpdateValue: v => form.recovery_notify = v,
                     }))),
                 ]),
-                h(NFormItem, { label: '消息模板' }, () => h(NInput, {
+                form.observe_only ? null : h(NFormItem, { label: '消息模板' }, () => h(NInput, {
                     type: 'textarea', rows: 2, value: form.message_template,
                     onUpdateValue: v => form.message_template = v,
                     placeholder: '留空用默认。可用变量：{{target}} {{check}} {{metric}} {{value}} {{threshold}} {{severity}} {{reason}}',
                 })),
-                h(NFormItem, { label: '诊断 URL' }, () => h(NInput, {
+                form.observe_only ? null : h(NFormItem, { label: '诊断 URL' }, () => h(NInput, {
                     value: form.diag_url, onUpdateValue: v => form.diag_url = v,
                     placeholder: '可选。告警通知前 GET 此地址，把响应附进消息（如各 VM 的 :9101 错误样本）',
                 })),
-                h(NFormItem, { label: '无数据按 0 评估' }, () => h(NSpace, { align: 'center' }, () => [
+                form.observe_only ? null : h(NFormItem, { label: '无数据按 0 评估' }, () => h(NSpace, { align: 'center' }, () => [
                     h(NSwitch, { value: form.absent_as_zero, onUpdateValue: v => form.absent_as_zero = v }),
                     h(NText, { depth: 3, style: 'font-size:12px' }, () =>
                         '序列缺失时按 0 参与评估。掉线检测（up 类指标 < 1）必开：容器停止后序列直接消失，不开则永远不告警'),

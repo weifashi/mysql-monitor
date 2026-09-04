@@ -353,6 +353,7 @@ CREATE TABLE IF NOT EXISTS prom_checks (
     message_template    TEXT    NOT NULL DEFAULT '',
     diag_url            TEXT    NOT NULL DEFAULT '',  -- 告警时先 GET 它，把响应附进通知
     absent_as_zero      INTEGER NOT NULL DEFAULT 0,   -- 序列缺失按 0 评估（掉线检测用）
+    observe_only        INTEGER NOT NULL DEFAULT 0,   -- 仅观测：采样出图，不告警
     enabled             INTEGER NOT NULL DEFAULT 1,
     created_at          DATETIME NOT NULL DEFAULT (datetime('now')),
     updated_at          DATETIME NOT NULL DEFAULT (datetime('now')),
