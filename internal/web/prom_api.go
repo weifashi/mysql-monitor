@@ -355,6 +355,10 @@ func (s *Server) apiPromCheckToggle(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 停用规则时闭合其 firing 事件，否则事件失去求值者、永久挂在告警中心
+	if !c.Enabled {
+		s.store.ResolveEvent("prom", id, "规则已停用")
+	}
 	jsonOK(w, map[string]any{"enabled": c.Enabled})
 }
 
@@ -583,6 +587,10 @@ func (s *Server) apiCertCheckToggle(w http.ResponseWriter, r *http.Request) {
 		_ = s.certMgr.Start(id)
 	} else {
 		s.certMgr.Stop(id)
+	}
+	// 停用规则时闭合其 firing 事件，否则事件失去求值者、永久挂在告警中心
+	if !c.Enabled {
+		s.store.ResolveEvent("cert", id, "规则已停用")
 	}
 	jsonOK(w, map[string]any{"enabled": c.Enabled})
 }

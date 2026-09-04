@@ -75,11 +75,12 @@ func (s *Store) UpsertFiringEvent(e *AlertEvent, notified bool) {
 			newPeak = e.Value
 		}
 	}
+	// threshold/target_name 一并刷新：老事件是在规则改配置前创建的，不刷会一直展示旧值/空值
 	s.db.Exec(`UPDATE alert_events SET
-		value = ?, detail = ?, peak_value = ?, message = ?, last_at = datetime('now'),
-		notify_count = notify_count + ?
+		value = ?, detail = ?, peak_value = ?, message = ?, threshold = ?, target_name = ?,
+		last_at = datetime('now'), notify_count = notify_count + ?
 		WHERE id = ?`,
-		e.Value, e.Detail, newPeak, e.Message, notifyInc, id)
+		e.Value, e.Detail, newPeak, e.Message, e.Threshold, e.TargetName, notifyInc, id)
 }
 
 // ResolveEvent 关闭 (source, check_id) 的 firing 事件（若有）。

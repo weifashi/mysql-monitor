@@ -213,12 +213,19 @@ func (m *CustomSQLManager) doCheck(cfg *store.CustomSQLCheck) {
 	}
 
 	if logEntry.Status == "alert" || logEntry.Status == "error" {
+		// 事件里的 message 优先用人话模板（和飞书通知一致），
+		// 引擎的技术描述（"命中规则: used_pct gt 98 连续 20/1 次…"）留给评估流水。
+		evMsg := logEntry.Message
+		if strings.TrimSpace(cfg.MessageTemplate) != "" {
+			evMsg = renderCustomSQLMessageTemplate(cfg.MessageTemplate, cfg, &logEntry, "")
+		}
+		willNotify := cfg.NotifyEnabled && !m.isAlertNotified(cfg.ID)
 		m.store.UpsertFiringEvent(&store.AlertEvent{
 			Source: "custom_sql", CheckID: cfg.ID, CheckName: cfg.Name,
 			Title: cfg.Name, TargetID: cfg.DatabaseID, TargetName: cfg.DBName,
 			Dimension: "database", Severity: "warning",
-			Value: logEntry.Value, Message: logEntry.Message,
-		}, false)
+			Value: logEntry.Value, Threshold: cfg.ExpectedValue, Message: evMsg,
+		}, willNotify)
 	} else if logEntry.Status == "ok" && wasAlert {
 		m.store.ResolveEvent("custom_sql", cfg.ID, logEntry.Value)
 	}

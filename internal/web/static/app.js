@@ -5101,10 +5101,54 @@ function svgLine(points, w, hg, opts) {
         points: pts, fill: 'none', stroke: color,
         'stroke-width': (opts && opts.width) || 1.5, 'stroke-linejoin': 'round',
     }));
-    return h('svg', {
-        viewBox: '0 0 ' + w + ' ' + hg, preserveAspectRatio: 'none',
-        style: (opts && opts.style) || ('width:' + w + 'px;height:' + hg + 'px;display:block'),
-    }, children);
+    if (!(opts && opts.interactive)) {
+        return h('svg', {
+            viewBox: '0 0 ' + w + ' ' + hg, preserveAspectRatio: 'none',
+            style: (opts && opts.style) || ('width:' + w + 'px;height:' + hg + 'px;display:block'),
+        }, children);
+    }
+    // 交互版（趋势弹窗用）：悬停显示最近采样点的时间与数值。
+    // svgLine 是无状态渲染函数，悬停高亮直接操作 DOM，不进 Vue 响应式。
+    children.push(h('line', { class: 'tt-line', y1: 0, y2: hg, stroke: color, 'stroke-width': 1, opacity: 0, 'stroke-dasharray': '4,3' }));
+    children.push(h('circle', { class: 'tt-dot', r: 3.5, fill: color, stroke: '#fff', 'stroke-width': 1.2, opacity: 0 }));
+    const fmtV = v => Math.round(v * 100) / 100;
+    return h('div', { style: 'position:relative' }, [
+        h('svg', {
+            viewBox: '0 0 ' + w + ' ' + hg, preserveAspectRatio: 'none',
+            style: (opts && opts.style) || ('width:' + w + 'px;height:' + hg + 'px;display:block'),
+            onMousemove: ev => {
+                const svg = ev.currentTarget, rect = svg.getBoundingClientRect();
+                const tx = t0 + ((ev.clientX - rect.left) / (rect.width || 1)) * (t1 - t0);
+                let best = 0, bd = Infinity;
+                for (let i = 0; i < points.length; i++) {
+                    const dd = Math.abs(points[i].t - tx);
+                    if (dd < bd) { bd = dd; best = i; }
+                }
+                const p = points[best], px = X(p.t), py = Y(p.v);
+                const lineEl = svg.querySelector('.tt-line'), dotEl = svg.querySelector('.tt-dot');
+                const tip = svg.parentNode.querySelector('.tt-tip');
+                lineEl.setAttribute('x1', px); lineEl.setAttribute('x2', px); lineEl.setAttribute('opacity', '0.45');
+                dotEl.setAttribute('cx', px); dotEl.setAttribute('cy', py); dotEl.setAttribute('opacity', '1');
+                if (tip) {
+                    tip.textContent = new Date(p.t * 1000).toLocaleString() + '  ·  ' + fmtV(p.v);
+                    tip.style.display = 'block';
+                    const leftPx = (px / w) * rect.width;
+                    tip.style.left = Math.min(Math.max(leftPx - 70, 0), Math.max(rect.width - 190, 0)) + 'px';
+                }
+            },
+            onMouseleave: ev => {
+                const svg = ev.currentTarget;
+                svg.querySelector('.tt-line').setAttribute('opacity', '0');
+                svg.querySelector('.tt-dot').setAttribute('opacity', '0');
+                const tip = svg.parentNode.querySelector('.tt-tip');
+                if (tip) tip.style.display = 'none';
+            },
+        }, children),
+        h('div', {
+            class: 'tt-tip',
+            style: 'position:absolute;top:8px;pointer-events:none;display:none;background:rgba(15,23,32,.85);color:#fff;font-size:11.5px;font-family:monospace;padding:4px 9px;border-radius:4px;white-space:nowrap;z-index:5',
+        }),
+    ]);
 }
 
 // detailKeyValue 从聚合来源里取主标签值（container=xxx 的 xxx），
@@ -5146,14 +5190,29 @@ function firingCard(router, group) {
                 ]))),
         ]) : h('div', { style: 'font-size:13px;opacity:.75;margin-top:7px;line-height:1.7' },
             h('span', { title: (first.value || '').length > 90 ? first.value : undefined },
-                    `${first.target_name} · 当前 ${(first.value || '').length > 90 ? first.value.slice(0, 90) + '…' : first.value}${first.threshold ? ' · 阈值 ' + first.threshold : ''}${first.peak_value && first.peak_value !== first.value && first.peak_value.length <= 24 ? ' · 峰值 ' + first.peak_value : ''}`)),
+                    [first.target_name, `当前 ${(first.value || '').length > 90 ? first.value.slice(0, 90) + '…' : first.value}`,
+                     first.threshold ? '阈值 ' + first.threshold : '',
+                     first.peak_value && first.peak_value !== first.value && first.peak_value.length <= 24 ? '峰值 ' + first.peak_value : '']
+                        .filter(Boolean).join(' · '))),
+        !multi && first.message && first.message !== first.value ? h('div', {
+            style: 'font-size:12.5px;opacity:.65;margin-top:4px;line-height:1.6;white-space:pre-line',
+            title: first.message.length > 160 ? first.message : undefined,
+        }, first.message.length > 160 ? first.message.slice(0, 160) + '…' : first.message) : null,
         !multi && first.detail ? h('div', { style: 'font-size:12px;font-family:monospace;opacity:.7;margin-top:4px' }, '来源：' + first.detail) : null,
         h('div', { style: 'margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px' }, [
             h(NTag, { size: 'tiny', bordered: false }, () => ({ prom: '指标', health: '站点', cert: '证书', custom_sql: 'SQL' }[first.source] || first.source)),
             first.dimension ? h(NTag, { size: 'tiny', bordered: false }, () => first.dimension) : null,
-            h(NTag, { size: 'tiny', bordered: false, type: first.notify_count > 0 ? 'success' : 'error' },
-                () => first.notify_count > 0 ? `已通知 ${first.notify_count} 次` : '通知 0 次'),
-            first.source === 'prom' && first.target_id ? h(NButton, { size: 'tiny', quaternary: true, type: 'primary', onClick: () => router.push('/objects/' + first.target_id) }, () => '查看对象 ›') : null,
+            h(NTag, { size: 'tiny', bordered: false, type: first.notify_count > 0 ? 'success' : 'default' },
+                () => first.notify_count > 0 ? `已通知 ${first.notify_count} 次` : '未通知'),
+            (() => {
+                // 各来源跳到能解释这条告警的页面：prom 有对象详情，其余跳规则/流水页
+                let to = null, label = null;
+                if (first.source === 'prom' && first.target_id) { to = '/objects/' + first.target_id; label = '查看对象 ›'; }
+                else if (first.source === 'custom_sql') { to = '/custom-sql-logs'; label = '查看流水 ›'; }
+                else if (first.source === 'health') { to = '/health-checks-logs'; label = '查看流水 ›'; }
+                else if (first.source === 'cert') { to = '/cert-checks'; label = '查看证书 ›'; }
+                return to ? h(NButton, { size: 'tiny', quaternary: true, type: 'primary', onClick: () => router.push(to) }, () => label) : null;
+            })(),
         ]),
     ]);
 }
@@ -5543,7 +5602,7 @@ const ObjectDetailPage = defineComponent({
                     h(NSpin, { show: trendLoading.value }, () =>
                         trend.value.points.length >= 2
                             ? h('div', null, [
-                                svgLine(trend.value.points, 800, 240, { fill: true, width: 2, style: 'width:100%;height:240px;display:block' }),
+                                svgLine(trend.value.points, 800, 240, { fill: true, width: 2, interactive: true, style: 'width:100%;height:240px;display:block' }),
                                 h('div', { style: 'display:flex;justify-content:space-between;font-size:11px;opacity:.55;font-family:monospace;margin-top:4px' }, [
                                     h('span', null, new Date(trend.value.points[0].t * 1000).toLocaleString()),
                                     h('span', null, '峰值 ' + Math.round(Math.max(...trend.value.points.map(p => p.v)) * 100) / 100 +

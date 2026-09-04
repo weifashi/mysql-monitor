@@ -1628,6 +1628,10 @@ func (s *Server) apiHealthCheckToggle(w http.ResponseWriter, r *http.Request) {
 		action = "禁用"
 	}
 	s.audit(r, "toggle", "healthcheck", id, action+"健康检查 "+cfg.Name)
+	// 停用规则时闭合其 firing 事件，否则事件失去求值者、永久挂在告警中心
+	if !cfg.Enabled {
+		s.store.ResolveEvent("health", id, "规则已停用")
+	}
 	jsonOK(w, map[string]bool{"enabled": cfg.Enabled})
 }
 
@@ -2489,6 +2493,10 @@ func (s *Server) apiCustomSQLToggle(w http.ResponseWriter, r *http.Request) {
 		action = "禁用"
 	}
 	s.audit(r, "toggle", "custom_sql", id, action+"自定义SQL监控 "+cfg.Name)
+	// 停用规则时闭合其 firing 事件，否则事件失去求值者、永久挂在告警中心
+	if !cfg.Enabled {
+		s.store.ResolveEvent("custom_sql", id, "规则已停用")
+	}
 	jsonOK(w, map[string]bool{"enabled": cfg.Enabled})
 }
 
