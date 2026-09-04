@@ -476,7 +476,11 @@ func (m *PromManager) evaluate(target *store.PromTarget, check *store.PromCheck,
 	// 恢复通知，否则每次重启都会先"全恢复"再在 2~3 轮后"全触发"一遍。
 	warmingUp := strings.ToLower(strings.TrimSpace(check.AlertStrategy)) == "sustained" &&
 		state.ConsecutiveMatched > 0
-	if hasPrev && prevStatus == "alert" && !warmingUp {
+	// 事件关闭不依赖流水的 prevStatus：那只有"恰好翻转的那一轮"才成立，
+	// 如果翻转轮撞上热身守卫被跳过（实测发生过：口径修复分发的时间差），
+	// 之后 prevStatus 永远是 ok，事件就卡死在 firing。ResolveEvent 幂等，
+	// 没有 firing 行时是空操作，每轮尝试关闭没有代价。
+	if !warmingUp {
 		m.store.ResolveEvent("prom", check.ID, valueStr)
 	}
 	if hasPrev && prevStatus == "alert" && !warmingUp && check.RecoveryNotify && check.NotifyEnabled {
