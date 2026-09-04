@@ -220,9 +220,14 @@ func (m *CustomSQLManager) doCheck(cfg *store.CustomSQLCheck) {
 			evMsg = renderCustomSQLMessageTemplate(cfg.MessageTemplate, cfg, &logEntry, "")
 		}
 		willNotify := cfg.NotifyEnabled && !m.isAlertNotified(cfg.ID)
+		// DatabaseName 是连接名（如"生产集群 PRIMARY"），DBName 是 schema 名、常为空
+		targetName := cfg.DatabaseName
+		if targetName == "" {
+			targetName = cfg.DBName
+		}
 		m.store.UpsertFiringEvent(&store.AlertEvent{
 			Source: "custom_sql", CheckID: cfg.ID, CheckName: cfg.Name,
-			Title: cfg.Name, TargetID: cfg.DatabaseID, TargetName: cfg.DBName,
+			Title: cfg.Name, TargetID: cfg.DatabaseID, TargetName: targetName,
 			Dimension: "database", Severity: "warning",
 			Value: logEntry.Value, Threshold: cfg.ExpectedValue, Message: evMsg,
 		}, willNotify)
