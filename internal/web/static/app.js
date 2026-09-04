@@ -5282,8 +5282,18 @@ const ObjectsPage = defineComponent({
         onUnmounted(() => clearInterval(timer));
 
         const kinds = computed(() => [...new Set(objects.value.map(o => o.kind))]);
+        const hostFilter = ref(null);
+        const roleFilter = ref(null);
+        const labelOpts = key => computed(() => {
+            const vs = [...new Set(objects.value.map(o => (o.labels || {})[key]).filter(v => v && v !== '-'))].sort();
+            return vs.map(v => ({ label: (key === 'host' ? '@' : '') + v, value: v }));
+        });
+        const hostOpts = labelOpts('host');
+        const roleOpts = labelOpts('role');
         const filtered = computed(() => {
-            const list = kind.value ? objects.value.filter(o => o.kind === kind.value) : objects.value;
+            let list = kind.value ? objects.value.filter(o => o.kind === kind.value) : objects.value;
+            if (hostFilter.value) list = list.filter(o => (o.labels || {}).host === hostFilter.value);
+            if (roleFilter.value) list = list.filter(o => (o.labels || {}).role === roleFilter.value);
             const rank = { firing: 0, risk: 1, stale: 2, ok: 3 };
             return [...list].sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || a.name.localeCompare(b.name));
         });
@@ -5307,10 +5317,21 @@ const ObjectsPage = defineComponent({
         return () => h('div', { class: 'page-body' }, [
             h('div', { class: 'page-header' }, [
                 h('h3', { class: 'page-title' }, '监控对象'),
-                h('div', { style: 'display:flex;gap:6px' }, [
+                h('div', { style: 'display:flex;gap:6px;align-items:center' }, [
+                    h(NSelect, {
+                        value: hostFilter.value, onUpdateValue: v => hostFilter.value = v,
+                        options: hostOpts.value, clearable: true, placeholder: '宿主机',
+                        size: 'small', style: 'width:120px',
+                    }),
+                    h(NSelect, {
+                        value: roleFilter.value, onUpdateValue: v => roleFilter.value = v,
+                        options: roleOpts.value, clearable: true, placeholder: '角色',
+                        size: 'small', style: 'width:130px',
+                    }),
                     h(NButton, { size: 'small', secondary: kind.value !== '', type: kind.value === '' ? 'primary' : 'default', onClick: () => kind.value = '' }, () => `全部 ${objects.value.length}`),
                     ...kinds.value.map(k => h(NButton, { size: 'small', secondary: kind.value !== k, type: kind.value === k ? 'primary' : 'default', onClick: () => kind.value = k },
                         () => `${k} ${objects.value.filter(o => o.kind === k).length}`)),
+                    h(NText, { depth: 3, style: 'font-size:12px;margin-left:4px' }, () => filtered.value.length + ' 个'),
                 ]),
             ]),
             h(NSpin, { show: loading.value }, () =>
