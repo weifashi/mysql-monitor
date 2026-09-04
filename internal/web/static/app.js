@@ -2975,7 +2975,11 @@ const PromChecksPage = defineComponent({
                 if (targetFilter.value) qs.push('target_id=' + targetFilter.value);
                 checks.value = await api.get('/api/prom-checks' + (qs.length ? '?' + qs.join('&') : ''));
                 const t = await api.get('/api/prom-targets');
-                targets.value = t.map(x => ({ label: x.target.name + ' — ' + x.target.url, value: x.target.id }));
+                targets.value = t.map(x => {
+                    let labels = {};
+                    try { labels = JSON.parse(x.target.labels_json || '{}'); } catch {}
+                    return { label: x.target.name + ' — ' + x.target.url, value: x.target.id, labels };
+                });
             } catch {}
             loading.value = false;
         }
@@ -3114,8 +3118,28 @@ const PromChecksPage = defineComponent({
                 (c.metric || '').toLowerCase().includes(k));
         });
         // 目标下拉用短名（去掉 URL），搜索友好
-        const targetOptions = computed(() => [{ label: '全部对象', value: null },
-            ...targets.value.map(t => ({ label: t.label.split(' — ')[0], value: t.value }))]);
+        // 物理机（labels.vm）为组、其承载的 VM（labels.host==vm）归入组内，
+        // 物理机自身排组首；没有宿主标签的目标归入「其他」。
+        const groupedTargets = computed(() => {
+            const short = t => ({ label: t.label.split(' — ')[0], value: t.value });
+            const phs = targets.value.filter(t => t.labels && t.labels.vm);
+            const used = new Set();
+            const groups = phs.map(ph => {
+                used.add(ph.value);
+                const children = [short(ph)];
+                for (const t of targets.value) {
+                    if (t.labels && t.labels.host === ph.labels.vm && !used.has(t.value)) {
+                        used.add(t.value);
+                        children.push(short(t));
+                    }
+                }
+                return { type: 'group', label: ph.labels.vm + '（物理机及其 VM）', key: 'g-' + ph.labels.vm, children };
+            });
+            const others = targets.value.filter(t => !used.has(t.value)).map(short);
+            if (others.length) groups.push({ type: 'group', label: '其他', key: 'g-other', children: others });
+            return groups.length ? groups : targets.value.map(short);
+        });
+        const targetOptions = computed(() => [{ label: '全部对象', value: null }, ...groupedTargets.value]);
 
         return () => h('div', null, [
             h(NSpace, { justify: 'space-between', align: 'center', style: 'margin-bottom:12px' }, () => [
@@ -3154,7 +3178,7 @@ const PromChecksPage = defineComponent({
                 h(NGrid, { cols: 2, xGap: 12 }, () => [
                     h(NGi, null, () => h(NFormItem, { label: '采集目标' }, () => h(NSelect, {
                         value: form.target_id, onUpdateValue: v => form.target_id = v,
-                        options: targets.value, placeholder: '选择端点',
+                        options: groupedTargets.value, filterable: true, placeholder: '选择端点',
                     }))),
                     h(NGi, null, () => h(NFormItem, { label: '维度' }, () => h(NSelect, {
                         value: form.dimension, onUpdateValue: v => form.dimension = v, options: PROM_DIMENSIONS,
