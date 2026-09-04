@@ -5522,7 +5522,10 @@ const ObjectDetailPage = defineComponent({
                     ? h(NTooltip, null, { trigger: () => h(NTag, { size: 'tiny', type: 'default' }, () => '无数据'), default: () => c.err })
                     : h('div', null, [
                         h('span', { style: 'font-family:monospace;font-weight:600' }, Math.round(c.value * 100) / 100),
-                        c.detail ? h('div', { style: 'font-size:10.5px;font-family:monospace;opacity:.6;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', title: c.detail }, c.detail) : null,
+                        c.detail ? h(NTooltip, null, {
+                            trigger: () => h('div', { style: 'font-size:10.5px;font-family:monospace;opacity:.6;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:help' }, c.detail),
+                            default: () => h('div', { style: 'font-family:monospace;font-size:12px;max-width:480px;word-break:break-all' }, c.detail),
+                        }) : null,
                     ]),
             },
             { title: '条件', key: 'cond', width: 120, render: c => h('span', { style: 'font-family:monospace;font-size:12px' }, c.strategy === 'increase' ? '增长>' + '' : ({ gt: '>', gte: '≥', lt: '<', lte: '≤' }[c.condition] || c.condition) + ' ' + c.threshold) },
