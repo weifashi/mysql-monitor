@@ -380,3 +380,44 @@ func (s *Server) apiAlertSummary(w http.ResponseWriter, r *http.Request) {
 		"warning":  warning,
 	})
 }
+
+// GET /api/objects/{id}/resources?from=<unix>&to=<unix> —— 主机资源趋势
+// （CPU / 内存 / 磁盘 IO / 网络 IO）。分桶按范围长度自适应：≤6h 原始 1 分钟，
+// ≤48h 5 分钟，再长 15 分钟，7 天也只有 ~670 个点。
+func (s *Server) apiObjectResources(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "无效的 ID")
+		return
+	}
+	now := time.Now()
+	to := now
+	from := now.Add(-24 * time.Hour)
+	if v, err := strconv.ParseInt(r.URL.Query().Get("to"), 10, 64); err == nil && v > 0 {
+		to = time.Unix(v, 0)
+	}
+	if v, err := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64); err == nil && v > 0 {
+		from = time.Unix(v, 0)
+	}
+	if !to.After(from) {
+		jsonError(w, http.StatusBadRequest, "时间范围无效")
+		return
+	}
+	if from.Before(now.Add(-8 * 24 * time.Hour)) {
+		from = now.Add(-8 * 24 * time.Hour)
+	}
+	span := to.Sub(from)
+	bucket := 60
+	switch {
+	case span > 48*time.Hour:
+		bucket = 900
+	case span > 6*time.Hour:
+		bucket = 300
+	}
+	points, err := s.store.ListHostSamples(id, from, to, bucket)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]any{"bucket_sec": bucket, "points": points})
+}

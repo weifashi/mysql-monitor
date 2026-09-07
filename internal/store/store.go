@@ -138,6 +138,20 @@ func New(dataDir string) (*Store, error) {
 			value    REAL    NOT NULL
 		)`,
 		"CREATE INDEX IF NOT EXISTS idx_metric_samples_check_ts ON metric_samples (check_id, ts)",
+		`CREATE TABLE IF NOT EXISTS host_samples (
+			target_id      INTEGER NOT NULL,
+			ts             INTEGER NOT NULL,
+			cpu_pct        REAL NOT NULL DEFAULT 0,
+			iowait_pct     REAL NOT NULL DEFAULT 0,
+			mem_pct        REAL NOT NULL DEFAULT 0,
+			disk_read_bps  REAL NOT NULL DEFAULT 0,
+			disk_write_bps REAL NOT NULL DEFAULT 0,
+			disk_iops      REAL NOT NULL DEFAULT 0,
+			disk_util_pct  REAL NOT NULL DEFAULT 0,
+			net_rx_bps     REAL NOT NULL DEFAULT 0,
+			net_tx_bps     REAL NOT NULL DEFAULT 0
+		)`,
+		"CREATE INDEX IF NOT EXISTS idx_host_samples_target_ts ON host_samples (target_id, ts)",
 		"ALTER TABLE grafana_configs ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE rocketmq_configs ADD COLUMN notify_new_msg INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE rocketmq_alert_logs ADD COLUMN message_body TEXT NOT NULL DEFAULT ''",
@@ -519,6 +533,9 @@ func (s *Store) StartPurgeLoop(ctx context.Context) {
 func (s *Store) runPurge() {
 	if n, err := s.PurgeOldLogs(); err == nil && n > 0 {
 		log.Printf("purged %d old slow query logs", n)
+	}
+	if n, err := s.PurgeOldHostSamples(); err == nil && n > 0 {
+		log.Printf("purged %d old host samples", n)
 	}
 	if n, err := s.PurgeOldAuditLogs(); err == nil && n > 0 {
 		log.Printf("purged %d old audit logs", n)
@@ -1249,32 +1266,32 @@ func (s *Store) CountGrafanaRunning() (int, error) {
 // --- Custom SQL Checks ---
 
 type CustomSQLCheck struct {
-	ID                int64     `json:"id"`
-	DatabaseID        int64     `json:"database_id"`
-	DatabaseName      string    `json:"database_name"`
-	Name              string    `json:"name"`
-	DBName            string    `json:"db_name"`
-	SQLText           string    `json:"sql_text"`
-	ResultField       string    `json:"result_field"`
-	IntervalSec       int       `json:"interval_sec"`
-	TimeoutSec        int       `json:"timeout_sec"`
-	AlertStrategy     string    `json:"alert_strategy"`
-	Condition         string    `json:"condition"`
-	ExpectedValue     string    `json:"expected_value"`
-	AlertDeltaValue   string    `json:"alert_delta_value"`
-	AlertDeltaPercent string    `json:"alert_delta_percent"`
-	AlertConsecutive  int       `json:"alert_consecutive"`
-	AlertRules        string    `json:"alert_rules"`
-	TriggerActions    string    `json:"trigger_actions"`
-	NotifyEnabled     bool      `json:"notify_enabled"`
-	RecoveryNotify    bool      `json:"recovery_notify"`
-	MessageTemplate   string    `json:"message_template"`
+	ID                int64  `json:"id"`
+	DatabaseID        int64  `json:"database_id"`
+	DatabaseName      string `json:"database_name"`
+	Name              string `json:"name"`
+	DBName            string `json:"db_name"`
+	SQLText           string `json:"sql_text"`
+	ResultField       string `json:"result_field"`
+	IntervalSec       int    `json:"interval_sec"`
+	TimeoutSec        int    `json:"timeout_sec"`
+	AlertStrategy     string `json:"alert_strategy"`
+	Condition         string `json:"condition"`
+	ExpectedValue     string `json:"expected_value"`
+	AlertDeltaValue   string `json:"alert_delta_value"`
+	AlertDeltaPercent string `json:"alert_delta_percent"`
+	AlertConsecutive  int    `json:"alert_consecutive"`
+	AlertRules        string `json:"alert_rules"`
+	TriggerActions    string `json:"trigger_actions"`
+	NotifyEnabled     bool   `json:"notify_enabled"`
+	RecoveryNotify    bool   `json:"recovery_notify"`
+	MessageTemplate   string `json:"message_template"`
 	// DiagSQL 非空时，告警通知前在同一库执行它，把结果表附进通知——
 	// 计数器型告警（如慢查询数增长）借此直接带出"具体是谁"（digest top 等）。
-	DiagSQL string `json:"diag_sql"`
-	Enabled bool   `json:"enabled"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	DiagSQL   string    `json:"diag_sql"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type CustomSQLLog struct {

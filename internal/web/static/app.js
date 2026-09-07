@@ -6,7 +6,7 @@ const {
     NCard, NStatistic, NGrid, NGi, NDataTable, NModal, NForm, NFormItem,
     NInput, NInputNumber, NSelect, NSwitch, NPopconfirm, NTag, NAvatar,
     NResult, NSpin, NBadge, NAlert, NEmpty, NText, NDivider, NScrollbar,
-    NInputGroup, NTooltip, NMessageProvider, useMessage, darkTheme,
+    NInputGroup, NTooltip, NDatePicker, NMessageProvider, useMessage, darkTheme,
     NDropdown, NPageHeader, NPagination, NDescriptions, NDescriptionsItem,
     NDrawer, NDrawerContent
 } = naive;
@@ -5499,6 +5499,86 @@ h('div', null, [
     },
 });
 
+// ---- 主机资源趋势图（ECharts）----
+// points: /api/objects/:id/resources 的 points；series: [{key,name,color,yAxisIndex,unit,area}]
+// yAxes: [{unit:'pct'|'bps'|'iops', offset?}]。ECharts 由 index.html 同源引入，缺失时静默不画。
+function fmtBps(v) {
+    if (v >= 1073741824) return (v / 1073741824).toFixed(2) + ' GB/s';
+    if (v >= 1048576) return (v / 1048576).toFixed(1) + ' MB/s';
+    if (v >= 1024) return (v / 1024).toFixed(1) + ' KB/s';
+    return Math.round(v) + ' B/s';
+}
+function fmtUnit(v, unit) {
+    if (unit === 'pct') return (Math.round(v * 10) / 10) + '%';
+    if (unit === 'bps') return fmtBps(v);
+    if (unit === 'iops') return (Math.round(v * 10) / 10) + ' 次/s';
+    return v;
+}
+const ResChart = defineComponent({
+    props: { points: Array, series: Array, yAxes: Array, height: { type: Number, default: 230 } },
+    setup(props) {
+        const el = ref(null);
+        let chart = null;
+        const dark = () => typeof currentTheme !== 'undefined' && currentTheme.value === darkTheme;
+        const unitOf = s => s.unit || (props.yAxes[s.yAxisIndex || 0] || {}).unit;
+        function render() {
+            if (!el.value || typeof echarts === 'undefined') return;
+            if (!chart) chart = echarts.init(el.value, dark() ? 'dark' : null);
+            const pts = props.points || [];
+            const rightAxes = props.yAxes.length - 1;
+            chart.setOption({
+                backgroundColor: 'transparent', animation: false,
+                grid: { left: 60, right: 16 + rightAxes * 56, top: 34, bottom: 62 },
+                legend: { top: 2, right: 8, textStyle: { fontSize: 11 }, itemWidth: 14 },
+                tooltip: {
+                    trigger: 'axis', axisPointer: { type: 'line' },
+                    formatter: params => {
+                        const t = new Date(params[0].value[0]);
+                        const head = t.toLocaleString('zh-CN', { hour12: false });
+                        return head + '<br/>' + params.map(p =>
+                            `${p.marker} ${p.seriesName}: <b>${fmtUnit(p.value[1], unitOf(props.series[p.seriesIndex]))}</b>`).join('<br/>');
+                    },
+                },
+                xAxis: { type: 'time', axisLabel: { fontSize: 11, hideOverlap: true } },
+                yAxis: props.yAxes.map((a, i) => ({
+                    type: 'value', min: 0, max: a.unit === 'pct' ? 100 : null,
+                    position: i ? 'right' : 'left', offset: a.offset || (i > 1 ? (i - 1) * 56 : 0),
+                    axisLabel: { fontSize: 11, formatter: v => fmtUnit(v, a.unit) },
+                    splitLine: { show: i === 0, lineStyle: { type: 'dashed', opacity: .35 } },
+                })),
+                dataZoom: [{ type: 'inside' }, { type: 'slider', height: 18, bottom: 8, brushSelect: false }],
+                series: props.series.map(s => ({
+                    name: s.name, type: 'line', showSymbol: false, smooth: false,
+                    lineStyle: { width: 1.4 }, itemStyle: { color: s.color }, yAxisIndex: s.yAxisIndex || 0,
+                    areaStyle: s.area ? { opacity: .08 } : undefined,
+                    data: pts.map(p => [p.t * 1000, Math.round((p[s.key] || 0) * 100) / 100]),
+                })),
+            }, true);
+        }
+        const onResize = () => chart && chart.resize();
+        onMounted(() => { render(); window.addEventListener('resize', onResize); });
+        watch(() => props.points, render);
+        if (typeof currentTheme !== 'undefined') watch(currentTheme, () => { if (chart) { chart.dispose(); chart = null; } render(); });
+        onUnmounted(() => { window.removeEventListener('resize', onResize); if (chart) chart.dispose(); });
+        return () => h('div', { ref: el, style: `height:${props.height}px;width:100%` });
+    },
+});
+const RES_CHARTS = [
+    { title: 'CPU', yAxes: [{ unit: 'pct' }], series: [
+        { key: 'cpu', name: '使用率', color: '#2080f0', area: true },
+        { key: 'iowait', name: 'IO 等待', color: '#f0a020' }] },
+    { title: '内存', yAxes: [{ unit: 'pct' }], series: [
+        { key: 'mem', name: '使用率', color: '#18a058', area: true }] },
+    { title: '磁盘 IO', yAxes: [{ unit: 'bps' }, { unit: 'iops' }, { unit: 'pct' }], series: [
+        { key: 'disk_r', name: '读取', color: '#e0407a' },
+        { key: 'disk_w', name: '写入', color: '#36cfc9' },
+        { key: 'disk_iops', name: '读写次数', color: '#2080f0', yAxisIndex: 1 },
+        { key: 'disk_util', name: '繁忙度', color: '#f0a020', yAxisIndex: 2 }] },
+    { title: '网络 IO', yAxes: [{ unit: 'bps' }], series: [
+        { key: 'net_tx', name: '上行', color: '#e0407a' },
+        { key: 'net_rx', name: '下行', color: '#36cfc9' }] },
+];
+
 const ObjectDetailPage = defineComponent({
     setup() {
         const router = VueRouter.useRouter();
@@ -5508,11 +5588,39 @@ const ObjectDetailPage = defineComponent({
         const sparks = ref({});          // check_id -> [{t,v},...]
         const trend = ref(null);         // 大图弹窗：{check, points, hours}
         const trendLoading = ref(false);
+        // 资源趋势（仅 node 目标）：昨天 / 今天 / 最近七天 / 自定义
+        const resRange = ref('today');
+        const resCustom = ref(null);
+        const res = ref([]);
+        const resLoading = ref(false);
+        function resWindow() {
+            const now = Date.now();
+            const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+            switch (resRange.value) {
+                case 'yesterday': return [d0.getTime() - 86400000, d0.getTime()];
+                case '7d': return [now - 7 * 86400000, now];
+                case 'custom': if (resCustom.value) return resCustom.value; break;
+            }
+            return [d0.getTime(), now];
+        }
+        async function loadResources() {
+            const o = data.value && data.value.object;
+            if (!o || o.kind !== 'node') return;
+            const [f, t] = resWindow();
+            resLoading.value = true;
+            try {
+                const r = await api.get(`/api/objects/${route.params.id}/resources?from=${Math.floor(f / 1000)}&to=${Math.floor(t / 1000)}`);
+                res.value = (r && r.points) || [];
+            } catch { res.value = []; }
+            resLoading.value = false;
+        }
+        watch([resRange, resCustom], loadResources);
         let timer = null;
         async function load() {
             try { data.value = await api.get('/api/objects/' + route.params.id); } catch { data.value = null; }
             loading.value = false;
             try { sparks.value = await api.get('/api/objects/' + route.params.id + '/sparklines?hours=6') || {}; } catch {}
+            loadResources();
         }
         async function openTrend(check, hours) {
             trend.value = { check, points: trend.value && trend.value.check.id === check.id ? trend.value.points : [], hours };
@@ -5598,6 +5706,30 @@ const ObjectDetailPage = defineComponent({
                             (Math.round(k.check.value * 10) / 10) + (k.pct ? '%' : '')),
                         k.check.matched ? h('div', { style: 'font-size:10.5px;color:#d03050' }, '▲ 触发中') : null,
                     ]))) : null,
+
+                o.kind === 'node' ? [
+                    h('div', { class: 'sen-sec', style: 'display:flex;align-items:center;gap:12px;flex-wrap:wrap' }, [
+                        '资源趋势',
+                        h(NSpace, { size: 4, style: 'margin-left:auto', align: 'center' }, () => [
+                            ...[['yesterday', '昨天'], ['today', '今天'], ['7d', '最近七天']].map(([k, l]) =>
+                                h(NButton, { size: 'tiny', type: resRange.value === k ? 'primary' : 'default', secondary: resRange.value !== k, onClick: () => { resCustom.value = null; resRange.value = k; } }, () => l)),
+                            h(NDatePicker, {
+                                type: 'datetimerange', size: 'tiny', clearable: true, style: 'width:330px',
+                                value: resCustom.value, placeholder: '自定义时间',
+                                'onUpdate:value': v => { resCustom.value = v; resRange.value = v ? 'custom' : 'today'; },
+                            }),
+                            h(NButton, { size: 'tiny', quaternary: true, loading: resLoading.value, onClick: loadResources }, () => '↻'),
+                        ]),
+                    ]),
+                    res.value.length < 2
+                        ? h('div', { class: 'sen-card', style: 'padding:22px;text-align:center;opacity:.55;font-size:13px;margin-bottom:20px' },
+                            resLoading.value ? '加载中…' : '该时间段暂无采样数据（每分钟采一次，新部署后约 2 分钟出现第一批点）')
+                        : h('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:12px;margin-bottom:20px' },
+                            RES_CHARTS.map(c => h('div', { class: 'sen-card', style: 'padding:10px 12px 4px' }, [
+                                h('div', { style: 'font-weight:600;font-size:13px;margin-bottom:2px' }, c.title),
+                                h(ResChart, { points: res.value, series: c.series, yAxes: c.yAxes }),
+                            ]))),
+                ] : null,
 
                 h('div', { class: 'sen-sec' }, `全部规则（${(o.checks || []).length} 条，来源混排）`),
                 h(NDataTable, { columns: checkColumns.value, data: o.checks || [], size: 'small', bordered: false }),

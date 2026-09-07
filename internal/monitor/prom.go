@@ -50,6 +50,10 @@ type PromManager struct {
 	snapMu   sync.Mutex
 	snapshot map[int64]PromSnap
 
+	// 主机资源差分采样的上一轮累计值（见 hostres.go）
+	hrMu     sync.Mutex
+	hostPrev map[int64]*hostPrev
+
 	client *http.Client
 }
 
@@ -130,6 +134,7 @@ func NewPromManager(s *store.Store, d *notify.Dispatcher, eb *EventBus) *PromMan
 		monitors:   make(map[int64]context.CancelFunc),
 		states:     make(map[int64]*promMetricState),
 		snapshot:   make(map[int64]PromSnap),
+		hostPrev:   make(map[int64]*hostPrev),
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -294,6 +299,8 @@ func (m *PromManager) scrapeOnce(ctx context.Context, targetID int64) {
 		}
 		return
 	}
+
+	m.sampleHostResources(target, families)
 
 	for i := range checks {
 		if !checks[i].Enabled {
