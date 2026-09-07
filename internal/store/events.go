@@ -156,6 +156,36 @@ func (s *Store) ListAlertEventsByTarget(source string, targetID int64, limit int
 	return out, rows.Err()
 }
 
+// ListAlertEventsByTargetPaged 对象详情页的事件分页：触发中永远排最前，其余按最近活动倒序。
+func (s *Store) ListAlertEventsByTargetPaged(source string, targetID int64, page, pageSize int) ([]AlertEvent, int, error) {
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 20
+	}
+	if page <= 0 {
+		page = 1
+	}
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM alert_events WHERE source = ? AND target_id = ?`,
+		source, targetID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.Query(`SELECT `+alertEventColumns+` FROM alert_events
+		WHERE source = ? AND target_id = ?
+		ORDER BY (status = 'firing') DESC, last_at DESC LIMIT ? OFFSET ?`,
+		source, targetID, pageSize, (page-1)*pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []AlertEvent{}
+	for rows.Next() {
+		if e, err := scanAlertEvent(rows); err == nil {
+			out = append(out, e)
+		}
+	}
+	return out, total, rows.Err()
+}
+
 // CountFiringBySeverity 给顶栏状态条用。
 func (s *Store) CountFiringBySeverity() (critical, warning int) {
 	rows, err := s.db.Query(`SELECT severity, COUNT(*) FROM alert_events

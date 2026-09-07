@@ -202,11 +202,9 @@ func (s *Server) apiObjectDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	events, _ := s.store.ListAlertEventsByTarget("prom", id, 50)
 	jsonOK(w, map[string]any{
 		"object":   self,
 		"children": children,
-		"events":   events,
 	})
 }
 
@@ -420,4 +418,21 @@ func (s *Server) apiObjectResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOK(w, map[string]any{"bucket_sec": bucket, "points": points})
+}
+
+// GET /api/objects/{id}/events?page=1&page_size=20 —— 对象的告警事件（分页）
+func (s *Server) apiObjectEvents(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, "无效的 ID")
+		return
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	size, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+	items, total, err := s.store.ListAlertEventsByTargetPaged("prom", id, page, size)
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]any{"items": items, "total": total})
 }

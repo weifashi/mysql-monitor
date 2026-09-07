@@ -5615,12 +5615,29 @@ const ObjectDetailPage = defineComponent({
             resLoading.value = false;
         }
         watch([resRange, resCustom], loadResources);
+        // 告警事件：服务端分页
+        const evPage = ref(1);
+        const evPageSize = ref(20);
+        const evTotal = ref(0);
+        const events = ref([]);
+        const evLoading = ref(false);
+        async function loadEvents() {
+            evLoading.value = true;
+            try {
+                const r = await api.get(`/api/objects/${route.params.id}/events?page=${evPage.value}&page_size=${evPageSize.value}`);
+                events.value = (r && r.items) || [];
+                evTotal.value = (r && r.total) || 0;
+            } catch { events.value = []; }
+            evLoading.value = false;
+        }
+        watch([evPage, evPageSize], loadEvents);
         let timer = null;
         async function load() {
             try { data.value = await api.get('/api/objects/' + route.params.id); } catch { data.value = null; }
             loading.value = false;
             try { sparks.value = await api.get('/api/objects/' + route.params.id + '/sparklines?hours=6') || {}; } catch {}
             loadResources();
+            loadEvents();
         }
         async function openTrend(check, hours) {
             trend.value = { check, points: trend.value && trend.value.check.id === check.id ? trend.value.points : [], hours };
@@ -5742,9 +5759,18 @@ const ObjectDetailPage = defineComponent({
                     }),
                 ] : null,
 
-                d.events && d.events.length ? [
-                    h('div', { class: 'sen-sec' }, '告警事件'),
-                    h(NDataTable, { columns: eventColumns, data: d.events, size: 'small', bordered: false }),
+                evTotal.value > 0 ? [
+                    h('div', { class: 'sen-sec' }, `告警事件（${evTotal.value}）`),
+                    h(NDataTable, {
+                        columns: eventColumns, data: events.value, size: 'small', bordered: false,
+                        loading: evLoading.value, remote: true,
+                        pagination: {
+                            page: evPage.value, pageSize: evPageSize.value, itemCount: evTotal.value,
+                            showSizePicker: true, pageSizes: [20, 50, 100],
+                            onUpdatePage: p => { evPage.value = p; },
+                            onUpdatePageSize: ps => { evPageSize.value = ps; evPage.value = 1; },
+                        },
+                    }),
                 ] : null,
 
                 h(NModal, {
