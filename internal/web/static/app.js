@@ -8,7 +8,7 @@ const {
     NResult, NSpin, NBadge, NAlert, NEmpty, NText, NDivider, NScrollbar,
     NInputGroup, NTooltip, NDatePicker, NMessageProvider, useMessage, darkTheme,
     NDropdown, NPageHeader, NPagination, NDescriptions, NDescriptionsItem,
-    NDrawer, NDrawerContent
+    NDrawer, NDrawerContent, NButtonGroup, zhCN, dateZhCN
 } = naive;
 
 // ============================================================
@@ -5727,15 +5727,24 @@ const ObjectDetailPage = defineComponent({
                 o.kind === 'node' ? [
                     h('div', { class: 'sen-sec', style: 'display:flex;align-items:center;gap:12px;flex-wrap:wrap' }, [
                         '资源趋势',
-                        h(NSpace, { size: 4, style: 'margin-left:auto', align: 'center' }, () => [
-                            ...[['yesterday', '昨天'], ['today', '今天'], ['7d', '最近七天']].map(([k, l]) =>
-                                h(NButton, { size: 'tiny', type: resRange.value === k ? 'primary' : 'default', secondary: resRange.value !== k, onClick: () => { resCustom.value = null; resRange.value = k; } }, () => l)),
+                        h('div', { style: 'margin-left:auto;display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:10px;background:var(--stat-card-bg,rgba(128,128,128,.07))' }, [
+                            h(NButtonGroup, { size: 'small' }, () =>
+                                [['yesterday', '昨天'], ['today', '今天'], ['7d', '最近七天']].map(([k, l]) =>
+                                    h(NButton, {
+                                        type: resRange.value === k ? 'primary' : 'default', secondary: resRange.value !== k,
+                                        style: 'padding:0 14px', onClick: () => { resCustom.value = null; resRange.value = k; },
+                                    }, () => l))),
                             h(NDatePicker, {
-                                type: 'datetimerange', size: 'tiny', clearable: true, style: 'width:330px',
-                                value: resCustom.value, placeholder: '自定义时间',
+                                type: 'datetimerange', size: 'small', clearable: true, style: 'width:360px',
+                                value: resCustom.value, startPlaceholder: '开始时间', endPlaceholder: '结束时间',
+                                format: 'MM-dd HH:mm', status: resRange.value === 'custom' ? 'success' : undefined,
                                 'onUpdate:value': v => { resCustom.value = v; resRange.value = v ? 'custom' : 'today'; },
                             }),
-                            h(NButton, { size: 'tiny', quaternary: true, loading: resLoading.value, onClick: loadResources }, () => '↻'),
+                            h(NTooltip, null, {
+                                trigger: () => h(NButton, { size: 'small', circle: true, secondary: true, loading: resLoading.value, onClick: loadResources },
+                                    () => h('span', { style: 'font-size:15px;line-height:1' }, '↻')),
+                                default: () => '刷新（页面每 30 秒也会自动刷新）',
+                            }),
                         ]),
                     ]),
                     res.value.length < 2
@@ -5866,7 +5875,7 @@ const MessageBridge = defineComponent({
 const app = createApp({
     setup() {
         const currentTheme = computed(() => _isDark.value ? darkTheme : null);
-        return () => h(NConfigProvider, { theme: currentTheme.value }, () =>
+        return () => h(NConfigProvider, { theme: currentTheme.value, locale: zhCN, dateLocale: dateZhCN }, () =>
             h(NMessageProvider, { containerStyle: 'z-index:9999' }, () => [h(MessageBridge), h(AppLayout), SqlDetailModal()])
         );
     }
