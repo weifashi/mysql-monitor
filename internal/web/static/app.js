@@ -5617,7 +5617,7 @@ const ObjectDetailPage = defineComponent({
         watch([resRange, resCustom], loadResources);
         // 告警事件：服务端分页
         const evPage = ref(1);
-        const evPageSize = ref(20);
+        const evPageSize = ref(10);
         const evTotal = ref(0);
         const events = ref([]);
         const evLoading = ref(false);
@@ -5775,7 +5775,7 @@ const ObjectDetailPage = defineComponent({
                         loading: evLoading.value, remote: true,
                         pagination: {
                             page: evPage.value, pageSize: evPageSize.value, itemCount: evTotal.value,
-                            showSizePicker: true, pageSizes: [20, 50, 100],
+                            showSizePicker: true, pageSizes: [10, 20, 50, 100],
                             onUpdatePage: p => { evPage.value = p; },
                             onUpdatePageSize: ps => { evPageSize.value = ps; evPage.value = 1; },
                         },
