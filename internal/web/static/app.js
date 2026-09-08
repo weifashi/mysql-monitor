@@ -5683,7 +5683,18 @@ const ObjectDetailPage = defineComponent({
             },
         ]);
         const eventColumns = [
-            { title: '规则', key: 'check_name' },
+            { title: '规则', key: 'check_name', width: 260, ellipsis: { tooltip: true } },
+            { title: '说明', key: 'message', ellipsis: { tooltip: true }, render: e => {
+                const txt = (e.message || '').trim();
+                if (!txt) return h('span', { style: 'opacity:.35' }, '—');
+                // 事件消息第一行是判定摘要，后面是来源/错误样本；单元格放首行，悬停看全文
+                const first = txt.split('\n').find(l => l.trim()) || txt;
+                if (!txt.includes('\n')) return first;
+                return h(NTooltip, { style: 'max-width:680px' }, {
+                    trigger: () => h('span', { style: 'cursor:help' }, first + ' …'),
+                    default: () => h('pre', { style: 'margin:0;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:420px;overflow:auto' }, txt),
+                });
+            } },
             { title: '状态', key: 'status', width: 80, render: e => e.status === 'firing' ? h(NTag, { size: 'tiny', type: 'error', bordered: false }, () => '触发中') : h(NTag, { size: 'tiny', bordered: false }, () => '已恢复') },
             { title: '峰值', key: 'peak_value', width: 100, render: e => h('span', { style: 'font-family:monospace' }, e.peak_value || e.value) },
             { title: '首次', key: 'first_at', width: 150, render: e => (e.first_at || '').replace('T', ' ').slice(0, 16) },
