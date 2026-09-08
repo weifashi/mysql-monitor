@@ -863,9 +863,10 @@ func aggregateMetric(metric, labelFilter, aggregate string, families map[string]
 		return 0, "", fmt.Errorf("指标 %s 没有匹配 %s 的样本", metric, labelFilter)
 	}
 
-	// 单样本时来源没有信息量（标签过滤已经指明了），置空少一行噪音
+	// 单样本且规则带标签过滤时，来源没有信息量（过滤条件已经指明了对象），置空少一行噪音；
+	// 没有过滤条件的规则（如"有容器内存 > 85%"盯全部容器）哪怕只有一个容器也要说清是哪个。
 	detailOf := func(sm promSample) string {
-		if len(matched) < 2 {
+		if len(matched) < 2 && strings.TrimSpace(labelFilter) != "" {
 			return ""
 		}
 		return formatSampleLabels(sm.Labels)

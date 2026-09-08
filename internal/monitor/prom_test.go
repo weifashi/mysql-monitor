@@ -374,10 +374,15 @@ func TestAggregateMetricDetail(t *testing.T) {
 	if detail != `container=mariadb-x` {
 		t.Errorf("sum 来源应为最大贡献者，得到 %q", detail)
 	}
-	// 单样本时来源为空：标签过滤已指明对象，再报一遍是噪音
+	// 单样本：没有标签过滤时来源仍要显示（"有容器内存>85%"这类规则得说清是哪个容器）；
+	// 带标签过滤时过滤条件已指明对象，来源置空少一行噪音
 	_, detail, _ = aggregateMetric("single", "", "max", families)
+	if detail != "container=only" {
+		t.Errorf("无过滤的单样本来源应显示标签，得到 %q", detail)
+	}
+	_, detail, _ = aggregateMetric("single", `container="only"`, "max", families)
 	if detail != "" {
-		t.Errorf("单样本来源应为空，得到 %q", detail)
+		t.Errorf("带过滤的单样本来源应为空，得到 %q", detail)
 	}
 }
 
