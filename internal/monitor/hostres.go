@@ -106,6 +106,7 @@ func (m *PromManager) sampleHostResources(target *store.PromTarget, families map
 	}
 	if avail, total := firstValue(families["node_memory_MemAvailable_bytes"]), firstValue(families["node_memory_MemTotal_bytes"]); total > 0 {
 		h.MemPct = clampPct(100 * (1 - avail/total))
+		h.MemTotal = total
 	}
 	h.DiskReadBps = rate(prev.diskRead, cur.diskRead)
 	h.DiskWriteBps = rate(prev.diskWrite, cur.diskWrite)

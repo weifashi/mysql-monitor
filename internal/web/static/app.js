@@ -5508,6 +5508,7 @@ function fmtBps(v) {
     if (v >= 1024) return (v / 1024).toFixed(1) + ' KB/s';
     return Math.round(v) + ' B/s';
 }
+function fmtGB(bytes) { return (bytes / 1073741824).toFixed(1) + ' GB'; }
 function fmtUnit(v, unit) {
     if (unit === 'pct') return (Math.round(v * 10) / 10) + '%';
     if (unit === 'bps') return fmtBps(v);
@@ -5535,8 +5536,12 @@ const ResChart = defineComponent({
                     formatter: params => {
                         const t = new Date(params[0].value[0]);
                         const head = t.toLocaleString('zh-CN', { hour12: false });
-                        return head + '<br/>' + params.map(p =>
-                            `${p.marker} ${p.seriesName}: <b>${fmtUnit(p.value[1], unitOf(props.series[p.seriesIndex]))}</b>`).join('<br/>');
+                        const pt = pts[params[0].dataIndex] || {};
+                        return head + '<br/>' + params.map(p => {
+                            const sd = props.series[p.seriesIndex];
+                            const extra = sd.extra ? sd.extra(pt) : '';
+                            return `${p.marker} ${p.seriesName}: <b>${fmtUnit(p.value[1], unitOf(sd))}</b>${extra ? ' <span style="opacity:.75">· ' + extra + '</span>' : ''}`;
+                        }).join('<br/>');
                     },
                 },
                 xAxis: { type: 'time', axisLabel: { fontSize: 11, hideOverlap: true } },
@@ -5568,7 +5573,9 @@ const RES_CHARTS = [
         { key: 'cpu', name: '使用率', color: '#2080f0', area: true },
         { key: 'iowait', name: 'IO 等待', color: '#f0a020' }] },
     { title: '内存', yAxes: [{ unit: 'pct' }], series: [
-        { key: 'mem', name: '使用率', color: '#18a058', area: true }] },
+        { key: 'mem', name: '使用率', color: '#18a058', area: true,
+          // 总内存从采样点带出来，换算已用 / 可用（老采样点没有总量时不显示）
+          extra: pt => pt.mem_total ? `已用 ${fmtGB(pt.mem * pt.mem_total / 100)} / 可用 ${fmtGB((100 - pt.mem) * pt.mem_total / 100)} / 共 ${fmtGB(pt.mem_total)}` : '' }] },
     { title: '磁盘 IO', yAxes: [{ unit: 'bps' }, { unit: 'iops' }, { unit: 'pct' }], series: [
         { key: 'disk_r', name: '读取', color: '#e0407a' },
         { key: 'disk_w', name: '写入', color: '#36cfc9' },

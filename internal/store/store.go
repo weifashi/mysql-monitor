@@ -152,6 +152,7 @@ func New(dataDir string) (*Store, error) {
 			net_tx_bps     REAL NOT NULL DEFAULT 0
 		)`,
 		"CREATE INDEX IF NOT EXISTS idx_host_samples_target_ts ON host_samples (target_id, ts)",
+		"ALTER TABLE host_samples ADD COLUMN mem_total_bytes REAL NOT NULL DEFAULT 0",
 		"ALTER TABLE grafana_configs ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE rocketmq_configs ADD COLUMN notify_new_msg INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE rocketmq_alert_logs ADD COLUMN message_body TEXT NOT NULL DEFAULT ''",

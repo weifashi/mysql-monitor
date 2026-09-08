@@ -15,6 +15,7 @@ type HostSample struct {
 	CPUPct       float64 `json:"cpu"`       // CPU 使用率 %（1 - idle）
 	IowaitPct    float64 `json:"iowait"`    // CPU 等 IO 的比例 %
 	MemPct       float64 `json:"mem"`       // 内存使用率 %（1 - MemAvailable/MemTotal）
+	MemTotal     float64 `json:"mem_total"` // 总内存字节，前端据此换算已用/可用 GB
 	DiskReadBps  float64 `json:"disk_r"`    // 磁盘读 B/s（整盘，不含分区重复计数）
 	DiskWriteBps float64 `json:"disk_w"`    // 磁盘写 B/s
 	DiskIOPS     float64 `json:"disk_iops"` // 读+写 完成次数 /s
@@ -25,9 +26,9 @@ type HostSample struct {
 
 func (s *Store) InsertHostSample(targetID int64, h *HostSample) error {
 	_, err := s.db.Exec(`INSERT INTO host_samples
-		(target_id, ts, cpu_pct, iowait_pct, mem_pct, disk_read_bps, disk_write_bps, disk_iops, disk_util_pct, net_rx_bps, net_tx_bps)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		targetID, h.Ts, h.CPUPct, h.IowaitPct, h.MemPct, h.DiskReadBps, h.DiskWriteBps, h.DiskIOPS, h.DiskUtilPct, h.NetRxBps, h.NetTxBps)
+		(target_id, ts, cpu_pct, iowait_pct, mem_pct, mem_total_bytes, disk_read_bps, disk_write_bps, disk_iops, disk_util_pct, net_rx_bps, net_tx_bps)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		targetID, h.Ts, h.CPUPct, h.IowaitPct, h.MemPct, h.MemTotal, h.DiskReadBps, h.DiskWriteBps, h.DiskIOPS, h.DiskUtilPct, h.NetRxBps, h.NetTxBps)
 	return err
 }
 
@@ -37,7 +38,7 @@ func (s *Store) ListHostSamples(targetID int64, from, to time.Time, bucketSec in
 		bucketSec = 60
 	}
 	rows, err := s.db.Query(fmt.Sprintf(`SELECT (ts/%d)*%d AS bucket,
-			AVG(cpu_pct), AVG(iowait_pct), AVG(mem_pct),
+			AVG(cpu_pct), AVG(iowait_pct), AVG(mem_pct), MAX(mem_total_bytes),
 			AVG(disk_read_bps), AVG(disk_write_bps), AVG(disk_iops), MAX(disk_util_pct),
 			AVG(net_rx_bps), AVG(net_tx_bps)
 		FROM host_samples WHERE target_id = ? AND ts >= ? AND ts <= ?
@@ -50,7 +51,7 @@ func (s *Store) ListHostSamples(targetID int64, from, to time.Time, bucketSec in
 	out := []HostSample{}
 	for rows.Next() {
 		var h HostSample
-		if rows.Scan(&h.Ts, &h.CPUPct, &h.IowaitPct, &h.MemPct,
+		if rows.Scan(&h.Ts, &h.CPUPct, &h.IowaitPct, &h.MemPct, &h.MemTotal,
 			&h.DiskReadBps, &h.DiskWriteBps, &h.DiskIOPS, &h.DiskUtilPct,
 			&h.NetRxBps, &h.NetTxBps) == nil {
 			out = append(out, h)
