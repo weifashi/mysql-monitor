@@ -127,6 +127,7 @@ func (s *Server) apiPromTargetDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.store.ResolveEventsByTarget(id, "采集目标已删除")
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
@@ -150,6 +151,7 @@ func (s *Server) apiPromTargetToggle(w http.ResponseWriter, r *http.Request) {
 		_ = s.promMgr.Start(id)
 	} else {
 		s.promMgr.Stop(id)
+		s.store.ResolveEventsByTarget(id, "采集目标已停用")
 	}
 	jsonOK(w, map[string]any{"enabled": t.Enabled})
 }
@@ -339,6 +341,7 @@ func (s *Server) apiPromCheckDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.promMgr.DeleteState(id)
+	s.store.ResolveEvent("prom", id, "规则已删除")
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
@@ -568,6 +571,7 @@ func (s *Server) apiCertCheckDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.store.ResolveEvent("cert", id, "规则已删除")
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 

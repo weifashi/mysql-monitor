@@ -186,6 +186,34 @@ func (s *Store) ListAlertEventsByTargetPaged(source string, targetID int64, page
 	return out, total, rows.Err()
 }
 
+// ResolveEventsByTarget 关闭某采集目标下全部 firing 事件（规则事件 + 目标不可达事件）。
+// 目标被删除/停用后不再有人求值，不关就永远挂着。
+func (s *Store) ResolveEventsByTarget(targetID int64, finalValue string) {
+	s.db.Exec(`UPDATE alert_events SET
+		status = 'resolved', resolved_at = datetime('now'), last_at = datetime('now'),
+		value = CASE WHEN ? <> '' THEN ? ELSE value END
+		WHERE status = 'firing' AND target_id = ? AND source IN ('prom', 'prom_target')`,
+		finalValue, finalValue, targetID)
+}
+
+// ResolveOrphanEvents 启动时兜底：规则/目标已经不存在的 firing 事件一律关闭。
+// 覆盖历史上通过任何路径删掉规则却没关事件的情况。
+func (s *Store) ResolveOrphanEvents() int64 {
+	res, err := s.db.Exec(`UPDATE alert_events SET
+		status = 'resolved', resolved_at = datetime('now'), last_at = datetime('now'), value = '规则已不存在'
+		WHERE status = 'firing' AND (
+			(source = 'prom'        AND check_id NOT IN (SELECT id FROM prom_checks)) OR
+			(source = 'prom_target' AND check_id NOT IN (SELECT id FROM prom_targets)) OR
+			(source = 'custom_sql'  AND check_id NOT IN (SELECT id FROM custom_sql_checks)) OR
+			(source = 'health'      AND check_id NOT IN (SELECT id FROM health_checks)) OR
+			(source = 'cert'        AND check_id NOT IN (SELECT id FROM cert_checks)))`)
+	if err != nil {
+		return 0
+	}
+	n, _ := res.RowsAffected()
+	return n
+}
+
 // CountFiringBySeverity 给顶栏状态条用。
 func (s *Store) CountFiringBySeverity() (critical, warning int) {
 	rows, err := s.db.Query(`SELECT severity, COUNT(*) FROM alert_events

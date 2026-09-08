@@ -74,6 +74,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s.StartPurgeLoop(ctx)
+	if n := s.ResolveOrphanEvents(); n > 0 {
+		log.Printf("resolved %d orphan alert events (rule/target no longer exists)", n)
+	}
 
 	// Create components
 	authStore := auth.NewSessionStore(adminUser, adminPassword, s)

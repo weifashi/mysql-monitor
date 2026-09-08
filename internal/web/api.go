@@ -1614,6 +1614,7 @@ func (s *Server) apiHealthCheckDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "delete", "healthcheck", id, fmt.Sprintf("删除健康检查 ID=%d", id))
+	s.store.ResolveEvent("health", id, "规则已删除")
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
@@ -2446,6 +2447,7 @@ func (s *Server) apiCustomSQLDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.clearCustomSQLRuntimeState(id)
 	s.audit(r, "delete", "custom_sql", id, "删除自定义SQL监控")
+	s.store.ResolveEvent("custom_sql", id, "规则已删除")
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
