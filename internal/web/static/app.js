@@ -5597,6 +5597,7 @@ const ObjectDetailPage = defineComponent({
         const route = VueRouter.useRoute();
         const data = ref(null);
         const loading = ref(true);
+        const objects = ref([]);         // 全部对象，标题栏下拉切换用
         const sparks = ref({});          // check_id -> [{t,v},...]
         const trend = ref(null);         // 大图弹窗：{check, points, hours}
         const trendLoading = ref(false);
@@ -5660,8 +5661,15 @@ const ObjectDetailPage = defineComponent({
             trendLoading.value = false;
         }
         watch(() => route.params.id, () => { if (route.params.id) { loading.value = true; load(); } });
-        onMounted(() => { load(); timer = setInterval(load, 30000); });
+        onMounted(async () => {
+            load(); timer = setInterval(load, 30000);
+            try { objects.value = await api.get('/api/objects') || []; } catch {}
+        });
         onUnmounted(() => clearInterval(timer));
+        const objName = n => (n || '').replace(' 主机指标', '').replace(' 应用指标', ' (应用)');
+        const objectOptions = computed(() => objects.value
+            .map(o => ({ label: objName(o.name), value: o.id, status: o.status }))
+            .sort((a, b) => a.label.localeCompare(b.label, 'zh-Hans-CN', { numeric: true })));
 
         // computed：sparklines 异步加载后触发表格重渲（静态数组不会）
         const checkColumns = computed(() => [
@@ -5731,7 +5739,17 @@ const ObjectDetailPage = defineComponent({
                 h('div', { class: 'page-header' }, [
                     h('h3', { class: 'page-title', style: 'display:flex;align-items:center;gap:8px' }, [
                         h(NButton, { size: 'small', quaternary: true, onClick: () => router.push('/objects') }, () => '‹'),
-                        o.name.replace(' 主机指标', '').replace(' 应用指标', ' (应用)'),
+                        // 标题即下拉：可搜索、直接切到另一台，不用退回列表
+                        objectOptions.value.length > 1 ? h(NSelect, {
+                            value: o.id, options: objectOptions.value, filterable: true, size: 'medium',
+                            consistentMenuWidth: false, style: 'min-width:220px;font-weight:650',
+                            renderLabel: opt => h('span', { style: 'display:inline-flex;align-items:center;gap:8px' }, [
+                                opt.label,
+                                opt.status && opt.status !== 'ok' ? h(NTag, { size: 'tiny', bordered: false, type: opt.status === 'firing' ? 'error' : opt.status === 'risk' ? 'warning' : 'default' },
+                                    () => ({ firing: '告警', risk: '风险', stale: '停止' }[opt.status] || opt.status)) : null,
+                            ]),
+                            'onUpdate:value': id => { if (id && id !== o.id) router.push('/objects/' + id); },
+                        }) : objName(o.name),
                         objStatusTag(o),
                     ]),
                     h('span', { style: 'font-size:12px;opacity:.5' },
