@@ -104,6 +104,7 @@ type objectView struct {
 	Risks    int               `json:"risks"`
 	Checks   []objCheck        `json:"checks"`
 	Interval int               `json:"interval_sec"`
+	MemTotal float64           `json:"mem_total,omitempty"` // 总内存字节（来自最新主机采样），列表悬停换算 GB
 }
 
 func (s *Server) buildObjects() ([]objectView, error) {
@@ -116,6 +117,7 @@ func (s *Server) buildObjects() ([]objectView, error) {
 		return nil, err
 	}
 	snap := s.promMgr.Snapshot()
+	latest, _ := s.store.LatestHostSamples()
 
 	byTarget := map[int64][]store.PromCheck{}
 	for _, c := range checks {
@@ -134,6 +136,9 @@ func (s *Server) buildObjects() ([]objectView, error) {
 			ID: t.ID, Name: t.Name, Kind: t.Kind, Labels: labels,
 			Running: s.promMgr.IsRunning(t.ID), Interval: t.IntervalSec,
 			Checks: buildObjChecks(byTarget[t.ID], snap),
+		}
+		if hs, ok := latest[t.ID]; ok {
+			ov.MemTotal = hs.MemTotal
 		}
 		for _, c := range ov.Checks {
 			if c.Matched {

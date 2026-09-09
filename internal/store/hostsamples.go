@@ -69,3 +69,27 @@ func (s *Store) PurgeOldHostSamples() (int64, error) {
 	}
 	return res.RowsAffected()
 }
+
+// LatestHostSamples 每个目标最新一行（对象列表悬停换算已用/可用 GB 用）。
+func (s *Store) LatestHostSamples() (map[int64]HostSample, error) {
+	rows, err := s.db.Query(`SELECT h.target_id, h.ts, h.cpu_pct, h.iowait_pct, h.mem_pct, h.mem_total_bytes,
+			h.disk_read_bps, h.disk_write_bps, h.disk_iops, h.disk_util_pct, h.net_rx_bps, h.net_tx_bps
+		FROM host_samples h
+		JOIN (SELECT target_id, MAX(ts) AS ts FROM host_samples GROUP BY target_id) m
+		  ON m.target_id = h.target_id AND m.ts = h.ts`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]HostSample{}
+	for rows.Next() {
+		var id int64
+		var h HostSample
+		if rows.Scan(&id, &h.Ts, &h.CPUPct, &h.IowaitPct, &h.MemPct, &h.MemTotal,
+			&h.DiskReadBps, &h.DiskWriteBps, &h.DiskIOPS, &h.DiskUtilPct,
+			&h.NetRxBps, &h.NetTxBps) == nil {
+			out[id] = h
+		}
+	}
+	return out, rows.Err()
+}

@@ -5407,9 +5407,14 @@ function objMetricCell(o, def) {
     if (!c) return h('span', { style: 'opacity:.3' }, '–');
     const v = Math.round(c.value * 10) / 10;
     const color = c.matched ? '#d03050' : (c.risk ? '#f0a020' : '');
+    // 内存列：有总量时悬停给出 已用 / 可用 / 总（总量来自主机资源采样）
+    const memTip = def.metric === 'node_memory_MemAvailable_bytes' && o.mem_total
+        ? `已用 ${fmtGB(c.value * o.mem_total / 100)} · 可用 ${fmtGB((100 - c.value) * o.mem_total / 100)} · 共 ${fmtGB(o.mem_total)}`
+        : '';
+    const tip = [memTip, c.detail].filter(Boolean).join('\n');
     return h('span', {
-        style: `font-family:monospace;${color ? 'color:' + color + ';font-weight:700' : ''}${c.detail ? ';cursor:help;border-bottom:1px dotted currentColor' : ''}`,
-        title: c.detail || undefined,
+        style: `font-family:monospace;${color ? 'color:' + color + ';font-weight:700' : ''}${tip ? ';cursor:help;border-bottom:1px dotted currentColor' : ''}`,
+        title: tip || undefined,
     }, v + (def.pct ? '%' : ''));
 }
 
